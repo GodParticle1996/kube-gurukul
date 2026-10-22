@@ -1,0 +1,35 @@
+# =====================================================================
+#  Lab 02 — ImagePullBackOff  (image kyun nahi aa rahi?)
+#  Shuru:  kubectl apply -f setup.yaml
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab02
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  namespace: lab02
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: storefront
+  template:
+    metadata:
+      labels:
+        app: storefront
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27-alpne        # deploy pipeline se aaya tag
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 64Mi

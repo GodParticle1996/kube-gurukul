@@ -1,0 +1,65 @@
+# =====================================================================
+#  Lab 06 — "Pods gayab!"  ResourceQuota · LimitRange · QoS
+#  Shuru:  kubectl apply -f setup.yaml
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab06
+---
+# Platform team ka diya hua budget (team "reports" ka namespace)
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: team-budget
+  namespace: lab06
+spec:
+  hard:
+    requests.memory: 512Mi
+    limits.memory: 512Mi
+    pods: "10"
+---
+# reports: load test se naapa — har pod ko sach mein ~192Mi chahiye
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reports
+  namespace: lab06
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: reports
+  template:
+    metadata:
+      labels:
+        app: reports
+    spec:
+      containers:
+        - name: worker
+          image: busybox:1.36
+          command: ["sh", "-c", "echo 'report worker up'; sleep 86400"]
+          resources:
+            requests: { cpu: 50m, memory: 192Mi }
+            limits:   { cpu: 50m, memory: 192Mi }
+---
+# cache: kisi ne resources likhe hi nahi
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache
+  namespace: lab06
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cache
+  template:
+    metadata:
+      labels:
+        app: cache
+    spec:
+      containers:
+        - name: cache
+          image: busybox:1.36
+          command: ["sh", "-c", "echo 'cache up'; sleep 86400"]

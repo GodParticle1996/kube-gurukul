@@ -1,0 +1,59 @@
+# Lab 01 — SOLUTION (pehle khud try karo! phas gaye toh yahan dekho)
+# Fix 1: env var ka naam DB_URL (app wahi padhta hai) — exit code 1 gaya
+# Fix 2: memory limit startup PEAK cover kare (~170Mi naapa) → 256Mi — exit code 137 gaya
+#        memory ke liye request = limit (Guaranteed jaisa — node par OOM ka surprise nahi)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api
+  namespace: lab01
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: orders-api
+  template:
+    metadata:
+      labels:
+        app: orders-api
+    spec:
+      containers:
+        - name: api
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              if [ -z "$DB_URL" ]; then
+                echo "FATAL: DB_URL env var nahi mila — config kahan hai?"
+                exit 1
+              fi
+              echo "DB: $DB_URL"
+              echo "cache warm-up: ${CACHE_MB}MB memory mein load ho raha hai..."
+              CACHE=$(dd if=/dev/zero bs=1048576 count="$CACHE_MB" 2>/dev/null | tr '\0' x)
+              echo "cache ready (${#CACHE} bytes) — serving on :8080"
+              mkdir -p /www && echo "orders-api ok" > /www/index.html
+              exec httpd -f -h /www -p 8080
+          env:
+            - name: DB_URL                 # ✅ fix 1
+              valueFrom:
+                configMapKeyRef:
+                  name: orders-config
+                  key: DB_URL
+            - name: CACHE_MB
+              valueFrom:
+                configMapKeyRef:
+                  name: orders-config
+                  key: CACHE_MB
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi                # ✅ fix 2
+            limits:
+              memory: 256Mi

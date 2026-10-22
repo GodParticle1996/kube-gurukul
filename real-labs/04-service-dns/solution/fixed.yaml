@@ -1,0 +1,23 @@
+# Lab 04 — SOLUTION
+# 1) selector pod ke label se EXACT match (payment → payments)
+# 2) targetPort = container ka port (80) — naam se dena aur bhi safe: targetPort: http
+# 3) doosre namespace se: <service>.<namespace> (ya poora FQDN)
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments
+  namespace: lab04
+spec:
+  selector:
+    app: payments             # ✅ 1
+  ports:
+    - port: 80
+      targetPort: http        # ✅ 2 (named port → container ka port badle toh bhi Service sahi rahe)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: lab04-frontend
+data:
+  PAYMENTS_URL: "http://payments.lab04.svc.cluster.local"   # ✅ 3 (http://payments.lab04 bhi chalega)

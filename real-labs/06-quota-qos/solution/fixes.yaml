@@ -1,0 +1,29 @@
+# Lab 06 — SOLUTION
+# 1) LimitRange: namespace ke defaults — jo container resources na likhe, use yeh mil jaaye
+#    (quota wale namespace mein bina resources ka pod REJECT hota hai — "must specify limits.memory")
+# 2) Budget badhao (reports ko sach mein 3 x 192Mi chahiye + cache 64Mi = 640Mi → 768Mi margin ke saath)
+#    Production mein yeh platform team se "budget request" hota hai — right-sizing pehle try karo!
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: lab06
+spec:
+  limits:
+    - type: Container
+      defaultRequest:          # request na likha ho toh
+        cpu: 50m
+        memory: 64Mi
+      default:                 # limit na likhi ho toh
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: team-budget
+  namespace: lab06
+spec:
+  hard:
+    requests.memory: 768Mi     # ✅
+    limits.memory: 768Mi
+    pods: "10"

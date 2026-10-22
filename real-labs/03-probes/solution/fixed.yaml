@@ -1,0 +1,81 @@
+# Lab 03 — SOLUTION
+# shop:    readinessProbe ka path asli endpoint par (nginx "/" serve karta hai, "/ready" nahi)
+# slowapp: startupProbe — jab tak app boot ho raha hai, liveness ko rok ke rakhta hai
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop
+  namespace: lab03
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: shop
+  template:
+    metadata:
+      labels:
+        app: shop
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /               # ✅
+              port: 80
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { memory: 64Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slowapp
+  namespace: lab03
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slowapp
+  template:
+    metadata:
+      labels:
+        app: slowapp
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "booting... (migrations + cache warm-up, ~25s)"
+              sleep 25
+              mkdir -p /www && echo "slowapp ok" > /www/index.html
+              echo "ready — serving on :8080"
+              exec httpd -f -h /www -p 8080
+          ports:
+            - containerPort: 8080
+          startupProbe:             # ✅ boot ke liye 12 x 5s = 60s ka budget
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:           # ✅ traffic tabhi jab sach mein serve kar sake
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 5
+          livenessProbe:            # startup pass hone ke BAAD hi shuru hota hai
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 20m, memory: 16Mi }
+            limits: { memory: 32Mi }

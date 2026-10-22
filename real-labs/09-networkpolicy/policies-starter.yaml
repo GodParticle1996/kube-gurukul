@@ -1,0 +1,35 @@
+# =====================================================================
+#  Lab 09 — tumhari policies (TODO bharo, phir: kubectl apply -f policies-starter.yaml)
+#  Niyam: policy pod ka "firewall" hai. Ek baar kisi pod ko kisi policy ne CHUNA (podSelector),
+#         toh us direction mein sirf woh traffic aata hai jo kisi policy ne ALLOW kiya.
+# =====================================================================
+# 1) Default deny — namespace ke SAARE pods ka ingress band
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: lab09
+spec:
+  podSelector: {}            # {} = saare pods
+  policyTypes: ["Ingress"]   # ingress list khaali = kuch bhi allowed nahi
+---
+# 2) TODO: frontend → backend (port 8080) allow karo
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: lab09
+spec:
+  podSelector:
+    matchLabels:
+      app: TODO              # kis pod ki RAKSHA kar rahe ho? (traffic kahan AA raha hai)
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: TODO      # kaun aa sakta hai?
+      ports:
+        - port: 8080         # 👈 container ka port (Service ka 80 nahi!) — policy pod tak pahunchte packet ko dekhti hai
+---
+# 3) TODO: backend → db (port 5432) allow karo — khud likho (upar wale jaisa)

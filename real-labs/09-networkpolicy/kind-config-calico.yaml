@@ -1,0 +1,13 @@
+# Plan B — NetworkPolicy enforce karne wala cluster (Calico CNI)
+#   kind create cluster --config kind-config-calico.yaml
+#   kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/calico.yaml
+#   kubectl -n kube-system rollout status ds/calico-node --timeout=300s
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: gurukul-calico
+networking:
+  disableDefaultCNI: true        # kindnet nahi — Calico lagayenge
+  podSubnet: 192.168.0.0/16      # Calico ka default pool
+nodes:
+  - role: control-plane
+  - role: worker

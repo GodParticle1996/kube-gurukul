@@ -1,0 +1,75 @@
+# =====================================================================
+#  Lab 08 — RBAC: "403 Forbidden" ka ilaaj (ServiceAccount · Role · ClusterRole)
+#  Shuru:  kubectl apply -f setup.yaml
+#  auditor app API se (curl) pods aur nodes ki list maangta hai — har 5s status code print karta hai.
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab08
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auditor
+  namespace: lab08
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: lab08
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auditor-pod-reader
+  namespace: lab08
+subjects:
+  - kind: ServiceAccount
+    name: auditor
+    namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pod-reader
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auditor
+  namespace: lab08
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auditor
+  template:
+    metadata:
+      labels:
+        app: auditor
+    spec:
+      serviceAccountName: auditor
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: curl
+          image: curlimages/curl:8.11.1
+          command: ["sh", "-c"]
+          args:
+            - |
+              SA=/var/run/secrets/kubernetes.io/serviceaccount
+              API=https://kubernetes.default.svc
+              while true; do
+                T=$(cat $SA/token)
+                p=$(curl -s -o /dev/null -w '%{http_code}' --cacert $SA/ca.crt -H "Authorization: Bearer $T" $API/api/v1/namespaces/lab08/pods)
+                n=$(curl -s -o /dev/null -w '%{http_code}' --cacert $SA/ca.crt -H "Authorization: Bearer $T" $API/api/v1/nodes)
+                echo "$(date +%T)  list pods(lab08)=$p   list nodes=$n"
+                sleep 5
+              done
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }

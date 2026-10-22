@@ -1,0 +1,62 @@
+# =====================================================================
+#  Lab 07 — ConfigMap badla... app ko pata chala? (env vs volume vs subPath)
+#  Shuru:  kubectl apply -f setup.yaml
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab07
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: greeter-config
+  namespace: lab07
+data:
+  GREETING: "namaste"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: greeter
+  namespace: lab07
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: greeter
+  template:
+    metadata:
+      labels:
+        app: greeter
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              trap 'echo "SIGTERM mila — band ho raha hoon"; exit 0' TERM
+              while true; do
+                echo "$(date +%T)  env=$GREETING  |  volume=$(cat /config/GREETING)  |  subPath=$(cat /etc/greeting.txt)"
+                sleep 5 & wait $!
+              done
+          env:
+            - name: GREETING                 # 1) env var se
+              valueFrom:
+                configMapKeyRef:
+                  name: greeter-config
+                  key: GREETING
+          volumeMounts:
+            - name: cfg                      # 2) poora ConfigMap as files (directory)
+              mountPath: /config
+            - name: cfg                      # 3) ek file subPath se
+              mountPath: /etc/greeting.txt
+              subPath: GREETING
+          resources:
+            requests: { cpu: 10m, memory: 8Mi }
+            limits: { memory: 16Mi }
+      volumes:
+        - name: cfg
+          configMap:
+            name: greeter-config

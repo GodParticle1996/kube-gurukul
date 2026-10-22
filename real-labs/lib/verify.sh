@@ -39,6 +39,14 @@ to_mib() {
   esac
 }
 
+# newest_pod <ns> <label-selector> → sabse naya Running pod jo terminate NAHI ho raha
+# (rollout ke baad purane pods grace period tak "Running" hi dikhte hain — unhe mat pakdo)
+newest_pod() {
+  kubectl -n "$1" get pods -l "$2" --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.metadata.deletionTimestamp}{"|"}{.status.phase}{"\n"}{end}' 2>/dev/null \
+    | awk -F'|' '$2 == "" && $3 == "Running" { n = $1 } END { print n }'
+}
+
 need_cluster() {
   command -v kubectl >/dev/null 2>&1 || { echo "${R}kubectl nahi mila — pehle install karo (README → Setup)${N}"; exit 2; }
   kubectl get --raw /readyz >/dev/null 2>&1 || {

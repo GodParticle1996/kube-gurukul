@@ -391,7 +391,7 @@ kubectl describe pod etcd-minikube -n kube-system | head -20</pre>
          <tr><th>Component</th><th>Role</th><th>Ek line mein</th></tr>
          <tr><td>🧑‍🔧 <b>kubelet</b></td><td>Node ka site-manager</td><td>API Server ko watch karta hai — "mere node par kaunse pods hone chahiye?" — phir runtime se chalwata hai aur health report bhejta hai</td></tr>
          <tr><td>⚙️ <b>containerd</b></td><td>Container runtime</td><td>Image pull, container start/stop — Docker engine ka jo core tha, wahi. kubelet iska boss hai</td></tr>
-         <tr><td>🚦 <b>kube-proxy</b></td><td>Traffic ka policeman</td><td>Har node par network rules (iptables/IPVS) set karta hai taaki Service ka traffic sahi pods tak pahunche</td></tr>
+         <tr><td>🚦 <b>kube-proxy</b></td><td>Traffic ka policeman</td><td>Har node par network rules (iptables/nftables) set karta hai taaki Service ka traffic sahi pods tak pahunche</td></tr>
        </table>
        <p>💡 Docker connection: <code>containerd</code> wahi runtime hai jo Docker ke andar tha.
        K8s ne beech ka Docker engine hata ke seedha containerd se baat karna shuru kiya —
@@ -419,7 +419,7 @@ kubectl logs &lt;pod-name&gt;        # container ke logs (stdout)</pre>`,
         pairs: [
           { left: '🧑‍🔧 kubelet', right: 'API Server se pod specs lekar containers chalwana + health report bhejna', explain: 'Node ka manager. Watch → run → report. Har node par exactly ek.' },
           { left: '⚙️ containerd', right: 'Images pull karna aur containers start/stop karna', explain: 'Runtime — kubelet ke orders par asli containers yahi chalata hai. (Docker ka core yahi tha!)' },
-          { left: '🚦 kube-proxy', right: 'Service traffic ke liye har node par network rules banana', explain: 'iptables/IPVS rules — "Service X ka traffic in pods par bhejo". Level 6 (Services) ka hero.' },
+          { left: '🚦 kube-proxy', right: 'Service traffic ke liye har node par network rules banana', explain: 'iptables/nftables rules — "Service X ka traffic in pods par bhejo". Level 6 (Services) ka hero.' },
           { left: '💓 heartbeat', right: 'kubelet ka regular "main zinda hoon" signal API Server ko', explain: 'Yeh ruk jaaye toh node NotReady — aur uske pods doosre nodes par reschedule hote hain.' },
         ],
       },
@@ -516,7 +516,7 @@ kubectl logs &lt;pod-name&gt;        # container ke logs (stdout)</pre>`,
             'kubelet Service ke iptables rules likhta hai, kube-proxy containers ka health-check aur restart karta hai',
           ],
           answer: 0,
-          explain: 'Simple divide: kubelet = compute (containers chalao, health dekho, report karo), kube-proxy = network (Service ClusterIP ka traffic asli pod IPs tak pahunchane ke iptables/IPVS rules). Dono DaemonSet-style har node par.',
+          explain: 'Simple divide: kubelet = compute (containers chalao, health dekho, report karo), kube-proxy = network (Service ClusterIP ka traffic asli pod IPs tak pahunchane ke iptables/nftables rules). Dono DaemonSet-style har node par.',
         },
         {
           terminal: {
@@ -1080,7 +1080,7 @@ kubectl delete deployment web              # safai</pre>
           { text: 'Cloud LoadBalancer request ko cluster ke Ingress controller tak bhejta hai', explain: 'LB = building ka main gate. Ingress controller (nginx pod) tak pahunchata hai. (Ingress ki full story intermediate mein!)' },
           { text: 'Ingress rules dekh kar sahi Service chunta hai (host/path se)', explain: 'shop.com/api → api-svc, shop.com/ → web-svc. Ingress = routing rules ki kitaab.' },
           { text: 'Service ke endpoints mein se ek healthy pod IP chunta hai', explain: 'Service = stable naam, endpoints = live pod list. Yahin load balancing hota hai.' },
-          { text: 'kube-proxy ke rules traffic ko us pod tak pahunchate hain', explain: 'iptables/IPVS magic — ClusterIP se asli pod IP tak translation.' },
+          { text: 'kube-proxy ke rules traffic ko us pod tak pahunchate hain', explain: 'iptables/nftables magic — ClusterIP se asli pod IP tak translation.' },
           { text: 'Pod ka container request process karke response deta hai', explain: 'Wapas usi raaste se. Ab tum Q7 "User → Ingress → Service → Pod" confidently explain kar sakte ho!' },
         ],
       },

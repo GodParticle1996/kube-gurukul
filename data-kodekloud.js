@@ -92,12 +92,20 @@
          </table>
          <p><b>Do sabse zyada galat samjhe jaane wale:</b></p>
          <ul>
-           <li><code>kubectl logs pod</code> <b>current</b> container ke logs deta hai. Jab container
-           CrashLoopBackOff mein wait kar raha ho, current container hai hi nahi — isliye
-           <code>kubectl logs</code> "container is waiting to start" bolta hai.</li>
-           <li><code>kubectl logs pod --previous</code> <b>pichhle, mare hue</b> container ke logs deta hai.
-           Crash ka asli error message sirf <code>--previous</code> mein milta hai.</li>
-         </ul>`,
+           <li><code>kubectl logs pod</code> container ke <b>sabse naye run</b> ke logs deta hai.
+           Container chal raha hai → abhi wala run. Container CrashLoopBackOff ke wait mein hai →
+           naya run abhi shuru hi nahi hua, isliye kubelet <b>aakhri mare hue run</b> ke logs de deta hai.</li>
+           <li><code>kubectl logs pod --previous</code> hamesha <b>pichhle, mare hue</b> run ke logs deta hai.
+           Pod restart hoke abhi <b>Running</b> ho (RESTARTS 3, jaise OOMKill ya liveness kill ke baad),
+           tab plain <code>logs</code> naya, saaf run dikhata hai — crash ka saboot <b>sirf</b>
+           <code>--previous</code> mein milta hai.</li>
+         </ul>
+         <div class="kab-box"><b>🧠 Ek tasveer mein:</b> run #5 💥 mara → ⏳ backoff wait → run #6 ▶️ chala.<br>
+         ⏳ wait ke dauraan: <code>logs</code> = <code>--previous</code> = run #5 (dono same).<br>
+         ▶️ run #6 chalte waqt: <code>logs</code> = run #6, <code>--previous</code> = run #5 (crash wala).<br>
+         Container <b>kabhi start hi nahi hua</b> (ImagePullBackOff, CreateContainerConfigError, ContainerCreating)?
+         Tab <code>logs</code> "is waiting to start" error deta hai aur <code>--previous</code> "previous terminated
+         container … not found" — dono bekaar, <code>describe</code> ke Events padho.</div>`,
       ],
       stages: [
         {
@@ -141,9 +149,17 @@ Events:
             },
             {
               cmd: 'kubectl logs checkout-api-7d9c4b6f8-x2k4p -n shop',
-              clue: false,
-              out: `Error from server (BadRequest): container "api" in pod "checkout-api-7d9c4b6f8-x2k4p" is waiting to start: CrashLoopBackOff`,
-              note: 'Yahi woh galti hai jo sabse zyada hoti hai. Pod abhi backoff mein <i>wait</i> kar raha hai, isliye current container maujood hi nahi hai aur <code>kubectl logs</code> ke paas dikhane ko kuch nahi. Agla command <code>--previous</code> ke saath chalao.',
+              clue: true,
+              out: `{"level":"info","msg":"checkout-api v2.4.1 booting"}
+{"level":"info","msg":"reading config from env"}
+panic: PG_DSN environment variable is empty
+
+goroutine 1 [running]:
+main.mustEnv(0x4c1a20, 0x6)
+	/src/main.go:41 +0x105
+main.main()
+	/src/main.go:18 +0x37`,
+              note: 'Bina flag ke bhi crash dikh gaya. Kyun? checkout-api container abhi backoff mein <i>wait</i> kar raha hai — naya run shuru hi nahi hua — isliye kubelet ne <b>aakhri mare hue run</b> ke logs de diye. Ab <code>--previous</code> wala command chala ke dono outputs milao.',
             },
             {
               cmd: 'kubectl logs checkout-api-7d9c4b6f8-x2k4p -n shop --previous',
@@ -157,7 +173,7 @@ main.mustEnv(0x4c1a20, 0x6)
 	/src/main.go:41 +0x105
 main.main()
 	/src/main.go:18 +0x37`,
-              note: '<b>Yahan hai asli jawab.</b> checkout-api application <code>PG_DSN</code> environment variable maang rahi hai aur variable khaali hai, isliye application boot par hi panic kar rahi hai.',
+              note: '<b>Asli jawab:</b> checkout-api application <code>PG_DSN</code> environment variable maang rahi hai aur variable khaali hai, isliye boot par hi panic. Output plain <code>logs</code> jaisa hi hai — backoff ke wait mein dono <b>ek hi mare hue run</b> ko padhte hain. Farq tab padta hai jab container restart hoke chal raha ho: tab plain <code>logs</code> naya run dikhata hai aur crash sirf <code>--previous</code> mein bachta hai.',
             },
             {
               cmd: 'kubectl get svc,endpoints -n shop',
@@ -190,24 +206,24 @@ product-api-7f8c9d5b4-pq8rt     6m           51Mi`,
             {
               q: 'Root cause kya hai?',
               choices: [
-                'checkout-api application boot par panic karti hai kyunki PG_DSN environment variable khaali hai',
-                'checkout-api service ka selector galat hai, isliye endpoints khaali hain',
-                'checkout-api pod ko memory limit se zyada memory chahiye, isliye OOMKilled ho raha hai',
-                'checkout-api ka image registry se nahi utar paa raha',
+                'checkout-api boot par panic karti hai kyunki PG_DSN environment variable khaali hai',
+                'checkout-api Service ka selector galat hai, isliye endpoints khaali hain aur ingress 502 deta hai',
+                'checkout-api memory limit todti hai aur kernel ka OOM killer use boot par hi maar deta hai',
+                'checkout-api ka naya image tag registry mein nahi hai, isliye container start hi nahi hota',
               ],
               answer: 0,
               explain: '<code>--previous</code> logs mein saaf likha hai: <code>panic: PG_DSN environment variable is empty</code>. Exit Code 1 ne bhi confirm kiya ki application khud mari, kubelet ne nahi maari (OOMKill hota to Exit Code 137 aata). Khaali endpoints ek <b>lakshan</b> the, karan nahi — pod ready nahi tha isliye endpoint list khaali thi.',
             },
             {
-              q: 'Bina <code>--previous</code> ke <code>kubectl logs</code> ne kuch kyun nahi dikhaya?',
+              q: 'Yahan plain <code>kubectl logs</code> aur <code>--previous</code> ne ek jaisa output diya. <code>--previous</code> kab sach mein zaroori hota hai?',
               choices: [
-                'Bina flag ke kubectl logs CURRENT container maangta hai, aur backoff ke dauraan current container maujood hi nahi hota',
-                'CrashLoopBackOff mein logs kubelet delete kar deta hai',
-                'Namespace flag lagana bhool gaye the',
-                'Logs sirf tab dikhte hain jab pod Ready ho',
+                'Jab container restart hoke chal raha ho — plain logs naya run dikhata hai, crash sirf --previous mein',
+                'Jab pod Pending ho — scheduler ka FailedScheduling message sirf --previous wale logs mein aata hai',
+                'Jab image pull fail ho — registry ka "manifest unknown" error --previous wale logs mein likha hota hai',
+                'Jab pod mein do container hon — --previous dono containers ke logs ek saath jod ke dikhata hai',
               ],
               answer: 0,
-              explain: 'Bina flag ke <code>kubectl logs</code> abhi ke container ka log stream maangta hai. CrashLoopBackOff ka matlab hai "kubelet agla restart karne se pehle ruk gaya hai" — us waqt koi container chal hi nahi raha. Mare hue container ka log kubelet thodi der rakhta hai, aur <code>--previous</code> se hi milta hai. <b>Yaad rakho:</b> CrashLoopBackOff dikhe to seedha <code>--previous</code> lagao.',
+              explain: '<code>kubectl logs</code> = container ka <b>sabse naya run</b>. <code>--previous</code> = usse <b>pichhla, mara hua run</b>. CrashLoopBackOff ke wait mein naya run bana hi nahi, isliye dono same. Par pod restart hoke Running ho (OOMKill ya liveness kill ke baad, RESTARTS badhe hue), tab plain logs naya saaf run dikhata hai aur crash ka saboot sirf <code>--previous</code> mein hai. Pending aur ImagePullBackOff mein container kabhi chala hi nahi — wahan <code>describe</code> ke Events padho. Do containers ke liye <code>-c naam</code> ya <code>--all-containers</code> lagta hai.',
             },
           ],
         },
@@ -223,7 +239,8 @@ product-api-7f8c9d5b4-pq8rt     6m           51Mi`,
           ],
           items: [
             { text: 'Pod 10 minute se Pending hai', bin: 'describe', explain: 'Pending pod ke paas container hi nahi hai, isliye log nahi hote. Scheduler ka FailedScheduling message sirf describe ke Events section mein milta hai.' },
-            { text: 'Status CrashLoopBackOff, restarts 12', bin: 'prev', explain: 'Container start hokar mara. Marne se pehle jo error print hua, woh sirf --previous mein bacha hai.' },
+            { text: 'Status CrashLoopBackOff, restarts 12', bin: 'prev', explain: 'Container start hokar mara. Marne se pehle jo error print hua, woh mare hue run ke logs mein hai — --previous hamesha usi run par tikta hai, chahe container beech mein dobara start ho chuka ho.' },
+            { text: 'Pod Running 1/1 hai, par RESTARTS 4 — raat ko kuch hua tha', bin: 'prev', explain: 'Container abhi theek chal raha hai, isliye plain kubectl logs naya, saaf run dikhayega. Raat wale crash ka saboot sirf pichhle run mein hai: kubectl logs --previous (aur describe ka Last State — OOMKilled tha ya Error).' },
             { text: 'Status ImagePullBackOff', bin: 'describe', explain: 'describe ka Events section poora reason likhta hai — "manifest unknown" (tag galat) ya "unauthorized" (imagePullSecret gayab) ya "no such host" (registry DNS).' },
             { text: 'Pod Running hai par app apne database tak nahi pahunch paa rahi', bin: 'exec', explain: 'Pod ke andar se DNS aur connectivity test karni padegi — kubectl exec se shell lo, ya distroless image ho to kubectl debug se ephemeral container attach karo.' },
             { text: 'Aadhe ghante pehle poora namespace hil gaya tha, ab shaant hai', bin: 'events', explain: 'Ek pod ka describe sirf us pod ki kahani deta hai. Poore namespace ki timeline ke liye: kubectl get events --sort-by=.lastTimestamp' },
@@ -242,7 +259,7 @@ product-api-7f8c9d5b4-pq8rt     6m           51Mi`,
             nodes: [{ name: 'node-1', status: 'Ready', roles: '<none>', age: '9d', version: 'v1.30.2' }],
             pods: [
               { name: 'checkout-api-7d9c4b6f8-x2k4p', ready: '0/1', status: 'CrashLoopBackOff', restarts: 6, age: '19m', node: 'node-1', ip: '10.244.1.14',
-                logs: 'Error from server (BadRequest): container "api" in pod is waiting to start: CrashLoopBackOff',
+                logs: '{"level":"info","msg":"checkout-api v2.4.1 booting"}\npanic: PG_DSN environment variable is empty\n\ngoroutine 1 [running]:\nmain.mustEnv(0x4c1a20, 0x6)\n\t/src/main.go:41 +0x105',
                 prevLogs: '{"level":"info","msg":"checkout-api v2.4.1 booting"}\npanic: PG_DSN environment variable is empty\n\ngoroutine 1 [running]:\nmain.mustEnv(0x4c1a20, 0x6)\n\t/src/main.go:41 +0x105',
                 describe: 'Name:         checkout-api-7d9c4b6f8-x2k4p\nNamespace:    shop\nStatus:       Running\nContainers:\n  api:\n    State:          Waiting\n      Reason:       CrashLoopBackOff\n    Last State:     Terminated\n      Reason:       Error\n      Exit Code:    1\n    Restart Count:  6\n    Environment:\n      PORT:  8080\nEvents:\n  Warning  BackOff  45s (x71 over 19m)  kubelet  Back-off restarting failed container api',
                 events: ['Warning  BackOff  45s (x71 over 19m)  kubelet  Back-off restarting failed container api'] },
@@ -275,7 +292,7 @@ product-api-7f8c9d5b4-pq8rt     6m           51Mi`,
           hints: [
             'Shuru karo: kubectl get pods -n shop',
             'Ab describe karo: kubectl describe pod checkout-api-7d9c4b6f8-x2k4p',
-            'CrashLoopBackOff ke logs --previous ke bina nahi milte: kubectl logs checkout-api-7d9c4b6f8-x2k4p --previous',
+            'Mare hue run ke logs: kubectl logs checkout-api-7d9c4b6f8-x2k4p --previous (container beech mein restart ho jaaye tab bhi yahi crash wala run dikhata hai)',
             'ls chalao — add-dsn.yaml ko kubectl apply -f add-dsn.yaml se lagao',
           ],
         },
@@ -285,10 +302,10 @@ product-api-7f8c9d5b4-pq8rt     6m           51Mi`,
           {
             q: 'Interviewer: "Ek pod Running hai par READY column 0/1 dikhata hai. Container zinda hai. Kya ho raha hai?"',
             choices: [
-              'Readiness probe fail ho rahi hai — container chal raha hai par Service uske paas traffic nahi bhejegi',
-              'Liveness probe fail ho rahi hai — kubelet container ko maar dega',
-              'Pod ko scheduler ne abhi node nahi diya',
-              'Image pull abhi chal raha hai',
+              'Readiness probe fail ho rahi hai — container zinda hai par Service use traffic nahi bhejti',
+              'Liveness probe fail ho rahi hai — kubelet container ko thodi der mein maar ke restart karega',
+              'Pod ka PodDisruptionBudget bhar gaya hai, isliye naye traffic ke liye pod band kar diya gaya',
+              'Image abhi bhi background mein pull ho rahi hai, isliye container aadha hi start hua hai',
             ],
             answer: 0,
             explain: 'READY column readiness probe ka result hai. Readiness fail hone par kubelet container ko maarta NAHI — kubelet sirf pod ko Service ke endpoints se hata deta hai. Liveness fail hoti to restart count badhta aur status CrashLoopBackOff ki taraf jaata. Farq yaad rakho: <b>readiness = traffic milega ya nahi</b>, <b>liveness = container zinda rahega ya nahi</b>.',
@@ -296,33 +313,43 @@ product-api-7f8c9d5b4-pq8rt     6m           51Mi`,
           {
             q: 'Interviewer: "Image distroless hai — usme shell hai hi nahi. Pod ke andar se DNS test kaise karoge?"',
             choices: [
-              'kubectl debug -it &lt;pod&gt; --image=busybox --target=&lt;container&gt; — ephemeral container same namespaces share karta hai',
-              'kubectl exec -it &lt;pod&gt; -- /bin/sh chalega, kubectl apna shell inject karta hai',
-              'Pod ko delete karke debug image ke saath dobara deploy karna hi ek raasta hai',
-              'kubectl cp se busybox binary pod ke andar copy karo',
+              'kubectl debug -it &lt;pod&gt; --image=busybox --target=&lt;container&gt; — ephemeral container jodo',
+              'kubectl exec -it &lt;pod&gt; -- /bin/sh — kubectl apna shell binary khud container mein bhej deta hai',
+              'Deployment ka image busybox karke rollout karo, test karo, phir purana image wapas lagao',
+              'kubectl cp se busybox binary pod ke andar copy karo, phir kubectl exec se usse chalao',
             ],
             answer: 0,
-            explain: '<code>kubectl debug</code> ek <b>ephemeral container</b> chipkata hai jo target container ke network aur (target dete hi) process namespace share karta hai. Isliye busybox ke tools se wahi DNS aur wahi network dikhta hai jo application container ko dikhta hai — aur running pod ko restart bhi nahi karna padta. <code>kubectl exec</code> pod ke andar maujood binary hi chala sakta hai, isliye distroless par exec fail hota hai.',
+            explain: '<code>kubectl debug</code> ek <b>ephemeral container</b> chipkata hai jo target container ke network aur (target dete hi) process namespace share karta hai. Isliye busybox ke tools se wahi DNS aur wahi network dikhta hai jo application container ko dikhta hai — aur running pod ko restart bhi nahi karna padta. <code>kubectl exec</code> pod ke andar maujood binary hi chala sakta hai, isliye distroless par exec fail hota hai. <code>kubectl cp</code> bhi container ke andar <code>tar</code> maangta hai — distroless mein woh bhi nahi. Image badal ke rollout karne se naye pods bante hain, aur jis pod mein bug dikh raha tha woh hi gayab ho jaata hai.',
           },
         ],
       },
       success: [
         'Main pod ke status se seedha bata sakta hoon ki agla command kaunsa chalana hai',
-        'Main CrashLoopBackOff par bina soche `--previous` lagata hoon',
+        'Main jaanta hoon `kubectl logs` aur `--previous` kab same hote hain, aur kab crash sirf `--previous` mein milta hai',
         'Main Exit Code 1 (app crash) aur Exit Code 137 (OOMKilled) mein farq kar sakta hoon',
         'Main distroless image ko `kubectl debug` se debug kar sakta hoon',
       ],
-      homework: `<p>Apne kind/minikube cluster par jaan-boojh ke ek pod todo aur toolkit chalao:</p>
-        <pre>kubectl run boom --image=busybox --restart=Never -- sh -c 'echo starting; exit 1'
-kubectl get pod boom
+      homework: `<p>Apne kind/minikube cluster par do pod jaan-boojh ke todo aur toolkit chalao:</p>
+        <pre># 1) Turant marne wala → CrashLoopBackOff
+kubectl run boom --image=busybox:1.36 -- sh -c 'echo starting; exit 1'
+kubectl get pod boom -w            # Running → Error → CrashLoopBackOff dikhe toh Ctrl+C
 kubectl describe pod boom | grep -A5 "Last State"
-kubectl logs boom --previous</pre>
+kubectl logs boom                  # backoff ke wait mein: aakhri mara hua run
+kubectl logs boom --previous       # wahi output — dono ek hi run padh rahe hain
+
+# 2) 25 second chal ke marne wala → yahan farq dikhega
+kubectl run flaky --image=busybox:1.36 -- sh -c 'echo "run shuru $(date +%T)"; sleep 25; echo "ab marunga"; exit 1'
+kubectl get pod flaky -w           # RESTARTS 1 aur STATUS Running hote hi Ctrl+C
+kubectl logs flaky                 # sirf "run shuru ..." — yeh NAYA run hai
+kubectl logs flaky --previous      # "ab marunga" — crash wala run sirf yahan</pre>
+        <p>⚠️ <code>--restart=Never</code> mat lagana: tab container dobara chalta hi nahi — status
+        <code>Error</code> par ruk jaata hai aur <code>--previous</code> "previous terminated container … not found" deta hai.</p>
         <p>Phir ek Pending pod banao aur dekho ki <code>kubectl logs</code> kuch nahi deta par
         <code>kubectl describe</code> FailedScheduling message deta hai:</p>
         <pre>kubectl run huge --image=nginx --overrides='{"spec":{"containers":[{"name":"huge","image":"nginx","resources":{"requests":{"cpu":"500"}}}]}}'
 kubectl describe pod huge | tail -5</pre>`,
       cards: [
-        { front: 'CrashLoopBackOff par `kubectl logs` "container is waiting to start" kyun deta hai?', back: 'Bina flag ke `kubectl logs` CURRENT container maangta hai. Backoff ke dauraan koi container chal hi nahi raha. Mare hue container ka log <code>--previous</code> se aata hai.' },
+        { front: '`kubectl logs` vs `kubectl logs --previous` — kab kaunsa?', back: '<code>logs</code> = sabse naya run, <code>--previous</code> = usse pichhla, mara hua run. CrashLoopBackOff ke wait mein dono same (naya run abhi bana nahi). Pod restart hoke Running ho → crash sirf <code>--previous</code> mein. Container kabhi start hi nahi hua (ImagePullBackOff, CreateContainerConfigError) → dono bekaar, <code>describe</code> padho.' },
         { front: 'Exit Code 1 vs Exit Code 137 — kya farq hai?', back: '<b>1</b> = application khud crash hui (bad config, panic, missing env). <b>137</b> = 128+9, yaani SIGKILL — aksar memory limit todne par kernel ke OOM killer ne maara (Reason: OOMKilled). Reason: Error ho toh SIGKILL kahin aur se aaya (jaise grace period ke baad force-kill).' },
         { front: 'Pod Running par 0/1 READY — kya toota hai?', back: 'Readiness probe. Container zinda hai, par Service ne pod ko endpoints se hata diya hai. Exact probe error <code>kubectl describe pod</code> ke Events mein milta hai.' },
         { front: 'Poore namespace ki timeline kaise dekhein?', back: '<code>kubectl get events -n &lt;ns&gt; --sort-by=.lastTimestamp</code> — ek pod ka describe sirf usi pod ki kahani deta hai.' },
@@ -462,10 +489,10 @@ node-2   Ready    <none>   90d   v1.30.2`,
             {
               q: 'Teeno pods ek hi ImagePullBackOff dikha rahe hain. Kya ek hi fix teeno ko theek kar dega?',
               choices: [
-                'Nahi — teeno ki wajah alag hai: reports-api ka tag galat, mailer ko pull secret chahiye, scanner Docker Hub rate limit se atka hai',
-                'Haan — teeno ko imagePullSecrets chahiye',
-                'Haan — teeno nodes ka registry DNS toota hai',
-                'Nahi — par teeno ka ek hi fix hai: imagePullPolicy ko Never kar do',
+                'Nahi — teeno ki wajah alag hai: galat tag, gayab pull secret, aur Docker Hub ka rate limit',
+                'Haan — teeno ko ek hi imagePullSecret chahiye; default ServiceAccount par patch kar do',
+                'Haan — node ka registry DNS toota hai; CoreDNS restart karte hi teeno images aa jayengi',
+                'Nahi — par teeno ka ek hi jugaad hai: imagePullPolicy: Never laga ke node ki cache chalao',
               ],
               answer: 0,
               explain: 'Status sirf batata hai ki <i>image nahi aayi</i>. Wajah har baar Events mein alag likhi hoti hai: <code>not found</code> = tag galat, <code>401 Unauthorized</code> = credentials chahiye, <code>toomanyrequests</code> = registry rate limit. Teeno ke fix bhi alag hain. <b>Sabak:</b> ek jaisa status ka matlab ek jaisi wajah nahi hota.',
@@ -473,10 +500,10 @@ node-2   Ready    <none>   90d   v1.30.2`,
             {
               q: '<code>mailer</code> ke liye secret <code>regcred</code> namespace mein pehle se maujood hai. Phir 401 kyun aa raha hai?',
               choices: [
-                'Secret ka maujood hona kaafi nahi — mailer deployment mein spec.imagePullSecrets nahi likha, isliye kubelet ne secret uthaya hi nahi',
-                'Secret ka type galat hai, Opaque hona chahiye',
-                'Secret ko har node par manually copy karna padta hai',
-                'kubelet secrets sirf default namespace se padhta hai',
+                'Secret ka hona kaafi nahi — mailer ke pod spec mein imagePullSecrets likha hi nahi',
+                'Secret ka type galat hai — kubelet sirf Opaque type ki secret ko pull ke liye padhta hai',
+                'Pull secret har node par haath se copy karni padti hai, kubelet API se secret nahi laata',
+                'kubelet pull secrets sirf default namespace se padhta hai, isliye secret wahan bhi chahiye',
               ],
               answer: 0,
               explain: 'kubelet apne aap namespace ki saari secrets nahi aazmata. kubelet sirf wahi secret use karta hai jo pod spec ke <code>imagePullSecrets</code> mein likhi ho, ya jo pod ke ServiceAccount par lagi ho. <b>Do fix:</b> deployment mein <code>imagePullSecrets: [{name: regcred}]</code> jodo, ya ServiceAccount par ek baar patch kar do taaki namespace ke saare pods ko apne aap mile.',
@@ -587,10 +614,10 @@ spec:
           {
             q: 'Interviewer: "CI ne image <code>myapp:1.0</code> dobara build karke push ki. Pods restart karne par bhi purana code chal raha hai. Kyun?"',
             choices: [
-              'imagePullPolicy IfNotPresent hai — node par cached myapp:1.0 milte hi kubelet registry se baat hi nahi karta',
-              'kubelet ki image cache 24 ghante tak refresh nahi hoti',
-              'Deployment ka spec badla nahi, isliye naye pods bane hi nahi',
-              'Registry ne purani layer serve ki',
+              'imagePullPolicy IfNotPresent hai — node par myapp:1.0 milte hi kubelet registry se poochta nahi',
+              'kubelet ki image cache 24 ghante mein refresh hoti hai, isliye naya build kal se chalega',
+              'Registry ne CDN cache se purani layers di — naye push ko phailne mein ek ghanta lagta hai',
+              'containerd chalte node par purani image ka naam lock rakhta hai jab tak node reboot na ho',
             ],
             answer: 0,
             explain: 'Non-<code>latest</code> tag ke saath default <code>imagePullPolicy</code> <b>IfNotPresent</b> hoti hai. Node par <code>myapp:1.0</code> naam ki image pehle se maujood hai, isliye kubelet registry se poochta hi nahi ki naya digest aaya ya nahi. <b>Do sahi ilaaj:</b> har build par naya immutable tag do (<code>myapp:1.0-abc123</code>), ya digest se pin karo (<code>myapp@sha256:…</code>). <code>imagePullPolicy: Always</code> kaam karta hai par mutable tag ki asli bimari nahi hatata.',
@@ -598,10 +625,10 @@ spec:
           {
             q: 'Interviewer: "Ek hi image do namespaces mein deploy ki. dev mein pull ho gayi, prod mein 401 aa raha hai. Secret dono jagah check kar li — dono mein hai."',
             choices: [
-              'prod ke deployment spec mein imagePullSecrets likha hi nahi, ya prod ka ServiceAccount alag hai jispe secret attach nahi hai',
-              'Secret ka data base64 mein double-encode ho gaya hai',
-              'Registry ne prod cluster ka IP block kar diya',
-              'prod namespace mein PodSecurity policy secrets padhne se rok rahi hai',
+              'prod ke pod spec mein imagePullSecrets nahi, ya prod ka ServiceAccount alag hai jis par secret nahi',
+              'Secret dev se copy ki gayi — copy hui secret ka resourceVersion kubelet maanta hi nahi',
+              'Registry ne prod cluster ke NAT IP ko block kiya hai, isliye 401 sirf prod mein aata hai',
+              'prod namespace ka PodSecurity restricted level kubelet ko pull secret padhne se rokta hai',
             ],
             answer: 0,
             explain: 'Secret ka maujood hona kaafi nahi — secret ko pod se <b>jodna</b> padta hai. Do jagah jodi jaati hai: pod spec ka <code>imagePullSecrets</code>, ya pod ke ServiceAccount ka <code>imagePullSecrets</code>. Aksar dev ke default ServiceAccount par secret patch kiya hota hai aur prod ke ServiceAccount par patch reh jaata hai. Check karo: <code>kubectl get sa default -n prod -o yaml</code>.',
@@ -660,7 +687,7 @@ kubectl describe pod t3 | grep -A3 Failed</pre>
            <tr><td><code>137</code></td><td>SIGKILL — kernel ka OOM killer, ya grace period ke baad runtime ka force-kill</td><td>Memory limit tod di → Reason: <b>OOMKilled</b> (Reason: Error ho toh memory nahi)</td></tr>
            <tr><td><code>139</code></td><td>Kernel (SIGSEGV)</td><td>Segfault — native library ka bug, ya galat libc ki binary (glibc wali musl/Alpine mein). Galat CPU architecture ka error alag hai: <code>exec format error</code></td></tr>
            <tr><td><code>143</code></td><td>kubelet (SIGTERM)</td><td>Graceful shutdown chala. Aksar liveness probe fail hone ke baad.</td></tr>
-           <tr><td><code>127</code></td><td>Shell</td><td>"command not found" — entrypoint ka path galat hai</td></tr>
+           <tr><td><code>127</code></td><td>Shell</td><td>"command not found" — shell ke andar chalaya command image mein hai hi nahi (jaise <code>sh -c "npm start"</code>, par image mein npm nahi). Exec-form entrypoint ka path hi galat ho to container start hi nahi hota: <code>StartError</code>, exit 128.</td></tr>
          </table>
          <div class="war-story"><b>⚡ Sabse mehnga confusion:</b> Exit Code 137 dekhte hi log
          memory limit badha dete hain. Par 137 sirf "SIGKILL mila" kehta hai. Agar
@@ -785,10 +812,10 @@ payments-api-5d7f9c8b6-h3nqx     180m         210Mi`,
             {
               q: 'payments-api ke restarts ki asli wajah kya hai?',
               choices: [
-                'Liveness probe ka timeout 1s hai par /healthz endpoint peak par 1.1s+ leta hai — kubelet swasth container ko maar raha hai',
-                'Application memory limit paar kar rahi hai aur OOMKilled ho rahi hai',
-                'Application boot par crash kar rahi hai kyunki config missing hai',
-                'Node par disk pressure hai isliye pod evict ho raha hai',
+                'Liveness timeout 1s hai par /healthz peak par 1.1s+ leta hai — kubelet swasth container maar raha hai',
+                'Application memory limit paar karti hai aur peak traffic par OOMKilled hoke restart hoti hai',
+                'Naye release mein ek config key gayab hai, isliye application har boot par crash karti hai',
+                'Node par disk pressure hai, kubelet har kuch minute mein pod ko evict karke dobara chalata hai',
               ],
               answer: 0,
               explain: 'Teen sabooot jodo: <b>(1)</b> Exit Code 143 = SIGTERM, yaani kisi ne band karne ko kaha, application khud nahi mari. <b>(2)</b> Events mein <code>Liveness probe failed: context deadline exceeded</code> aur <code>Killing … failed liveness probe</code>. <b>(3)</b> Logs mein <code>/healthz</code> ne 1180 ms liye jabki <code>timeoutSeconds: 1</code> hai. kubelet ek bilkul swasth container ko maar raha hai.',
@@ -797,12 +824,12 @@ payments-api-5d7f9c8b6-h3nqx     180m         210Mi`,
               q: 'Sabse behtar fix kya hai?',
               choices: [
                 'timeoutSeconds badhao aur /healthz ko halka karo taaki healthz database ko ping na kare',
-                'Liveness probe hata do — probe ke bina restart hi nahi hoga',
-                'Memory limit dugni kar do',
-                'failureThreshold ko 100 kar do',
+                'Liveness probe hata do — probe hi nahi hogi to kubelet container ko kabhi restart nahi karega',
+                'Memory limit dugni kar do taaki peak par /healthz ko zyada RAM mile aur jaldi jawab de',
+                'failureThreshold ko 100 kar do — 100 baar fail hone tak kubelet container ko nahi chhuega',
               ],
               answer: 0,
-              explain: 'Do cheezein saath karni hain. <b>(1)</b> <code>timeoutSeconds</code> ko 3-5 second karo taaki peak par bhi probe ko jawab mil jaye. <b>(2)</b> Aur zyada zaroori: <code>/healthz</code> endpoint ko sirf "process zinda hai?" ka jawab dena chahiye — database ko ping nahi karna chahiye. Database ki jaanch <b>readiness</b> probe ka kaam hai, kyunki readiness fail hone par pod sirf traffic se hatta hai, marta nahi. Liveness probe hata dena galat hai: phir asli deadlock hone par bhi kubelet kabhi restart nahi karega.',
+              explain: 'Do cheezein saath karni hain. <b>(1)</b> <code>timeoutSeconds</code> ko 3-5 second karo taaki peak par bhi probe ko jawab mil jaye. <b>(2)</b> Aur zyada zaroori: <code>/healthz</code> endpoint ko sirf "process zinda hai?" ka jawab dena chahiye — database ko ping nahi karna chahiye. Database ki jaanch <b>readiness</b> probe ka kaam hai, kyunki readiness fail hone par pod sirf traffic se hatta hai, marta nahi. Liveness probe hata dena galat hai: phir asli deadlock hone par bhi kubelet kabhi restart nahi karega. <code>failureThreshold: 100</code> bhi wahi galti hai — asli deadlock pakadne mein 100 × periodSeconds (10s par ~17 minute) lagenge. Memory ka is timeout se koi rishta nahi: probe CPU/database ke intezaar mein atki hai.',
             },
           ],
         },
@@ -816,8 +843,8 @@ payments-api-5d7f9c8b6-h3nqx     180m         210Mi`,
             nodes: [{ name: 'node-2', status: 'Ready', roles: '<none>', age: '40d', version: 'v1.30.2' }],
             pods: [
               { name: 'ingest-worker-6f5d4c3b2-nn8kp', ready: '0/1', status: 'CrashLoopBackOff', restarts: 11, age: '24m', node: 'node-2', ip: '10.244.2.44',
-                logs: 'Error from server (BadRequest): container "worker" in pod is waiting to start: CrashLoopBackOff',
-                prevLogs: '2026-09-04T16:02:11Z ingest-worker starting, batch size 5000\n2026-09-04T16:02:14Z loaded 5000 records into memory\n2026-09-04T16:02:19Z loaded 40000 records into memory\n<no further output — process killed>',
+                logs: '2026-09-04T16:02:11Z ingest-worker starting, batch size 5000\n2026-09-04T16:02:14Z loaded 5000 records into memory\n2026-09-04T16:02:19Z loaded 40000 records into memory',
+                prevLogs: '2026-09-04T16:02:11Z ingest-worker starting, batch size 5000\n2026-09-04T16:02:14Z loaded 5000 records into memory\n2026-09-04T16:02:19Z loaded 40000 records into memory',
                 describe: 'Name:         ingest-worker-6f5d4c3b2-nn8kp\nNamespace:    data\nStatus:       Running\nContainers:\n  worker:\n    State:          Waiting\n      Reason:       CrashLoopBackOff\n    Last State:     Terminated\n      Reason:       OOMKilled\n      Exit Code:    137\n      Started:      Mon, 04 Sep 2026 16:02:11\n      Finished:     Mon, 04 Sep 2026 16:02:23\n    Restart Count:  11\n    Limits:\n      memory:  256Mi\n    Requests:\n      memory:  256Mi\nEvents:\n  Warning  BackOff  40s (x88 over 24m)  kubelet  Back-off restarting failed container worker',
                 events: ['Warning  BackOff  40s (x88 over 24m)  kubelet  Back-off restarting failed container worker'] },
             ],
@@ -860,13 +887,13 @@ payments-api-5d7f9c8b6-h3nqx     180m         210Mi`,
           {
             q: 'Interviewer: "Container ka Exit Code 137 hai par Reason <code>Error</code> likha hai, <code>OOMKilled</code> nahi. Kya matlab?"',
             choices: [
-              'SIGKILL kisi aur ne bheja — container ne apni memory limit nahi todi. Node ka kernel OOM killer, ya koi sidecar/supervisor doshi ho sakta hai',
-              'Matlab wahi hai, Kubernetes kabhi-kabhi Reason likhna bhool jaata hai',
-              'Container ne khud exit(137) call kiya',
-              'Image ka architecture galat hai',
+              'SIGKILL mila par memory se nahi — aksar SIGTERM ke baad grace period khatam hone par force-kill',
+              'Matlab wahi OOMKill hai — kubelet busy hone par Reason mein OOMKilled likhna bhool jaata hai',
+              '137 hamesha app ka apna exit code hai — application ne khud exit(137) bula ke band kiya',
+              'Image ka architecture galat hai — arm64 image amd64 node par 137 de ke turant band hoti hai',
             ],
             answer: 0,
-            explain: '<code>OOMKilled</code> Reason kubelet <b>sirf tab</b> likhta hai jab container apni cgroup memory limit par maara gaya ho. 137 ke saath <code>Reason: Error</code> ka matlab hai SIGKILL to mila par container ki limit ki wajah se nahi. Aam wajah: node par kul memory khatam hui aur kernel ka OOM killer ne sabse bhaari process chuna (limit ke andar wale process bhi shikaar ban sakte hain), ya ek sidecar ne main process ko maara. Isliye <b>Reason padhe bina limit badhana</b> problem ko chhupata hai, hataata nahi.',
+            explain: '137 = 128 + 9, yaani process ko <b>SIGKILL</b> mila. Reason <code>OOMKilled</code> tab likha jaata hai jab kernel ne container ko <b>memory</b> ki wajah se maara. <code>Reason: Error</code> + 137 ka matlab SIGKILL kisi aur raaste se aaya. Sabse aam raasta: pod band karte waqt (rollout, delete, drain, liveness fail) kubelet <b>SIGTERM</b> bhejta hai; app <code>terminationGracePeriodSeconds</code> (default 30s) mein band nahi hui, to runtime ne SIGKILL maara. Aksar wajah: PID 1 ek shell script hai jo SIGTERM app tak pahunchata hi nahi, ya app SIGTERM handle hi nahi karti. Jaanch: <code>describe</code> ke Events mein <code>Killing</code>, aur app ke shutdown logs. Galat architecture par <code>exec format error</code> aata hai (exit 1), 137 nahi.',
           },
           {
             terminal: {
@@ -933,13 +960,18 @@ kubectl describe pod -l app=quitter | grep -A3 "Last State"
 # Exit Code 137 — OOMKilled
 kubectl run hog --image=polinux/stress --restart=Never \\
   --overrides='{"spec":{"containers":[{"name":"hog","image":"polinux/stress","resources":{"limits":{"memory":"20Mi"}},"command":["stress","--vm","1","--vm-bytes","150M"]}]}}'
-kubectl describe pod hog | grep -A4 "Last State"
+kubectl describe pod hog | grep -A4 "State:"      # --restart=Never: "Last State" nahi, seedha State: Terminated
 
-# Exit Code 127 — command not found
-kubectl run typo --image=busybox --restart=Never -- /bin/nosuchthing
-kubectl describe pod typo | grep -A3 "Last State"</pre>`,
+# Exit Code 127 — shell ko command nahi mili
+kubectl run typo --image=busybox --restart=Never -- sh -c 'nosuchthing'
+kubectl describe pod typo | grep -A3 "State:"     # Reason: Error, Exit Code: 127
+kubectl logs typo                                  # sh: nosuchthing: not found
+
+# Bonus — exec-form mein galat path: container start hi nahi hota
+kubectl run typo2 --image=busybox --restart=Never -- /bin/nosuchthing
+kubectl describe pod typo2 | grep -A3 "State:"    # Reason: StartError, Exit Code: 128</pre>`,
       cards: [
-        { front: 'Exit Code 137 ke saath Reason "Error" (OOMKilled nahi) — kya matlab?', back: 'SIGKILL mila par container ki apni memory limit ki wajah se nahi. Aam wajah: node ka kernel OOM killer, ya kisi sidecar ne process ko maara. Limit badhane se theek nahi hoga.' },
+        { front: 'Exit Code 137 ke saath Reason "Error" (OOMKilled nahi) — kya matlab?', back: 'SIGKILL mila par memory ki wajah se nahi. Sabse aam: SIGTERM ke baad <code>terminationGracePeriodSeconds</code> khatam hua aur runtime ne force-kill kiya — app SIGTERM par ruki hi nahi (aksar shell script PID 1 hai jo signal aage nahi bhejti). Limit badhane se theek nahi hoga.' },
         { front: 'Exit Code 0 par CrashLoopBackOff kaise?', back: 'Process apna kaam karke shaanti se khatam ho gaya. Deployment ko hamesha chalne wala process chahiye, isliye kubelet dobara start karta hai — anant loop. Sahi resource <b>Job</b> hai.' },
         { front: 'Liveness probe se hone wala restart kaise pehchanein?', back: 'Exit Code <b>143</b> (SIGTERM) + Events mein <code>Liveness probe failed</code> aur <code>Killing … failed liveness probe</code>. Application ke logs saaf honge — kyunki application ki galti hai hi nahi.' },
         { front: 'Slow-booting application ko liveness se kaise bachayein?', back: '<code>startupProbe</code> lagao. Jab tak startupProbe pass nahi hoti, kubelet liveness aur readiness dono chalata hi nahi. <code>failureThreshold × periodSeconds</code> = boot ka budget.' },
@@ -999,13 +1031,18 @@ kubectl describe pod typo | grep -A3 "Last State"</pre>`,
          <table class="kk-tbl">
            <tr><th>#</th><th>Padav</th><th>Fail hone par status</th><th>Galti kahan hai</th></tr>
            <tr><td>1</td><td><b>Image pull</b> — image node par laana</td><td><code>ErrImagePull</code> / <code>ImagePullBackOff</code></td><td>Image ka naam/tag, ya registry credentials</td></tr>
-           <tr><td>2</td><td><b>Config assemble</b> — env, ConfigMap, Secret, volume padhna</td><td><code>CreateContainerConfigError</code></td><td>Cluster mein koi ConfigMap/Secret gayab hai</td></tr>
+           <tr><td>2</td><td><b>Config assemble</b> — env ke liye ConfigMap/Secret padhna, securityContext jaanchna</td><td><code>CreateContainerConfigError</code></td><td>Cluster mein koi ConfigMap/Secret (ya uski key) gayab hai, ya runAsNonRoot vs root image</td></tr>
            <tr><td>3</td><td><b>Container create</b> — CRI ko OCI spec dena</td><td><code>CreateContainerError</code></td><td>Pod spec adhoori hai (jaise koi command hi nahi), ya CRI/runtime ka masla</td></tr>
-           <tr><td>4</td><td><b>Process start</b> — entrypoint exec karna</td><td><code>RunContainerError</code> / <code>StartError</code></td><td>Entrypoint ka path galat, permission nahi, ya binary ka architecture galat</td></tr>
+           <tr><td>4</td><td><b>Process start</b> — entrypoint exec karna</td><td><code>RunContainerError</code> / <code>StartError</code></td><td>Entrypoint ka path galat, ya file par execute ki ijaazat nahi</td></tr>
          </table>
          <p>Chaaron padav paar hone ke baad hi container "Running" banta hai. Uske baad koi
          gadbad hoti hai to status <code>CrashLoopBackOff</code> hota hai — jo bilkul alag bimari hai
-         (container chala tha, phir mara).</p>`,
+         (container chala tha, phir mara).</p>
+         <div class="kab-box"><b>🧠 Do jaal jo is table mein fit nahi lagte:</b><br>
+         • ConfigMap/Secret <b>volume</b> ki tarah mount hai aur gayab hai → padav 2 tak pahunchta hi nahi:
+         pod <code>ContainerCreating</code> par atakta hai, Event <code>FailedMount … configmap "x" not found</code>.<br>
+         • Binary ka <b>architecture</b> galat (arm64 image, amd64 node) → padav 4 paar ho jaata hai, process
+         chalte hi <code>exec format error</code> de ke marta hai → <code>CrashLoopBackOff</code>, aur wajah <code>kubectl logs</code> mein.</div>`,
 
         `<h3>🔍 Do sabse confusing errors ka farq</h3>
          <p><b>CreateContainerConfigError</b> — kubelet pod spec ko poora nahi kar paaya kyunki
@@ -1040,14 +1077,29 @@ kubectl describe pod typo | grep -A3 "Last State"</pre>`,
           steps: [
             { lane: 'sched', t: 'Pod ko node-2 par bind kiya', detail: 'Scheduler ne node chuna aur API server par <code>spec.nodeName: node-2</code> likh diya. Event: <code>Scheduled</code>.<br><b>Yahan fail ho to:</b> pod <code>Pending</code> rehta hai aur Event <code>FailedScheduling</code> aata hai.' },
             { lane: 'kubelet', t: 'node-2 ke kubelet ne pod uthaya', detail: 'node-2 ka kubelet API server se apne node ke pods dekhta rehta hai. Naya pod dikha, kubelet ne kaam shuru kiya.' },
-            { lane: 'kubelet', t: 'Sandbox banaya (pause container + network)', detail: 'kubelet ne CNI plugin bulaya. Pod ko IP mila aur network namespace bana. <br><b>Yahan fail ho to:</b> status <code>ContainerCreating</code> par atak jaata hai aur Event mein <code>failed to setup network for sandbox</code> aata hai — matlab CNI plugin ya IP pool ka masla.' },
+            { lane: 'kubelet', t: 'Volumes mount kiye, sandbox banaya (pause container + network)', detail: 'kubelet ne pehle pod ke volumes taiyaar kiye (PVC, ConfigMap/Secret volumes), phir CNI plugin bulaya. Pod ko IP mila aur network namespace bana.<br><b>Yahan fail ho to:</b> status <code>ContainerCreating</code> par atak jaata hai. Event batata hai kaun: <code>FailedMount</code> (gayab ConfigMap/Secret volume, PVC attach nahi hua) ya <code>failed to setup network for sandbox</code> (CNI plugin ya IP pool ka masla).' },
             { lane: 'kubelet', t: 'Image node par laayi', detail: 'kubelet ne CRI se image pull karwayi.<br><b>Yahan fail ho to:</b> <code>ErrImagePull</code> → <code>ImagePullBackOff</code>.',
-              ask: { q: 'Pod ka status <code>ImagePullBackOff</code> hai. kubelet abhi kis padav par atka hai?', choices: ['Padav 1 — image node par laane par; container abhi bana hi nahi', 'Padav 4 — process start karne par', 'Container chal raha tha aur ab mar gaya', 'Scheduler ne abhi node hi nahi chuna'], answer: 0, explain: 'ImagePullBackOff ka matlab image node tak pahunchi hi nahi. Jab image node par nahi hai, container object banane ka sawal hi nahi uthta. Isliye is padav par <code>kubectl logs</code> hamesha khaali hoga — container kabhi bana hi nahi.' } },
-            { lane: 'kubelet', t: 'Config assemble ki — env, ConfigMap, Secret, volumes', detail: 'kubelet ne API server se har referenced ConfigMap aur Secret maangi taaki environment variables bhare ja sakein.<br><b>Yahan fail ho to:</b> <code>CreateContainerConfigError</code>, aur Event mein exact naam: <code>secret "demo-a-secret" not found</code>.',
-              ask: { q: 'Status <code>CreateContainerConfigError</code> hai aur Event kehta hai <code>configmap "app-settings" not found</code>. Fix kahan lagega?', choices: ['Cluster mein — gayab ConfigMap "app-settings" banao (ya pod spec mein naam ka typo theek karo)', 'Image mein — Dockerfile ka ENTRYPOINT theek karo', 'Node par — containerd restart karo', 'Deployment mein — replicas badhao'], answer: 0, explain: 'ConfigError ka matlab hamesha yahi hai: pod spec kisi aisi cheez ko reference kar raha hai jo cluster mein maujood nahi. Do hi fix hain — gayab ConfigMap/Secret bana do, ya pod spec mein likha naam theek kar do. Image ya runtime ka is error se koi lena-dena nahi.' } },
+              ask: { q: 'Pod ka status <code>ImagePullBackOff</code> hai. kubelet abhi kis padav par atka hai?', choices: [
+                'Padav 1 — image node par laane mein; container object abhi bana hi nahi',
+                'Padav 4 — process start ho gaya, ab kubelet image ka digest verify kar raha hai',
+                'Padav 3 — container ban gaya, bas CRI ab uska network jod raha hai',
+                'Padav 0 — scheduler ne abhi tak pod ke liye koi node chuna hi nahi',
+              ], answer: 0, explain: 'ImagePullBackOff ka matlab image node tak pahunchi hi nahi. Jab image node par nahi hai, container object banane ka sawal hi nahi uthta. Isliye is padav par <code>kubectl logs</code> hamesha khaali hoga — container kabhi bana hi nahi.' } },
+            { lane: 'kubelet', t: 'Config assemble ki — env ke liye ConfigMap aur Secret', detail: 'kubelet ne env/envFrom mein referenced har ConfigMap aur Secret padhi taaki environment variables bhare ja sakein, aur securityContext jaancha (jaise runAsNonRoot).<br><b>Yahan fail ho to:</b> <code>CreateContainerConfigError</code>, aur Event mein exact naam: <code>secret "demo-a-secret" not found</code>.',
+              ask: { q: 'Status <code>CreateContainerConfigError</code> hai aur Event kehta hai <code>configmap "app-settings" not found</code>. Fix kahan lagega?', choices: [
+                'Cluster mein — gayab ConfigMap app-settings banao, ya pod spec ka typo theek karo',
+                'Image mein — Dockerfile mein app-settings file COPY karke image dobara build karo',
+                'Node par — containerd restart karo taaki woh ConfigMap ki cache dobara bhar le',
+                'Deployment mein — replicas badhao taaki koi naya pod doosre node par ConfigMap dhoondh le',
+              ], answer: 0, explain: 'ConfigError ka matlab hamesha yahi hai: pod spec kisi aisi cheez ko reference kar raha hai jo cluster mein maujood nahi. Do hi fix hain — gayab ConfigMap/Secret bana do, ya pod spec mein likha naam theek kar do. Image ya runtime ka is error se koi lena-dena nahi.' } },
             { lane: 'cri', t: 'CRI ne container object banaya (OCI spec)', detail: 'kubelet ne containerd ko poori spec di: image, env, mounts, aur chalane ke liye command. containerd ne OCI runtime spec generate ki.<br><b>Yahan fail ho to:</b> <code>CreateContainerError</code> — jaise <code>failed to generate spec: no command specified</code>.',
-              ask: { q: 'Event: <code>Error: failed to generate spec: no command specified</code>. Kya toota hai?', choices: ['Image mein ENTRYPOINT/CMD nahi hai aur pod spec mein bhi command nahi diya — CRI ke paas chalane ko kuch hai hi nahi', 'Secret gayab hai', 'Node par memory khatam ho gayi', 'Image ka tag galat hai'], answer: 0, explain: 'containerd ko batana zaroori hai ki container ke andar kaunsa process chalega. Yeh jaankari do jagah se aa sakti hai: image ka ENTRYPOINT/CMD, ya pod spec ka <code>command</code>/<code>args</code>. Dono khaali hone par containerd OCI spec bana hi nahi sakta. Fix: pod spec mein <code>command: ["/app/server"]</code> daalo, ya image ko ENTRYPOINT ke saath dobara build karo.' } },
-            { lane: 'proc', t: 'Process start hua — entrypoint exec', detail: 'containerd ne container ke andar entrypoint chalaya.<br><b>Yahan fail ho to:</b> <code>RunContainerError</code> / <code>StartError</code> — jaise <code>exec: "/app/server": stat /app/server: no such file or directory</code> (path galat) ya <code>permission denied</code> (execute bit nahi laga).' },
+              ask: { q: 'Event: <code>Error: failed to generate spec: no command specified</code>. Kya toota hai?', choices: [
+                'Image mein ENTRYPOINT/CMD nahi aur pod spec mein bhi command nahi — chalane ko kuch hai hi nahi',
+                'Pod ki Secret gayab hai, isliye CRI ne container ka environment banane se mana kar diya',
+                'Node par memory khatam ho gayi, isliye containerd naya OCI spec bana hi nahi paaya',
+                'Image ka tag galat hai — registry ne khaali image di jisme koi layer hi nahi thi',
+              ], answer: 0, explain: 'containerd ko batana zaroori hai ki container ke andar kaunsa process chalega. Yeh jaankari do jagah se aa sakti hai: image ka ENTRYPOINT/CMD, ya pod spec ka <code>command</code>/<code>args</code>. Dono khaali hone par containerd OCI spec bana hi nahi sakta. Fix: pod spec mein <code>command: ["/app/server"]</code> daalo, ya image ko ENTRYPOINT ke saath dobara build karo.' } },
+            { lane: 'proc', t: 'Process start hua — entrypoint exec', detail: 'containerd ne container ke andar entrypoint chalaya.<br><b>Yahan fail ho to:</b> <code>RunContainerError</code> / <code>StartError</code> — jaise <code>exec: "/app/server": stat /app/server: no such file or directory</code> (path galat) ya <code>permission denied</code> (execute bit nahi laga). Galat architecture ki binary yahan nahi atakti — woh start hote hi <code>exec format error</code> de ke marti hai (CrashLoopBackOff).' },
             { lane: 'proc', t: 'Container ab Running hai', detail: 'Chaaron padav paar. Ab jo bhi gadbad hogi woh <b>alag</b> bimari hogi: process khud mara to <code>CrashLoopBackOff</code>, readiness probe fail hui to <code>Running</code> par <code>0/1</code>.' },
             { lane: 'kubelet', t: 'kubelet ne probes chalu ki', detail: 'startupProbe pehle. startupProbe pass hone ke baad hi liveness aur readiness chalti hain. Readiness pass hone par pod Service ke endpoints mein add hota hai.' },
           ],
@@ -1061,10 +1113,10 @@ kubectl describe pod typo | grep -A3 "Last State"</pre>`,
               q: 'Pod ka status <code>CreateContainerConfigError</code> hai. Event: <code>Error: secret "db-creds" not found</code>. Sabse pehla kadam?',
               context: 'NAME                      READY   STATUS                       RESTARTS   AGE\ndemo-a-75bf694876-2rxs4   0/1     CreateContainerConfigError   0          6m',
               choices: [
-                'kubectl get secret db-creds -n &lt;pod ka namespace&gt; — dekho secret hai bhi ya nahi, aur usi namespace mein hai ya nahi',
-                'kubectl logs demo-a-75bf694876-2rxs4 — application ka error padho',
-                'Deployment restart karo',
-                'Memory limit badhao',
+                'kubectl get secret db-creds -n &lt;ns&gt; — secret hai bhi, aur pod ke namespace mein hai?',
+                'kubectl logs demo-a-75bf694876-2rxs4 — application ne jo error likha, wahi padho',
+                'kubectl rollout restart deploy/demo-a — naye pod ko shayad secret mil jayegi, ek baar try karo',
+                'Memory limit badhao — config assemble karte waqt kubelet ko container ki memory kam padi',
               ],
               answer: 0,
               explain: 'Container abhi bana hi nahi hai, isliye logs khaali honge — <code>kubectl logs</code> yahan bekaar hai. Event ne naam bhi de diya hai: <code>db-creds</code>. Do cheezein check karo: <b>(1)</b> secret <code>db-creds</code> maujood hai? <b>(2)</b> secret usi namespace mein hai jisme pod hai? Secret namespace-scoped hoti hai, isliye "secret to bani hui hai" kehna kaafi nahi.',
@@ -1072,10 +1124,10 @@ kubectl describe pod typo | grep -A3 "Last State"</pre>`,
             {
               q: '<code>CreateContainerConfigError</code> aa raha hai par secret <code>db-creds</code> maujood hai aur sahi namespace mein hai. Ab kya dekhoge?',
               choices: [
-                'secretKeyRef mein diya gaya KEY ka naam — secret mein woh key maujood hai ya nahi',
-                'Node ka disk space',
-                'Image ka tag',
-                'Service ka selector',
+                'secretKeyRef mein diya KEY ka naam — secret mein woh key maujood hai ya nahi',
+                'Node ka disk space — kubelet secret ko disk par likh hi nahi paa raha',
+                'Image ka tag — naye tag mein secret padhne wala code hi nahi hai',
+                'Service ka selector — secret wahi pod padh sakta hai jo Service mein ho',
               ],
               answer: 0,
               explain: 'Error message do tarah ka hota hai: <code>secret "x" not found</code> (secret hi nahi hai) aur <code>couldn\'t find key some_key in Secret ns/x</code> (secret hai par key nahi hai). Doosra case zyada aam hai — secret mein key <code>password</code> hai par pod spec <code>PASSWORD</code> maang raha hai. Check karo: <code>kubectl get secret db-creds -o jsonpath="{.data}"</code>.',
@@ -1084,9 +1136,9 @@ kubectl describe pod typo | grep -A3 "Last State"</pre>`,
               q: 'Status <code>CreateContainerError</code> hai (bina "Config" ke). Event: <code>failed to generate spec: no command specified</code>. Kya karoge?',
               choices: [
                 'Pod spec mein command/args do, ya image ko ENTRYPOINT ke saath dobara build karo',
-                'Gayab ConfigMap banao',
-                'imagePullSecrets jodo',
-                'Liveness probe ka timeout badhao',
+                'Gayab ConfigMap banao — spec adhoori isliye hai kyunki ConfigMap nahi mili',
+                'imagePullSecrets jodo — private image ka ENTRYPOINT bina login ke nahi padhta',
+                'Liveness probe ka timeout badhao taaki container ko start hone ka waqt mile',
               ],
               answer: 0,
               explain: '"Config" shabd na hone se hi pata chal jaata hai ki masla ConfigMap/Secret ka nahi hai. Yahan CRI ko batana hi nahi gaya ki container ke andar kaunsa process chalega. Jaankari sirf do jagah se aa sakti hai: image ka ENTRYPOINT/CMD, ya pod spec ka <code>command</code>. Dono khaali hain.',
@@ -1094,13 +1146,13 @@ kubectl describe pod typo | grep -A3 "Last State"</pre>`,
             {
               q: 'Ek scratch image chalu karte hi status <code>RunContainerError</code> deta hai: <code>exec: "/app/server": permission denied</code>. Root cause?',
               choices: [
-                'Binary par execute bit nahi laga (Dockerfile mein chmod +x chhoot gaya), ya securityContext ne read-only/nosuid laga rakha hai',
-                'Image registry se nahi utri',
-                'Secret gayab hai',
-                'Pod ko node nahi mila',
+                'Binary par execute bit nahi (chmod +x chhoot gaya), ya runAsUser wale user ko execute ki ijaazat nahi',
+                'Image registry se aadhi hi utri, isliye /app/server file adhoori hai aur chal nahi sakti',
+                'Container ki Secret gayab hai, isliye kubelet ne /app/server chalane ki ijaazat roki',
+                'Pod ko node nahi mila, isliye kisi bhi node par /app/server chalane ka adhikaar nahi',
               ],
               answer: 0,
-              explain: '<code>permission denied</code> exec ke waqt aata hai — matlab file <b>maujood hai</b> (warna "no such file or directory" aata) par chalayi nahi ja sakti. Do aam wajah: Dockerfile mein <code>COPY</code> ke baad <code>chmod +x</code> chhoot gaya, ya <code>securityContext.runAsUser</code> ne aisa user diya jise us file par execute permission nahi hai.',
+              explain: '<code>permission denied</code> exec ke waqt aata hai — matlab file <b>maujood hai</b> (warna "no such file or directory" aata) par chalayi nahi ja sakti. Do aam wajah: Dockerfile mein <code>COPY</code> ke baad <code>chmod +x</code> chhoot gaya, ya <code>securityContext.runAsUser</code> ne aisa user diya jise us file par execute permission nahi hai (file root ki, mode 0700). Adhoori image pull hoti hi nahi — layer ka digest match na ho to pull hi fail hota hai. Aur Secret ya scheduling ki galti is padav tak pahunchti hi nahi.',
             },
           ],
         },
@@ -1174,10 +1226,10 @@ kubectl describe pod typo | grep -A3 "Last State"</pre>`,
           {
             q: 'Interviewer: "Ek pod <code>CreateContainerConfigError</code> de raha hai. Kya main <code>kubectl logs</code> se error dekh sakta hoon?"',
             choices: [
-              'Nahi — container abhi bana hi nahi, isliye koi log stream maujood nahi. Error sirf describe ke Events mein hai',
-              'Haan — logs mein poora config error aata hai',
-              'Haan, par --previous flag ke saath',
-              'Nahi — par kubectl logs -c init se mil jayega',
+              'Nahi — container abhi bana hi nahi, isliye log stream hai hi nahi; error describe ke Events mein hai',
+              'Haan — kubelet config error ko application ke stdout mein likh deta hai, logs mein poora milega',
+              'Haan, par --previous ke saath — config error pichhle mare hue container ke logs mein hota hai',
+              'Nahi — par kubectl logs -c init se mil jayega, config errors init container mein jaati hain',
             ],
             answer: 0,
             explain: 'Log stream tabhi banta hai jab container process shuru ho. <code>CreateContainerConfigError</code> padav 2 par hai — container object abhi bana hi nahi, process ka to sawal hi nahi. <code>--previous</code> bhi bekaar hai kyunki koi pichhla container bhi nahi tha. <b>Niyam:</b> "Waiting" state wali har error (ImagePullBackOff, CreateContainerConfigError, CreateContainerError) ka jawab <code>describe</code> ke Events mein hota hai, logs mein kabhi nahi.',
@@ -1185,10 +1237,10 @@ kubectl describe pod typo | grep -A3 "Last State"</pre>`,
           {
             q: 'Interviewer: "Sirf error ka naam sunke batao ki fix kahan lagega — <code>CreateContainerConfigError</code>, aur <code>CreateContainerError</code>."',
             choices: [
-              'ConfigError → cluster mein gayab ConfigMap/Secret. CreateContainerError → pod spec adhoori (command nahi) ya CRI/runtime ka masla',
-              'Dono → image dobara build karo',
-              'ConfigError → node ka containerd restart. CreateContainerError → secret banao',
-              'Dono → imagePullSecrets jodo',
+              'ConfigError → cluster mein gayab ConfigMap/Secret. CreateContainerError → adhoori spec ya CRI',
+              'Dono → image dobara build karo; dono errors ka matlab image ka ENTRYPOINT toota hai',
+              'ConfigError → node ka containerd restart karo. CreateContainerError → gayab Secret banao',
+              'Dono → imagePullSecrets jodo; dono errors private registry ke login fail hone se aate hain',
             ],
             answer: 0,
             explain: 'Shabd "Config" hi batata hai ki kubelet <b>configuration jama karne</b> ke padav par atka — yaani API server se ConfigMap/Secret maangi aur cheez mili nahi. Bina "Config" wala <code>CreateContainerError</code> agla padav hai: config to jama ho gayi, par CRI ne container object banane se mana kar diya (aam wajah: <code>no command specified</code>).',
@@ -1378,10 +1430,10 @@ node-2   1080m        27%    3990Mi          51%`,
             {
               q: '<code>kubectl top nodes</code> 28% CPU dikha raha hai, phir bhi scheduler "Insufficient cpu" keh raha hai. Kyun?',
               choices: [
-                'Scheduler asli usage nahi dekhta — scheduler node par pehle se book ki gayi REQUESTS ka jod dekhta hai, jo 93% hai',
-                'metrics-server ka data purana hai, asli usage 93% hai',
-                'Scheduler ne node-1 ko unhealthy maan liya hai',
-                'CPU limits 155% hain isliye scheduler mana kar raha hai',
+                'Scheduler asli usage nahi dekhta — node par pehle se book hui REQUESTS ka jod dekhta hai (93%)',
+                'metrics-server ka data 10 minute purana hai; asli usage abhi 93% hai, isliye scheduler ne mana kiya',
+                'Scheduler ne node-1 ko unhealthy maan liya hai, isliye uski bachi CPU ko ginti mein nahi leta',
+                'CPU limits ka jod 155% hai — scheduler limits dekh ke overcommit wale node par pod nahi rakhta',
               ],
               answer: 0,
               explain: '<b>Requests = booking, usage = asli kharch.</b> Scheduler booking dekhta hai. Node-1 par pehle se chal rahe pods ne 3750m CPU <i>request</i> ki hui hai (93%), chahe woh asli mein sirf 1130m (28%) hi use kar rahe hon. Scheduler ke liye 93% jagah ja chuki hai. <code>kubectl top</code> ka number monitoring ke liye upyogi hai, scheduling ka faisla samajhne ke liye <code>kubectl describe node</code> ka <b>Allocated resources</b> block dekho.',
@@ -1389,10 +1441,10 @@ node-2   1080m        27%    3990Mi          51%`,
             {
               q: '5 nodes mein se 3 ke liye "Preemption is not helpful for scheduling" likha hai. Iska kya matlab hai?',
               choices: [
-                'Un 3 nodes par wajah taint hai, capacity nahi — pods hataane se taint nahi hatega, isliye preemption ka koi fayda nahi',
-                'Un 3 nodes par saare pods ki priority zyada hai',
-                'Preemption cluster mein disable hai',
-                'Un 3 nodes NotReady hain',
+                'Un 3 nodes par wajah taint hai, capacity nahi — pods hatane se taint nahi hatega',
+                'Un 3 nodes ke saare pods ki priority zyada hai, isliye kisi ko hataya nahi ja sakta',
+                'Cluster mein preemption feature hi band hai, isliye scheduler yeh message deta hai',
+                'Un 3 nodes NotReady hain, isliye scheduler un par preemption ki koshish nahi karta',
               ],
               answer: 0,
               explain: 'Do alag preemption message hote hain. <b>"No preemption victims found"</b> = wajah capacity hai, par jinhe hatana padega unki priority kam nahi hai (2 nodes par yahi likha hai). <b>"Preemption is not helpful"</b> = wajah capacity hai hi nahi. Taint aur nodeSelector aise hi karan hain — node par chahe saare pods hata do, taint wahin rahega aur label nahi aayega. Message padh ke hi pata chal jaata hai ki priority badhana kaam karega ya nahi.',
@@ -1400,10 +1452,10 @@ node-2   1080m        27%    3990Mi          51%`,
             {
               q: 'Sabse tez aur sabse safe fix kya hai?',
               choices: [
-                'checkout-worker ka CPU request 2 se ghata ke asli zaroorat jitna (jaise 500m) karo — aur agar 2 CPU sach mein chahiye to naya node jodo',
-                'node-3 aur node-4 se batch taint hata do',
-                'Pod ki priority badha do taaki preemption chal jaye',
-                'Limits hata do',
+                'checkout-worker ka CPU request 2 se asli zaroorat (jaise 500m) par lao; sach mein 2 CPU chahiye to naya node',
+                'node-3 aur node-4 se batch taint hata do — wahan khaali CPU hai, pod turant schedule ho jayega',
+                'checkout-worker ki priority badha do taaki scheduler doosre pods hata ke jagah bana de',
+                'checkout-worker ki CPU limits hata do — limits na hon to scheduler pod ko kahin bhi rakh deta hai',
               ],
               answer: 0,
               explain: 'Request 2 CPU hai par asli usage se pata chalta hai ki itni zaroorat nahi. Request ko sahi karna turant kaam karta hai aur poore cluster ki packing sudhaar deta hai. <b>batch taint hatana galat hai</b> — taint jaan-boojh ke lagaya gaya hai taaki batch nodes par sirf batch kaam chale. <b>Priority badhana bhi kaam nahi karega</b> kyunki teen nodes par "Preemption is not helpful" likha hai, aur baaki do par preemption se doosre production pods marenge. Agar application ko sach mein 2 CPU chahiye, to sahi jawab naya node jodna hai (ya Cluster Autoscaler/Karpenter ko yeh kaam dena).',
@@ -1493,10 +1545,10 @@ node-2   1080m        27%    3990Mi          51%`,
           {
             q: 'Interviewer: "Node par CPU usage 20% hai par naya pod Pending hai aur Insufficient cpu keh raha hai. Kaise samjhaoge?"',
             choices: [
-              'Scheduler usage nahi, REQUESTS ka jod dekhta hai. Node par pehle se chal rahe pods ne apni requests se node book kar rakhi hai — describe node ka "Allocated resources" block sach dikhata hai',
-              'metrics-server ka data purana hai',
-              'Node par CPU throttling laga hua hai',
-              'Pod ke limits bahut zyada hain',
+              'Scheduler usage nahi, requests ka jod dekhta hai — sach describe node ke Allocated resources mein',
+              'metrics-server ka data purana hai — top ka 20% galat hai, node asli mein bhari hui hai',
+              'Node par CPU throttling laga hai, isliye scheduler throttled node par naye pod nahi bhejta',
+              'Pod ke limits bahut zyada hain — scheduler limits ko node ki bachi hui CPU se milata hai',
             ],
             answer: 0,
             explain: 'Requests ek <b>booking</b> hai, usage ek <b>kharch</b>. Scheduler booking ke hisaab se jagah deta hai taaki har pod ko uski maangi hui jagah pakki mile. Isliye over-requesting (jaise har pod ke liye 1 CPU maangna jab 100m kaafi hai) cluster ki packing barbaad karti hai — nodes khaali dikhte hain par scheduler ke liye bhare hue hote hain. Sach dekhne ka command: <code>kubectl describe node &lt;n&gt; | grep -A6 "Allocated resources"</code>.',
@@ -1504,10 +1556,10 @@ node-2   1080m        27%    3990Mi          51%`,
           {
             q: 'Interviewer: "PVC use karne wala StatefulSet pod Pending hai aur Event kehta hai <code>pod has unbound immediate PersistentVolumeClaims</code>. Kahan dekhoge?"',
             choices: [
-              'PVC ka status aur StorageClass — PVC Pending hai kyunki koi PV match nahi hua ya CSI provisioner volume nahi bana paa raha',
-              'Node ke taints',
-              'Pod ke CPU requests',
-              'Deployment ka replicas count',
+              'PVC ka status aur StorageClass — koi PV match nahi hua, ya CSI provisioner volume nahi bana pa raha',
+              'Node ke taints — PVC wale pods ke liye har node par storage toleration chahiye hoti hai',
+              'Pod ke CPU requests — StatefulSet pods ko volume ke saath extra CPU book karni padti hai',
+              'StatefulSet ka replicas count — PVC sirf tab bind hoti hai jab saare replicas ek saath banein',
             ],
             answer: 0,
             explain: 'Scheduler pod ko tab tak node nahi de sakta jab tak pod ki PVC bound na ho (volume ka topology node ke chunav ko badal sakta hai). Do kadam: <b>(1)</b> <code>kubectl get pvc</code> — Pending hai? <b>(2)</b> <code>kubectl describe pvc</code> — <code>no persistent volumes available for this claim</code> (static PV chahiye) ya provisioner ki error. Agar StorageClass ka <code>volumeBindingMode: WaitForFirstConsumer</code> hai to PVC ka Pending rehna <b>normal</b> hai — PVC tab bind hoti hai jab scheduler node chun leta hai.',
@@ -1572,7 +1624,7 @@ kubectl describe rs &lt;replicaset-ka-naam&gt; -n &lt;ns&gt;    # ← asli error
          <div class="war-story"><b>⚡ Asli incident:</b> ek team ne <code>staging</code> namespace mein
          deploy kiya aur ghante bhar Deployment ko describe karti rahi. Deployment sirf
          <code>ProgressDeadlineExceeded</code> keh raha tha. ReplicaSet ke Events mein ek line thi:
-         <code>pods "web-6d5c-" is forbidden: exceeded quota: staging-quota, requested: pods=1, used: pods=10, limited: pods=10</code>.
+         <code>pods "web-6d5c8b7f9-q2w8r" is forbidden: exceeded quota: staging-quota, requested: pods=1, used: pods=10, limited: pods=10</code>.
          Ek hi command — <code>kubectl describe rs</code> — ghante bhar ki bahes bacha sakti thi.</div>`,
 
         `<h3>📏 ResourceQuota aur LimitRange — do alag cheezein</h3>
@@ -1602,8 +1654,8 @@ spec:
          <p><b>Dono ka mel — ek chhupa hua jaal:</b> agar namespace par <code>requests.cpu</code> wali
          ResourceQuota lagi hai, to har container mein CPU request <b>likhna zaroori</b> ho jaata hai.
          Bina request wala pod turant reject hota hai:</p>
-         <pre>Error creating: pods "api-7d9c-" is forbidden:
-  failed quota: staging-quota: must specify requests.cpu</pre>
+         <pre>Error creating: pods "api-7d9c4b6f8-x2k4p" is forbidden:
+  failed quota: staging-quota: must specify requests.cpu for: api</pre>
          <p>Ilaaj: ya to har deployment mein requests likho, ya namespace mein LimitRange lagao jo
          defaults bhar de. LimitRange lagane ke baad purane pods apne aap nahi badalte — sirf
          <b>naye</b> pods ko default milta hai.</p>`,
@@ -1623,7 +1675,7 @@ spec:
               out: `NAME          READY   UP-TO-DATE   AVAILABLE   AGE
 web           4/4     4            4           30d
 worker        6/6     6            6           30d
-reports-api   0/2     0            0           9m`,
+reports-api   0/1     0            0           9m`,
               note: 'Deployment maujood hai par <code>UP-TO-DATE</code> bhi 0 hai — matlab ReplicaSet ne ek bhi pod nahi banaya. Zanjeer Deployment ke <b>baad</b> tooti hai.',
             },
             {
@@ -1635,7 +1687,7 @@ reports-api   0/2     0            0           9m`,
   Available        False   MinimumReplicasUnavailable
   Progressing      False   ProgressDeadlineExceeded
 OldReplicaSets:    <none>
-NewReplicaSet:     reports-api-6c8d9f7b5 (0/2 replicas created)
+NewReplicaSet:     reports-api-6c8d9f7b5 (0/1 replicas created)
 Events:            <none>`,
               note: 'Deployment ke Events <b>khaali</b> hain. <code>MinimumReplicasUnavailable</code> aur <code>ProgressDeadlineExceeded</code> sirf lakshan hain — "pods nahi aaye" ka doosra tarika. Par ek kaam ki cheez mili: ReplicaSet ka naam <code>reports-api-6c8d9f7b5</code>.',
             },
@@ -1646,10 +1698,10 @@ Events:            <none>`,
   Type     Reason        Age                   From                   Message
   ----     ------        ----                  ----                   -------
   Warning  FailedCreate  9m (x9 over 9m)       replicaset-controller
-    Error creating: pods "reports-api-6c8d9f7b5-" is forbidden:
+    Error creating: pods "reports-api-6c8d9f7b5-k8xqz" is forbidden:
     exceeded quota: staging-quota,
     requested: pods=1, used: pods=10, limited: pods=10`,
-              note: '<b>Yahan hai jawab.</b> ReplicaSet controller ne pod banane ki koshish ki aur API server ne mana kar diya. Namespace <code>staging</code> ki ResourceQuota <code>staging-quota</code> mein pods ki seema 10 hai aur 10 pods pehle se chal rahe hain.',
+              note: '<b>Yahan hai jawab.</b> ReplicaSet controller ne pod banane ki koshish ki aur API server ne mana kar diya. Namespace <code>staging</code> ki ResourceQuota <code>staging-quota</code> mein pods ki seema 10 hai aur 10 slot pehle se bhare hain.',
             },
             {
               cmd: 'kubectl describe quota staging-quota -n staging',
@@ -1667,18 +1719,19 @@ requests.memory         3560Mi  8Gi`,
             {
               cmd: 'kubectl get pods -n staging',
               clue: false,
-              out: `NAME                       READY   STATUS      RESTARTS   AGE
-web-5f6c7d8e9-aa1bb        1/1     Running     0          30d
-web-5f6c7d8e9-cc2dd        1/1     Running     0          30d
-web-5f6c7d8e9-ee3ff        1/1     Running     0          30d
-web-5f6c7d8e9-gg4hh        1/1     Running     0          30d
-worker-8a9b0c1d2-ii5jj     1/1     Running     0          30d
-worker-8a9b0c1d2-kk6ll     1/1     Running     0          30d
-worker-8a9b0c1d2-mm7nn     1/1     Running     0          30d
-worker-8a9b0c1d2-oo8pp     1/1     Running     0          30d
-worker-8a9b0c1d2-qq9rr     1/1     Running     0          30d
-migration-once-xx0yy       0/1     Completed   0          14d`,
-              note: 'Ek chhupa hua kaanta: <code>migration-once-xx0yy</code> <b>Completed</b> hai — kaam khatam ho chuka hai par pod object abhi bhi maujood hai. ResourceQuota <code>pods</code> ki ginti mein Completed pods bhi <b>gine jaate hain</b>. Ek mara hua pod ek zinda pod ki jagah roke baitha hai.',
+              out: `NAME                     READY   STATUS             RESTARTS   AGE
+web-5f6c7d8e9-aa1bb      1/1     Running            0          30d
+web-5f6c7d8e9-cc2dd      1/1     Running            0          30d
+web-5f6c7d8e9-ee3ff      1/1     Running            0          30d
+web-5f6c7d8e9-gg4hh      1/1     Running            0          30d
+worker-8a9b0c1d2-ii5jj   1/1     Running            0          30d
+worker-8a9b0c1d2-kk6ll   1/1     Running            0          30d
+worker-8a9b0c1d2-mm7nn   1/1     Running            0          30d
+worker-8a9b0c1d2-oo8pp   1/1     Running            0          30d
+worker-8a9b0c1d2-qq9rr   1/1     Running            0          30d
+debug-tools              0/1     ImagePullBackOff   0          14d
+migration-once-xx0yy     0/1     Completed          0          14d`,
+              note: 'Gino: 11 pods dikh rahe hain par quota <b>10</b> keh rahi hai. Farq <code>migration-once-xx0yy</code> ka hai — <b>Completed</b> (Succeeded) aur Failed pods quota mein <b>gine hi nahi jaate</b>. Asli kaanta: <code>debug-tools</code> — kisi ne 14 din pehle galat image ke saath chalaya aur bhool gaya. ImagePullBackOff wala pod abhi bhi <b>Pending</b> phase mein hai, aur Pending pod quota ka poora slot leta hai.',
             },
             {
               cmd: 'kubectl get limitrange -n staging',
@@ -1699,10 +1752,10 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
             {
               q: 'Deployment ke describe mein Events khaali the par ReplicaSet ke describe mein poora error tha. Aisa kyun?',
               choices: [
-                'Pod banane ka kaam ReplicaSet controller karta hai, isliye pod-creation ki har error ReplicaSet ke Events par lagti hai',
-                'Deployment ke events 5 minute baad delete ho jaate hain',
-                'Deployment ke events dekhne ke liye -o yaml chahiye',
-                'Quota errors sirf namespace level par likhi jaati hain',
+                'Pod banane ka kaam ReplicaSet controller karta hai, isliye pod-creation ki error ReplicaSet par lagti hai',
+                'Deployment ke events 5 minute baad apne aap delete ho jaate hain, ReplicaSet ke events nahi',
+                'Deployment ke events sirf kubectl get deploy -o yaml mein dikhte hain, describe mein nahi',
+                'Quota errors sirf namespace ke level par likhi jaati hain, Deployment unhe dekh hi nahi sakta',
               ],
               answer: 0,
               explain: 'Zanjeer hai: <b>Deployment controller</b> ReplicaSet banata hai, <b>ReplicaSet controller</b> pods banata hai. Pod banane ki koshish ReplicaSet controller karta hai, isliye API server ka "forbidden" jawab ReplicaSet ke Events par record hota hai. Deployment ke paas sirf itni khabar hoti hai ki replicas poore nahi hue — isliye Deployment sirf <code>MinimumReplicasUnavailable</code> keh paata hai. <b>Niyam:</b> pod dikh hi nahi raha? Seedha <code>kubectl describe rs</code>.',
@@ -1710,10 +1763,10 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
             {
               q: 'Quota mein CPU (2100m/4) aur memory (3560Mi/8Gi) dono khaali hain, phir bhi pod nahi ban raha. Kyun?',
               choices: [
-                'ResourceQuota mein pods ki alag ginti (10/10) hai, jo bhari hui hai — resources bache hone se koi fark nahi padta',
-                'CPU quota me 2100m ka matlab hai ki 2 hi pods aa sakte hain',
-                'Memory quota reserve mode mein hai',
-                'Namespace read-only ho gaya hai',
+                'pods: 10/10 alag seema hai aur bhar chuki hai — CPU/memory bachi ho, tab bhi pod nahi banega',
+                'CPU quota 2100m ka matlab hai ki namespace mein sirf 2 hi pods aur aa sakte hain',
+                'Memory quota "reserve" mode mein hai — bachi hui memory naye pods ko nahi di jaati',
+                'Namespace read-only ho gaya hai — quota ek baar limit choo le to namespace lock ho jaata hai',
               ],
               answer: 0,
               explain: 'ResourceQuota ki har line ek <b>alag</b> seema hai, aur <b>koi bhi ek</b> line bharne par naya object banna band ho jaata hai. Yahan <code>pods: 10</code> bhari hui hai. Object count ki seemayein (<code>pods</code>, <code>services</code>, <code>persistentvolumeclaims</code>, <code>configmaps</code>) resource seemaon se bilkul alag hain — dono ek saath lagti hain.',
@@ -1721,13 +1774,13 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
             {
               q: 'Sabse behtar turant fix kya hai?',
               choices: [
-                'Completed pod migration-once-xx0yy delete karo — mara hua pod quota ki ginti mein jagah roke baitha hai',
-                'Quota delete kar do',
-                'reports-api ko doosre namespace mein deploy karo',
-                'web deployment ko 4 se 2 replicas par le aao',
+                '14 din se ImagePullBackOff mein atka debug-tools pod delete karo — woh ek slot ghere hai',
+                'Completed pod migration-once-xx0yy delete karo — khatam hua pod bhi quota ka ek slot ghere hai',
+                'staging-quota delete kar do — staging mein seema ki zaroorat hi nahi, team khud dhyaan rakhegi',
+                'web deployment ko 4 se 3 replicas par le aao — ek pod kam hote hi reports-api ko jagah mil jayegi',
               ],
               answer: 0,
-              explain: 'ResourceQuota ki <code>pods</code> ginti mein <b>Completed aur Failed pods bhi gine jaate hain</b>, kyunki pod object abhi bhi maujood hai. <code>migration-once</code> 14 din pehle apna kaam khatam kar chuka hai aur ab bas jagah ghere baitha hai. Usse delete karte hi ek slot khaali ho jayega. Lambi durusti: Job par <code>ttlSecondsAfterFinished</code> lagao taaki khatam hone ke baad Job apne pods khud saaf kar de. Quota delete karna ya production replicas ghatana upay nahi, nuksaan hai.',
+              explain: 'ResourceQuota ki <code>pods</code> ginti sirf <b>non-terminal</b> pods ki hoti hai — Pending (ImagePullBackOff bhi), Running (CrashLoopBackOff bhi). <b>Completed aur Failed pods gine hi nahi jaate</b>, isliye <code>migration-once</code> delete karne se ek bhi slot nahi milega. <code>debug-tools</code> 14 din se Pending mein atka slot ghere baitha hai — delete karte hi slot khaali, aur ReplicaSet controller agli koshish mein reports-api ka pod bana dega. Quota hatana ya chalti service ke replicas kaatna ilaaj nahi, nuksaan hai. <b>Aadat:</b> debug ke liye <code>kubectl run --rm -it</code> — exit karte hi pod khud mit jaata hai.',
             },
           ],
         },
@@ -1759,7 +1812,7 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
           responses: [
             {
               re: /^(kubectl|k) describe (rs|replicaset) \S+/,
-              out: 'Name:           reports-api-6c8d9f7b5\nNamespace:      staging\nSelector:       app=reports-api,pod-template-hash=6c8d9f7b5\nReplicas:       0 current / 3 desired\nPods Status:    0 Running / 0 Waiting / 0 Succeeded / 0 Failed\nEvents:\n  Type     Reason        Age              From                    Message\n  ----     ------        ----             ----                    -------\n  Warning  FailedCreate  9m (x9 over 9m)  replicaset-controller   Error creating: pods "reports-api-6c8d9f7b5-" is forbidden: failed quota: staging-quota: must specify requests.cpu,requests.memory',
+              out: 'Name:           reports-api-6c8d9f7b5\nNamespace:      staging\nSelector:       app=reports-api,pod-template-hash=6c8d9f7b5\nReplicas:       0 current / 3 desired\nPods Status:    0 Running / 0 Waiting / 0 Succeeded / 0 Failed\nEvents:\n  Type     Reason        Age              From                    Message\n  ----     ------        ----             ----                    -------\n  Warning  FailedCreate  9m (x9 over 9m)  replicaset-controller   Error creating: pods "reports-api-6c8d9f7b5-m4tq9" is forbidden: failed quota: staging-quota: must specify requests.cpu for: api; requests.memory for: api',
             },
             {
               re: /^(kubectl|k) (describe|get) (quota|resourcequota|resourcequotas)/,
@@ -1802,11 +1855,11 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
             },
             'scale-up.yaml': {
               desc: 'reports-api ko 3 se 6 replicas karta hai',
-              apply: () => 'deployment.apps/reports-api scaled\n\n⚠️ Ab bhi 0 pods hain. Error "must specify requests.cpu,requests.memory" thi — replicas badhane se har naya pod bhi wahi error dega.',
+              apply: () => 'deployment.apps/reports-api scaled\n\n⚠️ Ab bhi 0 pods hain. Error "must specify requests.cpu for: api; requests.memory for: api" thi — replicas badhane se har naya pod bhi wahi error dega.',
             },
           },
           success: allOf(T_QUOTA),
-          successText: 'Poori kahani ek command mein thi: <code>kubectl describe rs</code>. Error <code>failed quota: staging-quota: must specify requests.cpu,requests.memory</code> ne bata diya tha ki quota ne pods ki ginti nahi roki (pods 0/20 khaali the) — quota ne <b>requests likhna zaroori</b> kar diya tha. Do sahi fix hain: har deployment mein requests likho, ya namespace mein LimitRange lagao jo defaults bhar de. <b>Yaad rakho:</b> jab namespace ki quota mein <code>requests.cpu</code> likha ho, tab har container mein request likhna majboori ban jaata hai.',
+          successText: 'Poori kahani ek command mein thi: <code>kubectl describe rs</code>. Error <code>failed quota: staging-quota: must specify requests.cpu for: api; requests.memory for: api</code> ne bata diya tha ki quota ne pods ki ginti nahi roki (pods 0/20 khaali the) — quota ne <b>requests likhna zaroori</b> kar diya tha. Do sahi fix hain: har deployment mein requests likho, ya namespace mein LimitRange lagao jo defaults bhar de. <b>Yaad rakho:</b> jab namespace ki quota mein <code>requests.cpu</code> likha ho, tab har container mein request likhna majboori ban jaata hai.',
           hints: [
             'kubectl get deploy — reports-api 0/3 par hai',
             'kubectl get rs — ReplicaSet bana hai par CURRENT 0 hai',
@@ -1822,9 +1875,9 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
             q: 'Interviewer: "Deployment 0/3 par atki hai aur ek bhi pod nahi bana. Pehla command kaunsa chalaoge?"',
             choices: [
               'kubectl describe rs &lt;replicaset&gt; — pod banane ki har error ReplicaSet ke Events par aati hai',
-              'kubectl logs deployment/&lt;naam&gt; — deployment controller ke logs',
-              'kubectl describe deployment &lt;naam&gt; — Events wahan hote hain',
-              'kubectl get nodes — node capacity dekho',
+              'kubectl logs deployment/&lt;naam&gt; — deployment controller ke logs wahin milte hain',
+              'kubectl describe deployment &lt;naam&gt; — pod-creation ki errors Deployment ke Events mein hoti hain',
+              'kubectl get nodes — dekho kahin saare nodes bhare to nahi, isliye pod nahi ban raha',
             ],
             answer: 0,
             explain: 'Deployment ke Events aise case mein aksar khaali hote hain, kyunki Deployment ne apna kaam (ReplicaSet banana) kar diya tha. Pod banane ki koshish ReplicaSet controller karta hai, isliye <code>exceeded quota</code>, <code>forbidden by PodSecurity</code>, <code>must specify requests.cpu</code> jaisi saari errors ReplicaSet ke Events par likhi jaati hain. <b>Pod hai hi nahi → describe rs.</b> Pod hai par toota hai → describe pod.',
@@ -1832,13 +1885,13 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
           {
             q: 'Interviewer: "Namespace ki pod quota 10/10 bhari hai par sirf 6 pods Running dikh rahe hain. Baaki 4 kahan hain?"',
             choices: [
-              'Completed aur Failed pods bhi quota ki ginti mein aate hain — Job ke khatam ho chuke pods jagah roke baithe hain',
-              'Quota ka data 5 minute purana hota hai',
-              'Terminating pods do baar gine jaate hain',
-              'Doosre namespace ke pods bhi gine ja rahe hain',
+              'Woh zinda hain par Running nahi — Pending, ImagePullBackOff ya CrashLoopBackOff bhi slot lete hain',
+              'Job ke Completed aur Failed pods — khatam hone ke baad bhi delete hone tak woh slot ghere rehte hain',
+              'Quota din mein ek baar recalculate hoti hai — kal delete hue pods abhi bhi ginti mein baithe hain',
+              'Doosre namespaces ke pods — same labels wale pods bhi isi namespace ki quota mein gine jaate hain',
             ],
             answer: 0,
-            explain: 'ResourceQuota <b>pod objects</b> ginti hai, sirf Running pods nahi. Khatam ho chuke Job ke pods (<code>Completed</code>) aur crash hokar chhode gaye pods (<code>Failed</code>) tab tak gine jaate hain jab tak koi unhe delete na kare. Ilaaj: Job par <code>ttlSecondsAfterFinished: 300</code> lagao, ya CronJob par <code>successfulJobsHistoryLimit</code> aur <code>failedJobsHistoryLimit</code> set karo. Turant saaf karne ka tarika: <code>kubectl delete pod --field-selector=status.phase==Succeeded -n &lt;ns&gt;</code>.',
+            explain: 'ResourceQuota sirf <b>non-terminal</b> pods ginti hai: <b>Pending</b> (ImagePullBackOff aur unschedulable pods isi phase mein hain) aur <b>Running</b> (CrashLoopBackOff wala pod bhi phase mein Running hi hai). <b>Completed (Succeeded) aur Failed pods ginti se bahar hain</b> — yeh ek bahut aam galatfehmi hai; unhe delete karne se slot nahi milta. Dhoondho: <code>kubectl get pods -n &lt;ns&gt;</code> mein STATUS column (Pending / ImagePullBackOff / CrashLoopBackOff), ya <code>--field-selector=status.phase=Pending</code>. Quota namespace ke bahar kabhi nahi dekhti, aur Used column har pod banne/mitne par turant badalta hai.',
           },
         ],
       },
@@ -1846,7 +1899,7 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
         'Main "pod hai hi nahi" aur "pod hai par toota hai" ko alag treat karta hoon',
         'Main jaanta hoon ki pod-creation ki errors ReplicaSet ke Events par milti hain',
         'Main ResourceQuota (namespace ki kul seema) aur LimitRange (per-container seema + defaults) mein farq kar sakta hoon',
-        'Main jaanta hoon ki Completed pods bhi quota ki ginti mein aate hain',
+        'Main jaanta hoon ki quota sirf zinda (non-terminal) pods ginti hai — atka Pending pod slot leta hai, Completed pod nahi',
       ],
       homework: `<p>Quota ka jaal khud bana ke dekho:</p>
         <pre>kubectl create ns qdemo
@@ -1855,7 +1908,7 @@ kubectl create deployment web --image=nginx --replicas=3 -n qdemo
 
 kubectl get pods -n qdemo          # 0 pods
 kubectl get rs -n qdemo
-kubectl describe rs -n qdemo | tail -5      # ← asli error yahan
+kubectl describe rs -n qdemo | tail -3      # ← asli error: must specify requests.cpu for: nginx
 
 # ab LimitRange se defaults bharo
 kubectl create -f - <<'EOF'
@@ -1868,14 +1921,24 @@ spec:
       defaultRequest: { cpu: 100m }
       default: { cpu: 200m }
 EOF
-kubectl rollout restart deploy/web -n qdemo
-kubectl get pods -n qdemo          # ab 2 pods (quota pods=2)
-kubectl delete ns qdemo</pre>`,
+# rollout restart ki zaroorat NAHI — ReplicaSet controller khud dobara koshish karta hai
+sleep 20
+kubectl get pods -n qdemo          # ab 2 pods (quota pods=2) — teesra "exceeded quota"
+kubectl describe quota -n qdemo    # pods 2/2, requests.cpu 200m/1
+
+# bonus: Completed pod quota mein gina jaata hai?
+kubectl create ns qdemo-2
+kubectl create quota onlyone --hard=pods=1 -n qdemo-2
+kubectl run done --image=busybox --restart=Never -n qdemo-2 -- true
+sleep 10; kubectl describe quota onlyone -n qdemo-2   # pods 0/1 — Completed gina hi nahi jaata
+kubectl delete ns qdemo qdemo-2</pre>
+        <p>⚠️ Quota bhari ho tab <code>kubectl rollout restart</code> mat chalana: naya ReplicaSet ek bhi naya
+        pod nahi bana payega (slot nahi) aur rollout atak jayega.</p>`,
       cards: [
         { front: 'Deployment hai par ek bhi pod nahi bana — pehla command?', back: '<code>kubectl describe rs &lt;replicaset&gt;</code>. Pod banane ka kaam ReplicaSet controller karta hai, isliye FailedCreate ki error ReplicaSet ke Events par hoti hai. Deployment sirf MinimumReplicasUnavailable kehta hai.' },
         { front: 'ResourceQuota vs LimitRange?', back: '<b>ResourceQuota</b> = poore namespace ki kul seema (pods=10, requests.cpu=4). <b>LimitRange</b> = ek container ki seema, aur sabse kaam ki baat: LimitRange <b>default</b> requests/limits bhar deti hai.' },
         { front: 'Namespace quota mein requests.cpu hai par deployment mein request nahi likhi — kya hoga?', back: 'Pod banega hi nahi: <code>failed quota: … must specify requests.cpu</code>. Fix: requests likho, ya LimitRange lagao jo defaultRequest bhar de (sirf naye pods par lagta hai).' },
-        { front: 'Quota ki pods ginti mein kaunse pods aate hain?', back: 'Saare pod objects — <b>Completed aur Failed bhi</b>. Khatam ho chuke Job pods jagah ghere rehte hain. Fix: Job par <code>ttlSecondsAfterFinished</code>.' },
+        { front: 'Quota ki pods ginti mein kaunse pods aate hain?', back: 'Sirf non-terminal: <b>Pending</b> (ImagePullBackOff bhi) aur <b>Running</b> (CrashLoopBackOff bhi). <b>Completed aur Failed nahi</b> — unhe delete karne se slot nahi milta. Bhoola hua atka Pending pod chup-chaap slot ghere rehta hai.' },
         { front: 'Pod-banane ki zanjeer kaunsi hai?', back: 'Deployment ──▶ (Deployment controller) ──▶ ReplicaSet ──▶ (ReplicaSet controller) ──▶ Pod. Error us controller ke Events par hoti hai jiska kadam fail hua.' },
       ],
     },
@@ -2048,10 +2111,10 @@ green-864c4d957c-w7ktb   1/1     Running   93s   app=green,version=v1,pod-templa
             {
               q: 'blue-service kabhi green ka page kyun deti hai?',
               choices: [
-                'blue-service ka selector sirf version=v1 maangta hai, aur green pods par bhi version=v1 laga hai — isliye blue-service green ke pods bhi utha leti hai',
-                'green-service ka nodePort blue-service se takra raha hai',
-                'Ingress controller ne backends ki caching kar li hai',
-                'Dono deployments ek hi ReplicaSet share kar rahe hain',
+                'blue-service ka selector sirf version=v1 maangta hai, aur green pods par bhi version=v1 laga hai',
+                'green-service ka nodePort blue-service ke nodePort se takra raha hai, isliye traffic mix hota hai',
+                'Ingress controller ne purane backends cache kar liye hain aur kabhi-kabhi green par bhej deta hai',
+                'Dono deployments ek hi ReplicaSet share kar rahe hain, isliye pods aapas mein badalte rehte hain',
               ],
               answer: 0,
               explain: 'Service ka Deployment se koi seedha rishta hai hi nahi. Service sirf apna label selector chalati hai. <code>blue-service</code> ka selector <code>{version: v1}</code> chaaron pods se match hota hai, isliye endpoints mein 4 IP aa gaye aur kube-proxy unme se kisi bhi ek par traffic bhej deta hai — kareeb aadhi baar green par.',
@@ -2059,10 +2122,10 @@ green-864c4d957c-w7ktb   1/1     Running   93s   app=green,version=v1,pod-templa
             {
               q: 'Aise bug ko pakadne ka sabse pakka tarika kya hai?',
               choices: [
-                'kubectl get endpoints — endpoints mein IP gino aur us Deployment ke replica count se milao',
-                'Application ke logs mein 5xx dhoondo',
-                'Service ki YAML padho aur maan lo ki selector sahi hai',
-                'kubectl top pods se load ka bantwara dekho',
+                'kubectl get endpoints — endpoints ke IP gino aur Deployment ke replica count se milao',
+                'Application ke logs mein 5xx dhoondo — galat backend hamesha error deta hai',
+                'Service ki YAML dhyaan se padho — selector sahi likha hai to bug kahin aur hai',
+                'kubectl top pods se dekho ki load kin pods par baant raha hai, wahi sach hai',
               ],
               answer: 0,
               explain: 'Endpoints object <b>sach ka source</b> hai — endpoints mein wahi IP hote hain jinpar kube-proxy asli mein traffic bhejta hai. Service ki YAML padhna kaafi nahi, kyunki YAML sahi dikhne par bhi selector kisi aur pod se match kar sakta hai. Logs bhi bekaar hain kyunki dono applications 200 hi deti hain. <b>Ginti karo:</b> blue deployment 2 replicas ka hai par endpoints 4 hain — bug pakda gaya.',
@@ -2070,10 +2133,10 @@ green-864c4d957c-w7ktb   1/1     Running   93s   app=green,version=v1,pod-templa
             {
               q: 'Sahi fix kya hai?',
               choices: [
-                'blue-service ka selector {app: blue, version: v1} karo — har Service ka selector ek unique label par bhi tika hona chahiye',
-                'green pods se version=v1 label hata do',
-                'blue aur green ko alag namespaces mein daal do',
-                'blue-service ko headless (clusterIP: None) bana do',
+                'blue-service ka selector {app: blue, version: v1} karo — har selector unique label par tike',
+                'green pods se version=v1 label hata do, taaki blue-service unhe match na kare',
+                'blue aur green ko alag namespaces mein daal do, selectors waise ke waise rehne do',
+                'blue-service ko headless (clusterIP: None) bana do taaki DNS seedha sahi pods de',
               ],
               answer: 0,
               explain: 'Sabse chhota aur sabse surakshit fix: <code>blue-service</code> ke selector mein <code>app: blue</code> jodo, taaki selector ek unique pehchaan par tike. green ke pods se <code>version=v1</code> hataana kaam to karega par galat hai — green ki apni versioning tootegi, aur green-service ka selector bhi <code>version=v1</code> maangta hai, isliye green-service ke endpoints khaali ho jayenge. <b>Niyam:</b> har Service ka selector kam se kam ek aisa label maange jo sirf usi workload par ho.',
@@ -2180,10 +2243,10 @@ spec:
           {
             q: 'Interviewer: "Service ke endpoints bhare hue hain par curl karne par connection refused aa raha hai. Kya galat hai?"',
             choices: [
-              'targetPort galat hai — endpoints ban gaye kyunki selector match ho gaya, par application us port par sun hi nahi rahi',
-              'Selector match nahi ho raha',
-              'Pod NotReady hai',
-              'NetworkPolicy block kar rahi hai',
+              'targetPort galat hai — selector match hua isliye endpoints bane, par app us port par sun hi nahi rahi',
+              'Selector match nahi ho raha — endpoints purane hain, controller unhe abhi saaf nahi kar paaya',
+              'Pod NotReady hai — readiness fail ho to bhi endpoints bhare rehte hain par refused aata hai',
+              'NetworkPolicy block kar rahi hai — policy packet ko reject karke connection refused bhejti hai',
             ],
             answer: 0,
             explain: 'Do alag lakshan, do alag wajah. <b>Endpoints khaali (<code>&lt;none&gt;</code>)</b> = selector match nahi hua, ya pods readiness probe fail kar rahe hain. <b>Endpoints bhare + connection refused</b> = selector to match ho gaya, par <code>targetPort</code> aise port par ishara kar raha hai jahan application sun hi nahi rahi. Confirm karo: <code>kubectl exec &lt;pod&gt; -- netstat -tlnp</code> se dekho application asli mein kis port par hai. (NetworkPolicy block karti to "connection refused" nahi, <b>timeout</b> aata.)',
@@ -2191,10 +2254,10 @@ spec:
           {
             q: 'Interviewer: "Ek canary deploy ke baad 10% users purana version dekh rahe hain, par Deployment 100% naye ReplicaSet par hai. Kahan dekhoge?"',
             choices: [
-              'kubectl get endpoints — purane ReplicaSet ka koi pod abhi bhi Service ke selector se match kar raha hoga (aksar Terminating pod ya orphan pod)',
-              'Ingress controller ka cache',
-              'CoreDNS ka TTL',
-              'Deployment ka progressDeadlineSeconds',
+              'kubectl get endpoints — purane ReplicaSet ka koi pod (Terminating ya orphan) ab bhi selector se match karta hai',
+              'Ingress controller ka cache — naya ReplicaSet aane par bhi woh purane pod IPs par bhejta rehta hai',
+              'CoreDNS ka TTL — 10% clients ke paas abhi bhi purane pod ka IP cached hai, TTL khatam hone do',
+              'Deployment ka progressDeadlineSeconds — rollout poora nahi hua, isliye 10% traffic purane par hai',
             ],
             answer: 0,
             explain: 'Endpoints hi sach hai. Do aam wajah: <b>(1)</b> purana pod <code>Terminating</code> mein hai par abhi bhi endpoints mein hai (preStop hook ya lamba <code>terminationGracePeriodSeconds</code>); <b>(2)</b> kisi ne pehle <code>kubectl delete rs --cascade=orphan</code> chalaya tha, jisse purane pods bina maalik ke reh gaye aur ab bhi selector se match karte hain. Dekho: <code>kubectl get endpoints &lt;svc&gt; -o yaml</code> mein har IP ka <code>targetRef</code> — targetRef seedha pod ka naam bata deta hai.',
@@ -2240,7 +2303,7 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
         'Samajhna ki `envFrom` wali ConfigMap badalne par pod apne aap nahi badalta',
         'Volume-mounted ConfigMap ka apne aap update hona (aur uska ~60-90s ka lag)',
         '`field is immutable` error ka matlab aur uska sahi ilaaj',
-        '`enableServiceLinks` ka chhupa hua "argument list too long" jaal',
+        '`enableServiceLinks` ka chhupa jaal — Service ke naam se apne aap aaye variables (REDIS_PORT=tcp://…)',
       ],
       lesson: [
         `<h3>🔁 ConfigMap badla, par pod purani value hi chala raha hai</h3>
@@ -2279,16 +2342,21 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
          Job ka <code>spec.template</code>, PVC ka <code>spec.resources</code> (sirf badhaya ja sakta hai),
          Service ka <code>clusterIP</code>, aur ConfigMap/Secret jinpar <code>immutable: true</code> laga ho.</p>
 
-         <div class="war-story"><b>⚡ Asli incident — "argument list too long".</b> Ek manifest
+         <div class="war-story"><b>⚡ Asli incident — "same manifest, alag crash".</b> Ek manifest
          <code>dev</code> namespace mein bilkul theek chali. Wahi manifest, bina ek akshar badle,
-         <code>staging</code> mein crash karne lagi:
-         <pre>standard_init_linux.go:228: exec user process caused: argument list too long</pre>
-         Wajah: Kubernetes har pod mein <b>us namespace ki har Service</b> ke liye environment
-         variables inject karta hai (<code>SERVICE_PAYMENTS_PORT_80_TCP=…</code> jaisi kai lines
-         per service). <code>dev</code> mein sirf 2 services thi. <code>staging</code> mein 40+ services thi,
-         isliye environment itna bada ho gaya ki Linux ka exec argument limit paar ho gaya.
-         <b>Ilaaj:</b> pod spec mein <code>enableServiceLinks: false</code> — CoreDNS pehle se
-         service discovery de raha hai, isliye yeh purane environment variables ki zaroorat hi nahi.</div>
+         <code>staging</code> mein CrashLoopBackOff:
+         <pre>{"level":"fatal","msg":"invalid REDIS_PORT","value":"tcp://10.96.12.4:6379"}</pre>
+         Wajah: kubelet har pod mein <b>us namespace ki har Service</b> ke liye ~7 environment
+         variables khud daal deta hai. Service ka naam <code>redis</code> hai to:
+         <code>REDIS_SERVICE_HOST</code>, <code>REDIS_SERVICE_PORT</code>, <code>REDIS_PORT=tcp://10.96.12.4:6379</code>,
+         <code>REDIS_PORT_6379_TCP</code>, <code>…_ADDR</code>, <code>…_PORT</code>, <code>…_PROTO</code>.
+         App ka code <code>REDIS_PORT</code> padhta tha (na mile to 6379). <code>dev</code> mein Redis bahar tha —
+         <code>redis</code> naam ki Service hi nahi — isliye variable khaali tha. <code>staging</code> mein Redis
+         cluster ke andar tha, aur kubelet ne <code>REDIS_PORT</code> mein ek URL bhar diya.
+         <b>Ilaaj:</b> pod spec mein <code>enableServiceLinks: false</code> — CoreDNS pehle se service
+         discovery deta hai, isliye yeh Docker-links zamaane ke variables bekaar hain.
+         (Hazaaron Services wale namespace mein yahi variables environment ko itna bada kar dete hain ki
+         exec hi <code>argument list too long</code> de deta hai — ilaaj wahi.)</div>
          <pre>spec:
   template:
     spec:
@@ -2304,9 +2372,9 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
               context: 'envFrom:\n  - configMapRef:\n      name: app-settings',
               choices: [
                 'Kuch nahi — pod purani value hi chalata rahega jab tak pod dobara na bane',
-                'Pod ke andar ki value ~60 second mein apne aap badal jayegi',
-                'kubelet pod ko apne aap restart kar dega',
-                'Pod turant CrashLoopBackOff mein chala jayega',
+                'Pod ke andar ki value ~60 second mein kubelet apne aap badal degi',
+                'kubelet ConfigMap badalte hi pod ko apne aap restart kar dega',
+                'Pod turant CrashLoopBackOff mein chala jayega kyunki env badal gaya',
               ],
               answer: 0,
               explain: 'Environment variables container ke <b>banne ke waqt</b> ek baar set hote hain. Linux mein chalte hue process ka environment bahar se badla hi nahi ja sakta, isliye Kubernetes ke paas koi tarika hai hi nahi. Ilaaj: <code>kubectl rollout restart deployment/&lt;naam&gt;</code>, ya pod template mein config ka checksum annotation daalo, ya Reloader controller lagao.',
@@ -2315,10 +2383,10 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
               q: 'Wahi ConfigMap ab volume ki tarah <code>/etc/app/config.yaml</code> par mount ki gayi hai (bina subPath ke). ConfigMap badalne par?',
               context: 'volumeMounts:\n  - name: cfg\n    mountPath: /etc/app\nvolumes:\n  - name: cfg\n    configMap:\n      name: app-settings',
               choices: [
-                'File ~60-90 second mein apne aap badal jayegi — par application ko file dobara padhni padegi tab hi asar hoga',
+                'File ~60-90 second mein badal jayegi — par app file dobara padhe tabhi asar hoga',
                 'File turant badal jayegi aur application apne aap naya config utha legi',
-                'File kabhi nahi badlegi',
-                'Pod restart ho jayega',
+                'File kabhi nahi badlegi — mounted ConfigMap pod ke banne par freeze ho jaati hai',
+                'kubelet file badalne ke liye pod ko apne aap restart kar dega',
               ],
               answer: 0,
               explain: 'kubelet mounted ConfigMap ko periodically sync karta hai (default sync period ~60s, plus cache ka time — kul milakar 60-90 second). Par <b>file badal jaane se application ka behaviour apne aap nahi badalta</b>. Application ko ya to file par watch lagani hogi, ya SIGHUP par config dobara padhni hogi. Jo applications sirf boot par config padhti hain, unke liye volume mount aur env mein koi practical farq nahi rehta.',
@@ -2326,10 +2394,10 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
             {
               q: 'ConfigMap <code>subPath</code> ke saath mount ki gayi hai: <code>mountPath: /etc/app/config.yaml, subPath: config.yaml</code>. ConfigMap badalne par?',
               choices: [
-                'Kuch nahi — subPath mount ek baar ka snapshot hota hai aur kubelet usse update nahi karta',
-                'File ~60 second mein badal jayegi',
-                'Pod CrashLoopBackOff mein chala jayega',
-                'API server subPath ko reject kar dega',
+                'Kuch nahi — subPath mount ek baar ka snapshot hai, kubelet use update nahi karta',
+                'File ~60 second mein badal jayegi, bilkul normal volume mount ki tarah',
+                'Pod CrashLoopBackOff mein chala jayega kyunki file ke neeche se mount hat gaya',
+                'API server subPath wali ConfigMap ko badalne hi nahi dega, apply reject hoga',
               ],
               answer: 0,
               explain: 'Yeh sabse chupka hua jaal hai. <code>subPath</code> ka istemaal isliye hota hai ki poora directory replace na ho jaye (jaise <code>/etc/nginx/</code> mein sirf ek file daalni ho). Par <code>subPath</code> ke saath kubelet mount ko update <b>karta hi nahi</b>. Log volume mount samajh kar auto-update ki umeed lagaye baithe rehte hain aur ghanton pareshaan hote hain. Ilaaj: subPath hata do (poora directory mount karo aur symlink use karo), ya rollout restart karo.',
@@ -2337,10 +2405,10 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
             {
               q: 'Deployment ke <code>spec.selector.matchLabels</code> mein ek naya label jodne par API server "field is immutable" keh raha hai. Sahi ilaaj?',
               choices: [
-                'Deployment delete karke naye selector ke saath dobara banao (ya zero-downtime chahiye to naye naam se nayi Deployment bana ke traffic shift karo)',
-                'kubectl apply --force-conflicts lagao',
-                'kubectl edit se badlo, edit immutability check skip karta hai',
-                'Pehle replicas 0 karo, phir selector badal do',
+                'Deployment delete karke naye selector ke saath banao — ya zero-downtime ke liye naye naam se nayi Deployment',
+                'kubectl apply --force-conflicts lagao — server-side apply immutable field ko bhi badal deta hai',
+                'kubectl edit se badlo — edit seedha etcd mein likhta hai, isliye immutability check skip hota hai',
+                'Pehle replicas 0 karo, phir selector badlo — khaali Deployment ka selector badla ja sakta hai',
               ],
               answer: 0,
               explain: 'Selector isliye immutable hai kyunki selector hi ReplicaSet aur pods ka rishta tay karta hai. Chalte-chalte selector badal dene se purane pods anaath ho jaate aur do alag set saath-saath chalte rehte. Koi flag immutability ko bypass nahi karta — <code>--force</code> asli mein delete-and-recreate karta hai (downtime ke saath). Zero-downtime raasta: naye naam se nayi Deployment + Service ka selector shift + purani Deployment hatao.',
@@ -2350,7 +2418,7 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
         {
           type: 'flow',
           title: '🎬 Flow: naye pod mein environment variables kahan-kahan se aate hain',
-          instructions: '▶ dabao. Dekho kubelet ek pod ka environment kaise jodta hai — aur staging namespace mein woh environment itna bada kaise ho gaya ki exec hi fail ho gaya.',
+          instructions: '▶ dabao. Dekho kubelet ek pod ka environment kaise jodta hai — aur staging namespace mein ek aisa variable kaise aa gaya jo kisi ne likha hi nahi tha.',
           lanes: [
             { id: 'api', label: 'API server', icon: '🏛️' },
             { id: 'kubelet', label: 'kubelet', icon: '🤖' },
@@ -2358,17 +2426,27 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
             { id: 'proc', label: 'Container process', icon: '🏃' },
           ],
           steps: [
-            { lane: 'api', t: 'Pod object bana — spec mein 3 env variables likhe hain', detail: 'Developer ne manifest mein sirf 3 environment variables likhe: <code>APP_ENV</code>, <code>LOG_LEVEL</code>, <code>PORT</code>. Developer ki umeed hai ki container ko bas 3 hi milenge.' },
+            { lane: 'api', t: 'Pod object bana — spec mein 3 env variables likhe hain', detail: 'Developer ne manifest mein sirf 3 environment variables likhe: <code>APP_ENV</code>, <code>LOG_LEVEL</code>, <code>REDIS_HOST=redis</code>. App ka code <code>REDIS_PORT</code> bhi padhta hai — na mile to 6379 maan leta hai. Developer ki umeed: container ko bas yahi milenge.' },
             { lane: 'kubelet', t: 'kubelet ne pod spec ke env variables jama kiye', detail: 'Teeno variables list mein aa gaye. Ab tak sab theek — environment mein 3 entries hain.' },
             { lane: 'kubelet', t: 'kubelet ne ConfigMap aur Secret padhi', detail: '<code>envFrom</code> se ConfigMap ki 6 keys aur Secret ki 2 keys judi. Environment ab 11 entries ka ho gaya.' },
-            { lane: 'kubelet', t: 'kubelet ne NAMESPACE KI HAR SERVICE ke variables jode', detail: 'Yahan chhupi hui cheez hai. <code>enableServiceLinks</code> ka default <b>true</b> hai, isliye kubelet namespace ki <b>har</b> Service ke liye ~7 environment variables jodta hai:<br><code>SERVICE_PAYMENTS_PORT_80_TCP</code>, <code>…_TCP_ADDR</code>, <code>…_TCP_PORT</code>, <code>…_TCP_PROTO</code>, <code>…_SERVICE_HOST</code>, <code>…_SERVICE_PORT</code>, <code>…_PORT</code>.',
-              ask: { q: '<code>dev</code> namespace mein 2 services hain, <code>staging</code> mein 42. Dono jagah <b>ek hi</b> manifest deploy hui. Environment mein kitna farq padega?', choices: ['dev mein ~14 extra variables, staging mein ~294 extra — manifest bilkul same hone par bhi', 'Dono jagah barabar, kyunki manifest same hai', 'staging mein kam, kyunki wahan services shared hain', 'Koi farq nahi, service links sirf default namespace mein lagte hain'], answer: 0, explain: 'kubelet <b>har Service ke liye ~7 variables</b> jodta hai. 2 services = ~14 variables, 42 services = ~294 variables. Manifest ka isse koi lena-dena nahi — variables namespace ki halat se aate hain. Isliye ek hi manifest dev mein chalti hai aur staging mein crash karti hai, aur diff dekhne par kuch galat nahi milta.' } },
-            { lane: 'cri', t: 'containerd ne poora environment le kar exec kiya', detail: 'containerd ne saare environment variables ke saath entrypoint chalane ki koshish ki. Linux mein <code>execve()</code> ke arguments + environment ka kul size seemit hota hai (aksar ~2MB, aur per-string limit alag).' },
-            { lane: 'proc', t: 'staging mein exec fail: "argument list too long"', detail: '<code>standard_init_linux.go:228: exec user process caused: argument list too long</code><br>Container start hi nahi hua. Application ke logs khaali honge, kyunki application chali hi nahi.',
-              ask: { q: 'Sabse achha ilaaj kya hai?', choices: ['Pod spec mein enableServiceLinks: false — CoreDNS pehle se service discovery deta hai, isliye purane environment variables bekaar hain', 'staging namespace se services ghata do', 'Container ka entrypoint chhota kar do', 'Memory limit badha do'], answer: 0, explain: '<code>enableServiceLinks: false</code> kubelet ko Service wale variables inject karne se rok deta hai. Feature Kubernetes ke shuruaati dinon ka hai, jab DNS-based discovery pakka nahi tha. Aaj CoreDNS har cluster mein hota hai aur applications <code>payments.staging.svc.cluster.local</code> use karti hain, isliye variables ki zaroorat hi nahi. Namespace se services hataana asli kaam todega, aur memory limit ka is error se koi rishta nahi hai.' } },
-            { lane: 'proc', t: 'enableServiceLinks: false lagane ke baad — container Running', detail: 'Ab environment mein sirf pod spec, ConfigMap, Secret aur ~7 <code>KUBERNETES_*</code> variables hain. Kul milakar ~18 entries, 300+ nahi. Container turant boot ho gaya.' },
+            { lane: 'kubelet', t: 'kubelet ne NAMESPACE KI HAR SERVICE ke variables jode', detail: 'Yahan chhupi hui cheez hai. <code>enableServiceLinks</code> ka default <b>true</b> hai, isliye kubelet namespace ki <b>har</b> Service ke liye ~7 environment variables jodta hai. Service <code>redis</code> (port 6379) ke liye:<br><code>REDIS_SERVICE_HOST=10.96.12.4</code>, <code>REDIS_SERVICE_PORT=6379</code>, <code>REDIS_PORT=tcp://10.96.12.4:6379</code>, <code>REDIS_PORT_6379_TCP</code>, <code>…_TCP_ADDR</code>, <code>…_TCP_PORT</code>, <code>…_TCP_PROTO</code>.<br>Manifest mein khud likha variable hamesha jeet-ta hai — par <code>REDIS_PORT</code> manifest mein tha hi nahi.',
+              ask: { q: '<code>dev</code> mein Redis bahar (managed) hai — namespace mein <code>redis</code> naam ki Service nahi. <code>staging</code> mein Redis cluster ke andar hai, Service ka naam <code>redis</code>. Dono jagah <b>ek hi</b> manifest. Kya hoga?', choices: [
+                'dev chalega; staging mein kubelet REDIS_PORT=tcp://10.96.12.4:6379 daalega aur app port parse nahi karegi',
+                'Dono jagah chalega — kubelet sirf wahi variables banata hai jinke naam manifest mein likhe hon',
+                'Dono jagah fail hoga — REDIS_PORT manifest mein nahi likha, isliye app ko port kabhi milega hi nahi',
+                'staging chalega, dev fail — dev mein Service na hone par kubelet REDIS_PORT ko khaali string bana deta hai',
+              ], answer: 0, explain: 'kubelet <b>namespace ki har Service</b> ke liye variables banata hai, chahe tumhara pod us Service ko jaanta ho ya nahi. <code>staging</code> mein <code>redis</code> Service hai, isliye <code>REDIS_PORT</code> mein URL aa gaya (<code>tcp://…</code>), number nahi. <code>dev</code> mein Service hi nahi, isliye variable hi nahi — app ne apna default 6379 liya. Manifest ka isse koi lena-dena nahi; variables namespace ki halat se aate hain, isliye diff mein kuch galat nahi dikhta.' } },
+            { lane: 'cri', t: 'containerd ne poora environment le kar process chalaya', detail: 'containerd ne saare variables ke saath entrypoint chalaya — manifest wale 3, ConfigMap/Secret wale 8, aur namespace ki har Service ke ~7. Process ko pata hi nahi ki kaunsa variable kahan se aaya.' },
+            { lane: 'proc', t: 'staging mein app boot par hi mari: invalid REDIS_PORT', detail: '<code>{"level":"fatal","msg":"invalid REDIS_PORT","value":"tcp://10.96.12.4:6379"}</code><br>Exit Code 1 → CrashLoopBackOff. <code>kubectl exec</code> se <code>printenv REDIS_PORT</code> chalate hi sach dikh jaata hai — ek aisa variable jo kisi ne likha hi nahi.',
+              ask: { q: 'Sabse achha ilaaj kya hai?', choices: [
+                'Pod spec mein enableServiceLinks: false — CoreDNS se discovery hoti hai, yeh variables bekaar hain',
+                'staging mein redis Service ka naam badal ke redis-svc kar do taaki REDIS_PORT naam hi na bane',
+                'App ke code mein REDIS_PORT se "tcp://" aur IP kaat ke sirf port number nikaal lo, kaam chal jayega',
+                'Container ki memory limit badhao — bade environment ke saath app ko boot par zyada RAM chahiye',
+              ], answer: 0, explain: '<code>enableServiceLinks: false</code> kubelet ko Service wale variables daalne se rok deta hai (sirf <code>KUBERNETES_*</code> bachte hain, jo in-cluster clients ko chahiye). Feature Docker-links ke zamaane ka hai; aaj apps <code>redis.staging.svc.cluster.local</code> se DNS use karti hain. Service ka naam badalna agla takraav nahi rokta (kal koi <code>app</code> naam ki Service banayega) aur doosri apps tod dega. Code mein jugaad asli wajah chhupata hai. Turant raahat chahiye to manifest mein <code>REDIS_PORT: "6379"</code> likhna bhi chalega — khud likha variable hamesha jeet-ta hai.' } },
+            { lane: 'proc', t: 'enableServiceLinks: false lagane ke baad — container Running', detail: 'Ab environment mein sirf pod spec, ConfigMap, Secret aur <code>KUBERNETES_*</code> variables hain. <code>REDIS_PORT</code> gayab, app ne apna default 6379 liya aur boot ho gayi.' },
           ],
-          summary: '✅ Ek hi manifest, do namespaces, alag natija — kyunki <b>environment ka aadha hissa manifest se aata hi nahi</b>. <code>enableServiceLinks</code> ka default true hai aur namespace ki har Service pod ka environment badhati hai. Nayi services ke liye <code>enableServiceLinks: false</code> ek achha default hai.',
+          summary: '✅ Ek hi manifest, do namespaces, alag natija — kyunki <b>environment ka ek hissa manifest se aata hi nahi</b>. <code>enableServiceLinks</code> ka default true hai aur namespace ki har Service pod mein apne variables daalti hai — kabhi naam takraate hain (REDIS_PORT), kabhi hazaaron Services environment ko itna bada kar deti hain ki exec fail ho jaaye. Nayi workloads ke liye <code>enableServiceLinks: false</code> achha default hai.',
         },
         {
           type: 'terminal',
@@ -2430,24 +2508,24 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
           {
             q: 'Interviewer: "ConfigMap badalne par pods apne aap update ho jaayein — GitOps setup mein kaise karoge?"',
             choices: [
-              'Pod template ke annotation mein ConfigMap ka checksum daalo — ConfigMap badalte hi checksum badlega, pod template badlega, aur rollout apne aap chalega',
-              'ConfigMap ko volume ki tarah mount kar do, bas ho gaya',
-              'CI pipeline se har deploy par kubectl rollout restart chalao',
-              'ConfigMap par immutable: true laga do',
+              'Pod template annotation mein ConfigMap ka checksum — config badla, template badla, rollout khud chala',
+              'ConfigMap ko volume ki tarah mount kar do — kubelet file badal dega aur pods khud update ho jayenge',
+              'CI pipeline se har deploy ke baad kubectl rollout restart chalao — sabse simple GitOps tarika',
+              'ConfigMap par immutable: true laga do — tab ConfigMap badalne par pods khud naya version lete hain',
             ],
             answer: 0,
             explain: 'GitOps ka niyam hai: cluster ki halat sirf git se badle. <code>kubectl rollout restart</code> ek imperative command hai aur ArgoCD ke agle sync mein uska koi nishan nahi bachta. Checksum annotation puri tarah declarative hai — ConfigMap ka content badalta hai to annotation badalta hai, pod template ka hash badalta hai, aur Deployment controller apne aap rolling update chalata hai. (Cluster-wide automatic chahiye to <b>Reloader</b> controller lagao, jo sirf ek annotation maangta hai.) <code>immutable: true</code> ulta kaam karta hai — ConfigMap badalne hi nahi deta.',
           },
           {
-            q: 'Interviewer: "Ek manifest dev mein chalti hai aur staging mein <code>argument list too long</code> deti hai. Manifest bilkul same hai. Kya ho raha hai?"',
+            q: 'Interviewer: "Ek manifest dev mein chalti hai, staging mein boot par crash: <code>invalid REDIS_PORT "tcp://10.96.12.4:6379"</code>. Manifest, ConfigMap, Secret — sab same hain. Kya ho raha hai?"',
             choices: [
-              'enableServiceLinks default true hai — staging namespace mein bahut zyada Services hain, aur kubelet har Service ke ~7 environment variables inject karta hai',
-              'staging ke nodes ka kernel purana hai',
-              'staging mein image ka architecture alag hai',
-              'staging namespace mein memory limit kam hai',
+              'staging mein redis naam ki Service hai — enableServiceLinks (default true) ne REDIS_PORT=tcp://… daala',
+              'staging ke CoreDNS ne redis ka jawab galat diya, isliye app ko port ki jagah poora URL mil gaya',
+              'staging ke nodes par Docker links on hai, jo har container mein uske apne ports bhar deta hai',
+              'staging ka image doosre architecture ka hai, isliye environment variables galat parse hote hain',
             ],
             answer: 0,
-            explain: 'Environment ka aadha hissa manifest se aata hi nahi. <code>enableServiceLinks</code> ka default <b>true</b> hai, aur kubelet namespace ki har Service ke liye ~7 variables jodta hai (<code>&lt;SVC&gt;_SERVICE_HOST</code>, <code>&lt;SVC&gt;_PORT_80_TCP</code>, waghera). 40+ services wale namespace mein environment 300+ entries ka ho jaata hai aur Linux ka exec limit paar ho jaata hai. Isliye ek hi manifest do namespaces mein alag behave karti hai aur diff mein kuch galat nahi milta. Ilaaj: <code>enableServiceLinks: false</code> — CoreDNS pehle se service discovery de raha hai.',
+            explain: 'Environment ka ek hissa manifest se aata hi nahi. <code>enableServiceLinks</code> ka default <b>true</b> hai, aur kubelet namespace ki har Service ke liye ~7 variables jodta hai — Service <code>redis</code> ke liye <code>REDIS_SERVICE_HOST</code>, <code>REDIS_PORT=tcp://…</code>, <code>REDIS_PORT_6379_TCP_ADDR</code>, waghera. dev mein woh Service nahi thi, staging mein hai — isliye ek hi manifest alag behave karti hai aur diff mein kuch galat nahi milta. Jaanch: <code>kubectl exec &lt;pod&gt; -- printenv | grep REDIS</code>. Ilaaj: <code>enableServiceLinks: false</code>. (Hazaaron Services wale namespace mein yahi variables <code>argument list too long</code> bhi dete hain.)',
           },
         ],
       },
@@ -2465,20 +2543,23 @@ kubectl set env deploy/envtest --from=configmap/demo
 kubectl exec deploy/envtest -- printenv LEVEL        # info
 kubectl create cm demo --from-literal=LEVEL=debug --dry-run=client -o yaml | kubectl apply -f -
 kubectl exec deploy/envtest -- printenv LEVEL        # ABHI BHI info
-kubectl rollout restart deploy/envtest
+kubectl rollout restart deploy/envtest && kubectl rollout status deploy/envtest
 kubectl exec deploy/envtest -- printenv LEVEL        # ab debug
 
-# enableServiceLinks ka asar
-kubectl exec deploy/envtest -- printenv | wc -l
+# enableServiceLinks ka asar — ek Service banao jiska naam tumhari app bhi istemaal kar sakti hai
+kubectl create service clusterip redis --tcp=6379:6379
+kubectl rollout restart deploy/envtest && kubectl rollout status deploy/envtest
+kubectl exec deploy/envtest -- printenv | grep REDIS   # REDIS_PORT=tcp://… — tumne kabhi likha hi nahi!
 kubectl patch deploy envtest -p '{"spec":{"template":{"spec":{"enableServiceLinks":false}}}}'
-kubectl exec deploy/envtest -- printenv | wc -l      # kam ho gaya
-kubectl delete deploy envtest; kubectl delete cm demo</pre>`,
+kubectl rollout status deploy/envtest
+kubectl exec deploy/envtest -- printenv | grep REDIS   # khaali
+kubectl delete deploy envtest; kubectl delete cm demo; kubectl delete svc redis</pre>`,
       cards: [
         { front: 'envFrom wali ConfigMap badalne par pod mein kya hota hai?', back: '<b>Kuch nahi.</b> Environment variables container ke banne ke waqt ek baar set hote hain — chalte hue Linux process ka environment badla hi nahi ja sakta. Ilaaj: rollout restart, checksum annotation, ya Reloader.' },
         { front: 'Volume-mounted ConfigMap kab update hoti hai?', back: '~60-90 second mein kubelet file apne aap badal deta hai. Par application ko file dobara padhni padegi (watch ya SIGHUP), warna behaviour nahi badlega.' },
         { front: '<code>subPath</code> ke saath mount ki gayi ConfigMap?', back: '<b>Kabhi update nahi hoti</b> — subPath mount ek baar ka snapshot hai. Sabse chupka hua jaal. Ilaaj: subPath hatao ya rollout restart karo.' },
         { front: '<code>spec.selector: field is immutable</code> — kyun aur kya karein?', back: 'Selector hi ReplicaSet-pod ka rishta tay karta hai; badalne se purane pods anaath ho jaate. Ilaaj: delete karke dobara banao, ya zero-downtime chahiye to naye naam se nayi Deployment + traffic shift.' },
-        { front: '<code>enableServiceLinks</code> kya karta hai?', back: 'Default <b>true</b> — kubelet namespace ki har Service ke ~7 environment variables pod mein inject karta hai. Bade namespace mein "argument list too long" ho sakta hai. CoreDNS ke rehte variables bekaar hain, isliye <code>false</code> achha default hai.' },
+        { front: '<code>enableServiceLinks</code> kya karta hai?', back: 'Default <b>true</b> — kubelet namespace ki har Service ke ~7 variables pod mein daal deta hai (Service <code>redis</code> → <code>REDIS_PORT=tcp://…</code>). Naam takraate hain to app crash; hazaaron Services par "argument list too long". CoreDNS ke rehte yeh bekaar hain — <code>false</code> achha default hai.' },
       ],
     },
 
@@ -2704,21 +2785,21 @@ Error from server (NotFound): services "metrics-server" not found`,
           {
             q: 'Interviewer: "Ek StatefulSet ka pod Terminating mein atka hai kyunki node down hai. Kya <code>--force --grace-period=0</code> chalana theek hai?"',
             choices: [
-              'Nahi — jab tak yeh pakka na ho ki node par process sach mein mar chuka hai. Force delete etcd se pod hataata hai, container zinda reh sakta hai — phir wahi naam ka naya pod usi volume par likhega',
-              'Haan, StatefulSet pods ke liye force delete surakshit hai',
-              'Haan, agar node 5 minute se NotReady hai',
-              'Nahi — StatefulSet pods force delete ho hi nahi sakte',
+              'Nahi — pehle pakka karo ki node par process sach mein mara; warna naya pod usi volume par doosra writer banega',
+              'Haan — StatefulSet controller force delete ke baad purane pod ko node se khud saaf kar deta hai',
+              'Haan, agar node 5 minute se NotReady hai — itni der baad Kubernetes maan leta hai ki container mar chuka',
+              'Nahi — StatefulSet pods force delete ho hi nahi sakte, API server --force ko reject kar deta hai',
             ],
             answer: 0,
-            explain: 'StatefulSet ka poora vaada "ek waqt par ek hi pod, ek hi pehchaan" ka hai. Force delete Kubernetes ko yakeen dila deta hai ki purana pod mar chuka hai, jabki node network se katta hua ho sakta hai aur container waise ka waisa chal raha ho. Naya pod usi naam aur usi PVC ke saath uthta hai, aur <b>do writers ek hi volume par</b> — data corruption. Sahi tarika: node ko sach mein band karo (cloud console se), ya node object delete karo (jo saaf batata hai ki node gaya), tab pods surakshit tarike se saaf hote hain.',
+            explain: 'StatefulSet ka poora vaada "ek waqt par ek hi pod, ek hi pehchaan" ka hai. Force delete Kubernetes ko yakeen dila deta hai ki purana pod mar chuka hai, jabki node network se katta hua ho sakta hai aur container waise ka waisa chal raha ho. Naya pod usi naam aur usi PVC ke saath uthta hai, aur <b>do writers ek hi volume par</b> — data corruption. Sahi tarika: pehle pakka karo ki node sach mein band hai (cloud console se), phir node par <code>node.kubernetes.io/out-of-service=nodeshutdown:NoExecute</code> taint lagao (non-graceful node shutdown, GA 1.28) — Kubernetes pods ko force-delete karta hai aur volumes bhi detach karta hai. Purana tarika: node object delete karna. NotReady ke 5 minute sirf eviction ka timer hai — container ki maut ka saboot nahi.',
           },
           {
             q: 'Interviewer: "Single-replica Deployment jo RWO PVC use karti hai — har deploy par naya pod Multi-Attach error deta hai. Sabse saaf fix?"',
             choices: [
-              'strategy: Recreate lagao — purana pod poori tarah hatta hai, volume detach hota hai, tab naya pod banta hai',
-              'maxSurge 200% kar do',
-              'PVC ka access mode ReadWriteMany kar do',
-              'terminationGracePeriodSeconds 0 kar do',
+              'strategy: Recreate — purana pod poori tarah hatta hai, volume detach hota hai, tab naya pod banta hai',
+              'maxSurge 200% kar do — naye pod jaldi banenge aur volume jaldi naye node par chala jayega',
+              'PVC ka access mode ReadWriteMany kar do — RWX mein volume ek saath do nodes par jud jaata hai',
+              'terminationGracePeriodSeconds 0 kar do — purana pod turant marega aur volume turant chhoot jayega',
             ],
             answer: 0,
             explain: 'Default <code>RollingUpdate</code> naya pod <b>pehle</b> banata hai. Naya pod doosre node par gaya to naya pod woh volume maangta hai jo abhi purane node par attached hai. <code>Recreate</code> kram ulta kar deta hai. <b>maxSurge badhana ulta bura hai</b> — aur zyada pods ek saath volume maangenge. <b>Access mode badalna kaam nahi karega</b> agar underlying storage RWX support hi nahi karta (EBS, GCE PD RWO hi hain) — aur agar kar bhi de, to do writers ek hi filesystem par, jo aksar khatarnak hai. Multi-replica stateful chahiye to sahi jawab <b>StatefulSet + per-pod PVC</b> hai.',
@@ -2765,7 +2846,7 @@ kubectl delete ns findemo</pre>
       objectives: [
         'Ek curl ke poore raste ke har padav ka naam bata pana',
         'CoreDNS ka search-domain vyavhaar aur `ndots:5` ka asar samajhna',
-        'kube-proxy ke iptables aur IPVS mode mein farq jaanna',
+        'kube-proxy ke modes (iptables, nftables, IPVS) ka farq — aur naye cluster mein kaunsa chunein',
         'DNS ki gadbad, endpoint ki gadbad aur NetworkPolicy ki gadbad ko alag pehchanna',
       ],
       lesson: [
@@ -2776,8 +2857,10 @@ kubectl delete ns findemo</pre>
            <code>search</code> domains ki list deta hai.</li>
            <li><b>CoreDNS</b> jawab mein Service ka <b>ClusterIP</b> deta hai (jaise <code>10.96.44.12</code>) —
            pod ka IP nahi.</li>
-           <li><b>ClusterIP ek nakli IP hai.</b> Us IP par koi machine, koi interface, koi process nahi hai.
-           ClusterIP sirf node ke <b>iptables/IPVS rules</b> mein maujood hai.</li>
+           <li><b>ClusterIP ek nakli IP hai.</b> Us IP par koi machine aur koi process nahi sunta.
+           ClusterIP sirf har node ke kube-proxy <b>rules</b> (iptables / nftables) mein maujood hai.
+           <i>(IPVS mode mein kube-proxy ClusterIP ko <code>kube-ipvs0</code> naam ke dummy interface par bhi
+           chipka deta hai — par wahan bhi koi process nahi sunta, kernel hi packet aage bhejta hai.)</i></li>
            <li><b>kube-proxy</b> ne pehle se rules likh rakhe hain: "jo bhi packet 10.96.44.12:80 par jaye,
            usse DNAT karke in pod IPs mein se kisi ek par bhej do".</li>
            <li><b>CNI plugin</b> (Calico/Cilium/Flannel) packet ko us pod tak pahunchata hai, chahe pod
@@ -2796,23 +2879,25 @@ options ndots:5</pre>
          search domains lagaega, aur poora naam sabse aakhir mein aazmaega.</p>
          <table class="kk-tbl">
            <tr><th>Naam</th><th>Kitni DNS queries</th><th>Kyun</th></tr>
-           <tr><td><code>payments</code></td><td>4 queries</td><td>payments.shop.svc… → payments.svc… → payments.cluster.local → payments (pehli hi mil jaati hai, isliye tez)</td></tr>
-           <tr><td><code>payments.shop.svc.cluster.local.</code></td><td>1 query</td><td>Trailing dot = FQDN, resolver search bilkul nahi lagata — sabse tez</td></tr>
-           <tr><td><code>api.github.com</code></td><td><b>4 queries</b></td><td>Sirf 2 dot hain (ndots 5 se kam), isliye teen search domains pehle aazmaye jaate hain aur teeno NXDOMAIN dete hain</td></tr>
+           <tr><td><code>payments</code></td><td>1 naam</td><td>Pehla search domain hi match: <code>payments.shop.svc.cluster.local</code> — aage aazmaane ki zaroorat nahi</td></tr>
+           <tr><td><code>payments.shop.svc.cluster.local.</code></td><td>1 naam</td><td>Trailing dot = FQDN, resolver search bilkul nahi lagata</td></tr>
+           <tr><td><code>api.github.com</code></td><td><b>4 naam</b></td><td>Sirf 2 dot hain (ndots 5 se kam), isliye teen search domains pehle aazmaye jaate hain aur teeno NXDOMAIN dete hain</td></tr>
          </table>
-         <p><b>Isliye bahari API calls dhime lagte hain:</b> har external call se pehle 3 bekaar DNS
-         queries jaati hain. Ilaaj: bahari naam ke aakhir mein dot lagao
-         (<code>api.github.com.</code>), ya pod par <code>dnsConfig: { options: [{name: ndots, value: "2"}] }</code>.</p>
+         <p><b>Isliye bahari API calls dhime lagte hain:</b> har external naam se pehle 3 bekaar lookups — aur
+         har naam ke liye A aur AAAA dono query jaati hain, yaani ~8 packets ek hi call ke liye. Ilaaj: bahari naam ke
+         aakhir mein dot lagao (<code>api.github.com.</code>), ya pod par
+         <code>dnsConfig: { options: [{name: ndots, value: "2"}] }</code>.</p>
 
-         <h3>⚖️ kube-proxy: iptables vs IPVS</h3>
+         <h3>⚖️ kube-proxy ke teen mode: iptables, nftables, IPVS</h3>
          <table class="kk-tbl">
-           <tr><th></th><th>iptables mode (default)</th><th>IPVS mode</th></tr>
-           <tr><td>Rule dhoondhna</td><td>Chain mein ek-ek karke — O(n)</td><td>Hash table — O(1)</td></tr>
-           <tr><td>Load balancing</td><td>Sirf random (probability-based)</td><td>rr, lc, sh, dh aur kai algorithms</td></tr>
-           <tr><td>Bade cluster mein</td><td>5000+ services par rule update slow ho jaata hai</td><td>Bade cluster ke liye behtar</td></tr>
-           <tr><td>Debug</td><td><code>iptables-save | grep &lt;clusterIP&gt;</code></td><td><code>ipvsadm -Ln</code></td></tr>
+           <tr><th></th><th>iptables (default)</th><th>nftables (GA 1.33)</th><th>IPVS (deprecated 1.35)</th></tr>
+           <tr><td>Rule dhoondhna</td><td>Chain mein ek-ek karke — O(n)</td><td>Verdict maps — lagbhag O(1)</td><td>Hash table — O(1)</td></tr>
+           <tr><td>Load balancing</td><td>Random (probability-based)</td><td>Random</td><td>rr, lc, sh aur kai algorithms</td></tr>
+           <tr><td>Bade cluster mein</td><td>Hazaaron services par rule update dheema</td><td>Tez, sirf badle hue rules update</td><td>Tez, par purane bugs aur maintainers nahi</td></tr>
+           <tr><td>Debug</td><td><code>iptables-save | grep &lt;clusterIP&gt;</code></td><td><code>nft list ruleset | grep &lt;clusterIP&gt;</code></td><td><code>ipvsadm -Ln</code></td></tr>
+           <tr><td>Kab chunein</td><td>Default — har jagah chalta hai</td><td>Naya cluster, kernel 5.13+</td><td>Naya kuch mat banao — nftables par jao</td></tr>
          </table>
-         <div class="war-story"><b>⚡ Dono modes mein ek hi kami:</b> kube-proxy connection ko
+         <div class="war-story"><b>⚡ Teeno modes mein ek hi kami:</b> kube-proxy connection ko
          <b>ek baar</b> route karta hai. Long-lived connections (gRPC, HTTP/2 keep-alive, database
          pools) ek hi pod se chipak jaate hain. Naye replicas add karne par purane connections
          nahi baantte — naye pods khaali baithe rehte hain aur purane pods par load waise ka waisa
@@ -2833,13 +2918,28 @@ options ndots:5</pre>
           steps: [
             { lane: 'app', t: 'Application ne curl http://payments chalaya', detail: 'Container ke andar ki application ne hostname <code>payments</code> resolve karne ko kaha. Container ka <code>/etc/resolv.conf</code> kubelet ne banaya tha aur usme CoreDNS ka ClusterIP <code>10.96.0.10</code> likha hai.' },
             { lane: 'dns', t: 'Resolver ne search domains lagaye', detail: '<code>ndots:5</code> aur naam <code>payments</code> mein 0 dot hain, isliye resolver pehle search domains aazmata hai:<br>1. <code>payments.shop.svc.cluster.local</code> ← <b>mil gaya</b><br>2. payments.svc.cluster.local<br>3. payments.cluster.local<br>4. payments',
-              ask: { q: 'Application <code>api.github.com</code> call kar rahi hai aur latency zyada hai. Kitni DNS queries jaayengi?', choices: ['4 — kyunki api.github.com mein sirf 2 dot hain (ndots:5 se kam), isliye teen search domains pehle aazmaye jaate hain aur teeno NXDOMAIN dete hain', '1 — kyunki naam poora hai', '2 — ek IPv4 ke liye, ek IPv6 ke liye', '0 — bahari naam CoreDNS se hoke nahi jaate'], answer: 0, explain: '<code>ndots:5</code> ka niyam: naam mein 5 se kam dot hain to search domains <b>pehle</b> lagenge. <code>api.github.com</code> mein 2 dot hain, isliye pehle teen bekaar queries jaati hain (<code>api.github.com.shop.svc.cluster.local</code>, waghera), teeno NXDOMAIN deti hain, aur chauthi baar asli naam try hota hai. Ilaaj: aakhir mein dot lagao — <code>api.github.com.</code> — ya pod par <code>dnsConfig</code> se ndots ghata do.' } },
+              ask: { q: 'Application <code>api.github.com</code> call kar rahi hai aur latency zyada hai. Resolver kitne alag <b>naam</b> try karega?', choices: [
+                '4 — sirf 2 dot hain (ndots:5 se kam), isliye pehle 3 search domains, phir asli naam',
+                '1 — api.github.com mein dot hai, isliye resolver seedha poora naam hi poochta hai',
+                '2 — pehle naam ke aage cluster.local lagta hai, phir asli naam try hota hai',
+                '0 — bahari naam CoreDNS tak jaate hi nahi, node ka resolver seedha jawab deta hai',
+              ], answer: 0, explain: '<code>ndots:5</code> ka niyam: naam mein 5 se kam dot hain to search domains <b>pehle</b> lagenge. <code>api.github.com</code> mein 2 dot hain, isliye pehle teen bekaar naam (<code>api.github.com.shop.svc.cluster.local</code>, waghera) — teeno NXDOMAIN — aur chauthi baar asli naam. Har naam ke liye A aur AAAA dono query jaati hain, isliye packets ~8 tak pahunchte hain. Pod ki DNS policy ClusterFirst hai, isliye bahari naam bhi pehle CoreDNS se hi guzarte hain. Ilaaj: aakhir mein dot lagao — <code>api.github.com.</code> — ya pod par <code>dnsConfig</code> se ndots ghata do.' } },
             { lane: 'dns', t: 'CoreDNS ne Service ka ClusterIP diya: 10.96.44.12', detail: 'Gaur karo: CoreDNS ne <b>pod ka IP nahi</b> diya. CoreDNS ne <b>Service ka ClusterIP</b> diya. ClusterIP poore cluster ke liye ek sthir pata hai jo pods ke aane-jaane par nahi badalta.' },
             { lane: 'app', t: 'Application ne 10.96.44.12:80 par TCP connection khola', detail: 'Packet container ke network namespace se nikal ke node ke network stack mein pahuncha.',
-              ask: { q: '<code>10.96.44.12</code> par asli mein kaun sun raha hai?', choices: ['Koi nahi — ClusterIP ek nakli IP hai jo sirf node ke iptables/IPVS rules mein maujood hai', 'Service ka apna proxy pod', 'kube-proxy 10.96.44.12 par listen karta hai', 'Node ka ek virtual interface'], answer: 0, explain: 'ClusterIP kisi machine ko assign nahi hota. ClusterIP ke liye koi interface, koi process, koi ARP entry nahi hoti. ClusterIP sirf ek <b>DNAT target</b> hai jo kube-proxy ne iptables (ya IPVS) rules mein likha hai. Isliye ClusterIP ko ping karna kabhi kaam nahi karta — aur usse "service down" mat samajh lena. Aur isliye "Service down hai" jaisi cheez hoti hi nahi: toot sakta hai to DNS, endpoints, ya raasta.' } },
+              ask: { q: 'kube-proxy default (iptables) mode mein hai. <code>10.96.44.12:80</code> par asli mein kaun sun raha hai?', choices: [
+                'Koi process nahi — ClusterIP sirf iptables ke DNAT rules mein hai; packet pod IP par mudta hai',
+                'Service ka apna chhota proxy pod — har Service ke saath kube-system mein ek banta hai',
+                'kube-proxy process khud 10.96.44.12:80 par listen karke har packet aage bhejta hai',
+                'CoreDNS — jo pod IP batata hai, wahi us IP par aane wala traffic bhi sambhalta hai',
+              ], answer: 0, explain: 'ClusterIP kisi machine ko assign nahi hota aur us par koi process nahi sunta. ClusterIP sirf ek <b>DNAT target</b> hai jo kube-proxy ne har node ke rules mein likha hai — packet node se nikalne se pehle hi destination badal jaati hai. kube-proxy khud packets nahi chhoota (purana "userspace" mode aisa karta tha, 1.26 mein hata diya gaya); kube-proxy sirf rules likhta hai. Isliye "Service down hai" jaisi cheez hoti hi nahi: toot sakta hai to DNS, endpoints, ya raasta.' } },
             { lane: 'proxy', t: 'iptables ne DNAT kiya — destination IP badal gayi', detail: 'kube-proxy ne pehle se rules likh rakhe the:<br><code>-A KUBE-SERVICES -d 10.96.44.12/32 -p tcp --dport 80 -j KUBE-SVC-XYZ</code><br><code>-A KUBE-SVC-XYZ -m statistic --probability 0.5 -j KUBE-SEP-A</code><br><code>-A KUBE-SEP-A -j DNAT --to-destination 10.244.2.31:8080</code><br>Destination ab <b>10.244.2.31:8080</b> hai — ek asli pod ka IP.' },
             { lane: 'cni', t: 'CNI plugin ne packet doosre node tak pahunchaya', detail: 'Destination pod node-3 par hai. Calico ne packet ko node-3 tak bheja (BGP route ya VXLAN tunnel se, installation ke hisaab se). Yahi padav MTU aur overlay ki gadbadiyon mein toot-ta hai — aur uska lakshan hota hai: chhote request chalte hain, bade request atak jaate hain.',
-              ask: { q: 'Endpoints bhare hue hain, DNS sahi resolve ho raha hai, par connection <b>timeout</b> ho raha hai (connection refused nahi). Sabse aam wajah?', choices: ['NetworkPolicy traffic drop kar rahi hai — drop hone par packet ka koi jawab hi nahi aata, isliye timeout hota hai', 'targetPort galat hai', 'Pod CrashLoopBackOff mein hai', 'CoreDNS down hai'], answer: 0, explain: '<b>Refused aur timeout ka farq yaad rakho.</b> <code>Connection refused</code> ka matlab packet pahunch gaya aur kisi ne TCP RST bheja — yaani us port par koi sun nahi raha (aksar galat <code>targetPort</code>). <code>Timeout</code> ka matlab packet ka koi jawab hi nahi aaya — packet chup-chaap gira diya gaya. NetworkPolicy drop hi karti hai, reject nahi. Isliye timeout par pehle NetworkPolicy dekho: <code>kubectl get netpol -n &lt;ns&gt;</code>. Yaad rakho: namespace mein ek bhi NetworkPolicy lagte hi us namespace ke selected pods "default deny" ho jaate hain.' } },
+              ask: { q: 'Endpoints bhare hue hain, DNS sahi resolve ho raha hai, par connection <b>timeout</b> ho raha hai (connection refused nahi). Sabse aam wajah?', choices: [
+                'NetworkPolicy packet drop kar rahi hai — drop par koi jawab nahi aata, isliye timeout',
+                'targetPort galat hai — galat port par bheja packet hamesha timeout hi deta hai',
+                'Pod CrashLoopBackOff mein hai — mara hua pod packet ka jawab nahi deta, isliye timeout',
+                'CoreDNS down hai — naam resolve na ho to connection timeout ke roop mein dikhta hai',
+              ], answer: 0, explain: '<b>Refused aur timeout ka farq yaad rakho.</b> <code>Connection refused</code> ka matlab packet pahunch gaya aur kisi ne TCP RST bheja — yaani us port par koi sun nahi raha (aksar galat <code>targetPort</code>). <code>Timeout</code> ka matlab packet ka koi jawab hi nahi aaya — packet chup-chaap gira diya gaya. NetworkPolicy drop hi karti hai, reject nahi. Isliye timeout par pehle NetworkPolicy dekho: <code>kubectl get netpol -n &lt;ns&gt;</code>. Yaad rakho: namespace mein ek bhi NetworkPolicy lagte hi us namespace ke selected pods "default deny" ho jaate hain.' } },
             { lane: 'dest', t: 'Destination pod ne request receive kiya', detail: 'Application ne 8080 par request paya. Application ko dikhne wala source IP client pod ka asli IP hai (kyunki ClusterIP traffic ke liye SNAT nahi hota). NodePort ke through aane par source IP node ka IP ban sakta hai — isse rokne ke liye <code>externalTrafficPolicy: Local</code> hota hai.' },
           ],
           summary: '✅ Chaar alag component, chaar alag failure. <b>DNS</b> galat naam ya CoreDNS down → "name or service not known". <b>Endpoints</b> khaali → 503 ya "no route". <b>targetPort</b> galat → connection <b>refused</b>. <b>NetworkPolicy</b> ya CNI → connection <b>timeout</b>. Error ka type hi bata deta hai ki kaunsa padav toota.',
@@ -2926,10 +3026,10 @@ Spec:
             {
               q: 'Error "connection timed out" hai, "connection refused" nahi. Yeh farq kya batata hai?',
               choices: [
-                'Timeout = packet chup-chaap gira diya gaya (NetworkPolicy ya CNI). Refused = packet pahunch gaya par us port par koi sun nahi raha (galat targetPort)',
-                'Dono ka matlab ek hi hai, bas curl ke version ka farq hai',
-                'Timeout = pod busy hai. Refused = pod down hai',
-                'Timeout = DNS fail. Refused = DNS theek par IP galat',
+                'Timeout = packet chup-chaap gira (NetworkPolicy/CNI). Refused = pahuncha, par port par koi nahi',
+                'Dono ka matlab ek hi hai — bas curl ke version ke hisaab se alag shabd chhapte hain',
+                'Timeout = pod busy hai aur der se jawab deta hai. Refused = pod poori tarah down hai',
+                'Timeout = DNS fail hua. Refused = DNS theek tha par Service ka IP galat nikla',
               ],
               answer: 0,
               explain: 'TCP ke do alag jawab hain. <b>RST (refused)</b> tab aata hai jab packet host tak pahunch jaye par us port par koi listener na ho — yaani raasta theek hai, port galat hai (aksar <code>targetPort</code> ki galti). <b>Timeout</b> tab aata hai jab koi jawab hi na aaye — packet drop ho gaya. NetworkPolicy <b>drop</b> karti hai, reject nahi, isliye NetworkPolicy ka lakshan hamesha timeout hota hai. <b>Sabse pehla sawal jo troubleshooting mein poochna chahiye: refused ya timeout?</b>',
@@ -2937,10 +3037,10 @@ Spec:
             {
               q: 'orders ko payments tak pahunchane ka sabse surakshit fix kya hai?',
               choices: [
-                'NetworkPolicy ke ingress from list mein podSelector app=orders jodo — yaani jo chahiye sirf woh khol do',
-                'NetworkPolicy delete kar do',
-                'orders pod ka label badal ke app=web kar do',
-                'payments Service ko NodePort bana do',
+                'NetworkPolicy ke ingress from mein podSelector app=orders jodo — sirf jo chahiye woh kholo',
+                'NetworkPolicy delete kar do — payments tak sab pahunch payenge, orders bhi',
+                'orders pod ka label badal ke app=web kar do, kyunki web pehle se allow list mein hai',
+                'payments Service ko NodePort bana do — NodePort traffic NetworkPolicy se nahi guzarta',
               ],
               answer: 0,
               explain: 'Policy ka kaam hi yahi hai — allow-list rakhna. Sahi fix hai <code>app=orders</code> ko allow list mein jodna. <b>Policy delete karna</b> poore payments service ko har pod ke liye khol dega, jo security ka nuksaan hai. <b>orders ka label badalna sabse bura hai</b> — us label par orders ki apni Service, uski Deployment ka selector, aur monitoring sab tikay hain; ek label badalne se teen cheezein toot sakti hain. NodePort banane se NetworkPolicy hategi hi nahi (policy pod par lagi hai, Service par nahi).',
@@ -3012,21 +3112,21 @@ Spec:
           {
             q: 'Interviewer: "Pod se ClusterIP ping karne par jawab nahi aata. Kya Service down hai?"',
             choices: [
-              'Nahi — ClusterIP ping ka jawab deta hi nahi. ClusterIP kisi interface par nahi hota, sirf iptables/IPVS ka DNAT target hai. Test karna hai to TCP se karo (curl/nc), ping se nahi',
-              'Haan, ping fail hone ka matlab Service down hai',
-              'Haan, kube-proxy crash ho gaya hoga',
-              'Nahi — ping ke liye ICMP NetworkPolicy chahiye hoti hai',
+              'Nahi — default (iptables) mode mein ClusterIP ping ka jawab deta hi nahi; curl ya nc se test karo',
+              'Haan — ping ka jawab na aana matlab Service ke saare endpoints down hain, pods dekho',
+              'Haan — kube-proxy crash ho gaya hoga, kube-proxy hi ClusterIP ke ping ka jawab deta hai',
+              'Nahi — par ping ke liye pehle ICMP allow karne wali NetworkPolicy lagani padti hai',
             ],
             answer: 0,
-            explain: 'ClusterIP ek <b>nakli</b> IP hai. Us IP par koi machine, koi interface, koi ARP entry nahi hoti. iptables rules sirf us <b>TCP/UDP port</b> ke packets ko DNAT karte hain jo Service ne declare kiya hai — ICMP (ping) ka koi rule hai hi nahi, isliye ping hamesha silently gir jaata hai, chahe Service bilkul swasth ho. Sahi test: <code>curl http://&lt;clusterIP&gt;:&lt;port&gt;</code> ya <code>nc -zv &lt;clusterIP&gt; &lt;port&gt;</code>.',
+            explain: 'iptables (aur nftables) mode mein ClusterIP kisi interface par nahi hota. kube-proxy ke rules sirf Service ke declare kiye <b>TCP/UDP port</b> ke packets ko DNAT karte hain — ICMP (ping) ka koi rule hai hi nahi, isliye ping chup-chaap gir jaata hai, chahe Service bilkul swasth ho. Ulta jaal: IPVS mode mein ClusterIP <code>kube-ipvs0</code> interface par chipka hota hai, isliye wahan ping jawab de deta hai — <b>chahe ek bhi endpoint zinda na ho</b>. Dono haalat mein ping Service ki sehat nahi batata. Sahi test: <code>curl http://&lt;clusterIP&gt;:&lt;port&gt;</code> ya <code>nc -zv &lt;clusterIP&gt; &lt;port&gt;</code>.',
           },
           {
             q: 'Interviewer: "Naye replicas add kiye par purane pods par load ghata hi nahi. gRPC use kar rahe hain. Kyun?"',
             choices: [
-              'kube-proxy connection ko sirf EK BAAR route karta hai — gRPC ek hi TCP connection par chalta rehta hai, isliye purane connections naye pods par nahi jaate',
-              'Readiness probe ne naye pods ko endpoints mein add nahi kiya',
-              'HPA ne abhi scale nahi kiya',
-              'DNS ne naye pod IPs cache kar rakhe hain',
+              'kube-proxy connection ek hi baar route karta hai — gRPC ka ek connection purane pod se chipka rehta hai',
+              'Readiness probe ne naye pods ko abhi tak endpoints mein add hi nahi kiya, isliye unhe traffic nahi',
+              'HPA ne abhi scale hi nahi kiya — naye replicas sirf Deployment mein dikhte hain, asli mein nahi',
+              'DNS ne purane pod IPs cache kar rakhe hain, isliye naye pods ke IP clients tak pahunche hi nahi',
             ],
             answer: 0,
             explain: 'kube-proxy <b>connection-level</b> load balancing karta hai, request-level nahi. Naya TCP connection banega tabhi naya pod chun-a jayega. gRPC, HTTP/2 keep-alive aur database pools ek hi connection ko ghanton zinda rakhte hain, isliye woh apne pehle chune hue pod se chipke rehte hain. <b>Teen ilaaj:</b> <b>(1)</b> service mesh (Istio/Linkerd) jo L7 par har request balance karta hai; <b>(2)</b> client-side balancing — headless Service (<code>clusterIP: None</code>) se saare pod IP lo aur gRPC ke round-robin resolver ko do; <b>(3)</b> client par connection ki max age set karo taaki connections samay-samay par naye bante rahein.',
@@ -3036,7 +3136,7 @@ Spec:
       success: [
         'Main ek curl ke poore raste ke saare padav naam se bata sakta hoon',
         'Main "connection refused" (port galat) aur "timeout" (packet drop) mein turant farq karta hoon',
-        'Main jaanta hoon ki ClusterIP ping ka jawab nahi deta aur kyun',
+        'Main jaanta hoon ki ClusterIP par ping bharosemand test kyun nahi — aur TCP (curl/nc) se kaise test karte hain',
         'Main ndots:5 ki wajah se bahari calls par lagne wali extra DNS queries samajhta hoon',
       ],
       homework: `<p>Poora raasta apne cluster par kholo:</p>
@@ -3047,16 +3147,18 @@ cat /etc/resolv.conf                     # search domains + ndots
 nslookup kubernetes.default              # ClusterIP milega
 dig +search +short kubernetes.default    # search kaise lagta hai dekho
 nc -zv kubernetes.default 443            # TCP test (ping nahi)
-ping -c2 10.96.0.1                       # jawab NAHI aayega — normal hai!</pre>
+ping -c2 10.96.0.1                       # iptables/nftables mode: jawab NAHI aayega — normal hai!
+                                         # (IPVS mode mein jawab aata hai — phir bhi Service ki sehat ka saboot nahi)</pre>
         <p>Aur node par kube-proxy ke asli rules dekho:</p>
         <pre>kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}{"\\n"}'
 # node par (ya kubectl debug node/&lt;node&gt; se):
-sudo iptables-save | grep &lt;clusterIP&gt;</pre>`,
+sudo iptables-save | grep &lt;clusterIP&gt;        # iptables mode (kind/minikube ka default)
+sudo nft list ruleset | grep &lt;clusterIP&gt;      # nftables mode</pre>`,
       cards: [
-        { front: 'ClusterIP par asli mein kaun sun raha hai?', back: '<b>Koi nahi.</b> ClusterIP kisi interface par nahi hota — ClusterIP sirf kube-proxy ke iptables/IPVS DNAT rules mein maujood hai. Isliye ping kabhi jawab nahi deta; test TCP se karo.' },
+        { front: 'ClusterIP par asli mein kaun sun raha hai?', back: '<b>Koi process nahi.</b> ClusterIP sirf kube-proxy ke DNAT rules mein hai. iptables/nftables mode mein ping jawab nahi deta; IPVS mode mein (<code>kube-ipvs0</code>) de deta hai — dono haalat mein ping bekaar test hai. TCP se test karo: <code>nc -zv &lt;ip&gt; &lt;port&gt;</code>.' },
         { front: '"Connection refused" vs "connection timed out"?', back: '<b>Refused</b> = packet pahunch gaya, port par koi sun nahi raha (aksar galat targetPort). <b>Timeout</b> = packet chup-chaap gira (NetworkPolicy ya CNI). Sabse pehla sawal yahi poochna chahiye.' },
-        { front: '<code>ndots:5</code> ka asar kya hai?', back: '5 se kam dot wale naam par pehle search domains lagte hain. <code>api.github.com</code> = 4 DNS queries (3 bekaar). Ilaaj: naam ke aakhir mein dot (<code>api.github.com.</code>) ya pod par dnsConfig se ndots ghatao.' },
-        { front: 'kube-proxy iptables vs IPVS?', back: '<b>iptables</b>: rule lookup O(n), sirf random balancing, 5000+ services par slow. <b>IPVS</b>: hash table O(1), kai algorithms (rr/lc/sh), bade cluster ke liye behtar. Dono connection-level hain.' },
+        { front: '<code>ndots:5</code> ka asar kya hai?', back: '5 se kam dot wale naam par pehle search domains lagte hain. <code>api.github.com</code> = 4 naam try (3 bekaar), A+AAAA ke saath ~8 packets. Ilaaj: naam ke aakhir mein dot (<code>api.github.com.</code>) ya pod par dnsConfig se ndots ghatao.' },
+        { front: 'kube-proxy: iptables vs nftables vs IPVS?', back: '<b>iptables</b> (default): O(n) rules, har jagah chalta hai. <b>nftables</b> (GA 1.33): tez, bade cluster ke liye naya default chunav (kernel 5.13+). <b>IPVS</b>: 1.35 mein deprecated — naye cluster mein mat chuno, nftables par jao. Teeno connection-level balancing karte hain.' },
         { front: 'gRPC ke saath naye replicas par load kyun nahi jaata?', back: 'kube-proxy connection ko ek baar route karta hai. Long-lived gRPC/HTTP2 connections apne pehle chune pod se chipke rehte hain. Ilaaj: service mesh, headless Service + client-side balancing, ya connection max-age.' },
       ],
     },
@@ -3081,17 +3183,38 @@ sudo iptables-save | grep &lt;clusterIP&gt;</pre>`,
     return w === Infinity ? Infinity : w * readySec;
   };
 
+  /* etcd mission: manifest ka hostPath restore wali directory par — script aur sed dono yahi chalate hain */
+  const ETCD_KUBELET_RESTART = 'systemctl restart kubelet\n\n⚠️ kubelet ne etcd phir chalaya — aur etcd phir wahi "walpb: crc mismatch" de ke mar gaya. etcd ki data directory corrupt hai; restart se corrupt file theek nahi hoti. Snapshot restore hi raasta hai.';
+  function pointEtcdTo(s, dir) {
+    if (s.cluster.restored) return `etcd.yaml pehle se ${s.cluster.restoreDir} par hai — kubectl get pods -n kube-system se dekho`;
+    if (dir !== s.cluster.restoreDir)
+      return `⚠️ ROKO — ${dir} mein koi restored data nahi${s.cluster.restoreDir ? ` (restore ${s.cluster.restoreDir} mein hua tha)` : ''}. etcd-data ka hostPath type DirectoryOrCreate hai: kubelet KHAALI directory bana dega aur etcd ek naya, khaali cluster shuru karega — API server upar aayega par har object gayab dikhega. Pehle restore karo: etcdutl snapshot restore /backup/etcd-2026-09-04.db --data-dir=${dir}`;
+    s.cluster.restored = true;
+    s.cluster.restoredAt = s.history.length;
+    s.cluster.pods.forEach(p => { p.status = 'Running'; p.ready = '1/1'; });
+    const etcd = s.cluster.pods.find(p => p.name === 'etcd-cp-1');
+    const api = s.cluster.pods.find(p => p.name === 'kube-apiserver-cp-1');
+    etcd.restarts = 0; etcd.age = '1m';   // manifest badla → kubelet ne NAYA static pod banaya
+    etcd.logs = '{"level":"info","ts":"2026-09-04T04:13:01.204Z","caller":"etcdserver/server.go:2068","msg":"published local member to cluster through raft","local-member-attributes":"{Name:cp-1 ClientURLs:[https://10.0.0.10:2379]}"}\n{"level":"info","ts":"2026-09-04T04:13:01.207Z","caller":"embed/serve.go:250","msg":"serving client traffic securely","traffic":"grpc+http","address":"127.0.0.1:2379"}';
+    api.restarts = 20;
+    api.logs = 'I0904 04:13:02.118410       1 secure_serving.go:213] Serving securely on [::]:6443\nI0904 04:13:04.402115       1 storage_scheduling.go:111] all system priority classes are created successfully or already exist.';
+    api.prevLogs = 'W0904 04:08:13.118410       1 logging.go:59] [core] grpc: addrConn.createTransport failed to connect to {Addr: "127.0.0.1:2379"}. Err: connection error: desc = "transport: Error while dialing: dial tcp 127.0.0.1:2379: connect: connection refused"\nF0904 04:08:32.120871       1 instance.go:290] Error creating leases: error creating storage factory: context deadline exceeded';
+    return `etcd.yaml: hostPath /var/lib/etcd → ${dir}\nkubelet ne manifest ka badlaav pakda → etcd static pod naye hostPath ke saath dobara bana\nkube-apiserver ka agla restart etcd tak pahunch gaya\n\n✅ etcd Running · kube-apiserver Running — ab kubectl get pods -n kube-system se pakka karo\n⚠️ Cluster ab 02:00 wale snapshot par hai. 02:00 ke baad bane objects gayab hain — team ko batao.`;
+  }
+
   const T_ETCD = [
-    { text: 'Control plane pods ka haal dekho', check: s => s.history.some(h => /^(kubectl|k) get (pods|po)\b/.test(h)) },
-    { text: 'etcd snapshot ka status padho', check: s => s.history.some(h => /etcdctl.*snapshot status/.test(h)) },
-    { text: 'Snapshot restore karo', check: s => s.history.some(h => /etcdctl.*snapshot restore/.test(h)) },
-    { text: 'Cluster wapas swasth karo', check: s => s.cluster.pods.every(p => p.status === 'Running') && s.cluster.restored === true },
+    { text: 'kubectl fail ho toh node par containers dekho (crictl ps -a)', check: s => s.history.some(h => /^crictl ps\b.*(-a|--all)\b/.test(h)) },
+    { text: 'etcd container ke logs padho (crictl logs &lt;CONTAINER-ID&gt;)', check: s => s.cluster.readEtcdLogs === true },
+    { text: 'Naya snapshot verify karo (etcdutl snapshot status)', check: s => s.cluster.snapshotVerified === true },
+    { text: 'Snapshot ko NAYI data directory mein restore karo', check: s => !!s.cluster.restoreDir },
+    { text: 'Manifest nayi directory par le jao, phir kubectl se pakka karo', check: s => s.cluster.restored === true && s.history.slice(s.cluster.restoredAt).some(h => /^kubectl get\b/.test(h)) },
   ];
 
   const T_CERT = [
     { text: 'Certificates ki expiry check karo', check: s => s.history.some(h => /kubeadm certs check-expiration/.test(h)) },
-    { text: 'Certificates renew karo', check: s => s.history.some(h => /kubeadm certs renew/.test(h)) },
-    { text: 'Naya admin kubeconfig lo aur cluster tak pahuncho', check: s => s.cluster.apiReachable === true },
+    { text: 'Saare certificates renew karo', check: s => s.cluster.renewed === true },
+    { text: 'Control plane static pods restart karo (naye certificates load hon)', check: s => s.cluster.cpRestarted === true },
+    { text: 'Naya admin kubeconfig lo aur kubectl se cluster tak pahuncho', check: s => s.cluster.apiReachable === true && s.history.slice(s.cluster.reachableAt).some(h => /^kubectl (get|cluster-info)\b/.test(h)) },
   ];
 
   const T_HARDEN = [
@@ -3252,10 +3375,10 @@ ETCDCTL_API=3 etcdctl snapshot restore /backup/etcd-2026-09-04.db \\
           quiz: {
             q: 'Ek team <code>replicas: 3</code> aur <code>minAvailable: 3</code> rakhti hai. Cluster upgrade beech mein hi atak gaya. Sabse achha permanent fix?',
             choices: [
-              'PDB ko maxUnavailable: 1 par le jao — maxUnavailable replicas ke saath apne aap adjust hota hai',
-              'PDB delete kar do',
-              'kubectl delete pod se pods hata do (delete PDB ko ignore karta hai)',
-              'drain par --force laga do',
+              'PDB ko maxUnavailable: 1 karo — maxUnavailable replicas ke saath apne aap adjust hota hai',
+              'PDB delete kar do — upgrade ke baad wapas bana lena, beech mein koi khatra nahi',
+              'kubectl delete pod se pods hatao — delete PDB ko ignore karta hai, drain atkega nahi',
+              'drain par --force laga do — --force PDB ko bypass karke pods hata deta hai',
             ],
             answer: 0,
             explain: '<code>minAvailable: 3</code> ke saath <code>replicas: 3</code> ka matlab "kabhi kuch mat hatao" — allowed disruptions 0. <code>maxUnavailable: 1</code> hamesha ek pod hataane deta hai, chahe replicas 3 hon ya 30, isliye upgrade kabhi atkega nahi aur availability ka vaada bhi bacha rehta hai. <b>PDB delete karna</b> saari suraksha hata deta hai. <b>kubectl delete pod</b> sach mein PDB ko ignore karta hai, par isi wajah se woh galat aujaar hai — PDB ka poora maksad hi yahi hai ki maintenance se availability na toote.',
@@ -3279,74 +3402,186 @@ ETCDCTL_API=3 etcdctl snapshot restore /backup/etcd-2026-09-04.db \\
         {
           type: 'terminal',
           title: '🖥️ Mission: etcd se cluster wapas laao',
-          instructions: 'API server upar nahi aa raha. Snapshot maujood hai. Pehle snapshot verify karo, phir restore karo.',
-          goal: 'Control plane wapas laao: <code>kubectl get pods -n kube-system</code> se halat dekho, <code>etcdctl snapshot status</code> se snapshot verify karo, phir <code>etcdctl snapshot restore</code> chalao aur <code>ls</code> se manifest ka fix lagao.',
+          instructions: 'Tum control-plane node <code>cp-1</code> par SSH karke baithe ho. API server upar nahi aa raha. <code>/backup</code> mein raat 02:00 ka snapshot maujood hai.',
+          goal: 'kubectl jawab nahi dega — API server khud etcd ke bina chal hi nahi sakta. Isliye node par kaam karo: <b>(1)</b> <code>crictl ps -a</code> aur <code>crictl logs</code> se dekho kaun mara aur kyun, <b>(2)</b> <code>etcdutl snapshot status</code> se snapshot verify karo, <b>(3)</b> <code>etcdutl snapshot restore</code> se <b>nayi</b> directory mein restore karo, <b>(4)</b> <code>ls</code> se manifest wali script dhoondh ke <code>bash</code> se chalao, <b>(5)</b> <code>kubectl get pods -n kube-system</code> se pakka karo.',
           tasks: T_ETCD,
           cluster: {
             restored: false,
+            // API server etcd ke bina upar nahi aata — restore se pehle kubectl ka har command yahin atkega
+            apiError: s => (s.cluster.restored ? null : 'The connection to the server 10.0.0.10:6443 was refused - did you specify the right host or port?'),
             nodes: [{ name: 'cp-1', status: 'Ready', roles: 'control-plane', age: '210d', version: 'v1.30.2' }],
             pods: [
-              { name: 'etcd-cp-1', ready: '0/1', status: 'CrashLoopBackOff', restarts: 24, age: '38m', node: 'cp-1', ip: '10.0.0.10',
-                logs: 'Error from server (BadRequest): container "etcd" in pod "etcd-cp-1" is waiting to start: CrashLoopBackOff',
-                prevLogs: '{"level":"warn","msg":"failed to find database file"}\n{"level":"fatal","msg":"walpb: crc mismatch","dir":"/var/lib/etcd/member/wal"}\npanic: freepages: failed to get all reachable pages',
-                describe: 'Name:  etcd-cp-1\nNamespace: kube-system\nContainers:\n  etcd:\n    State:       Waiting\n      Reason:    CrashLoopBackOff\n    Last State:  Terminated\n      Reason:    Error\n      Exit Code: 2\n    Command:\n      etcd\n      --data-dir=/var/lib/etcd\nEvents:\n  Warning  BackOff  30s (x160 over 38m)  kubelet  Back-off restarting failed container etcd',
-                events: ['Warning  BackOff  30s (x160 over 38m)  kubelet  Back-off restarting failed container etcd'] },
-              { name: 'kube-apiserver-cp-1', ready: '0/1', status: 'CrashLoopBackOff', restarts: 19, age: '38m', node: 'cp-1', ip: '10.0.0.10',
-                logs: 'Error from server (BadRequest): container "kube-apiserver" is waiting to start: CrashLoopBackOff',
-                prevLogs: 'E0904 03:41:22 etcdserver: request timed out\nF0904 03:41:52 Error creating self-signed certificates: context deadline exceeded (etcd unreachable)',
-                describe: 'Name:  kube-apiserver-cp-1\nNamespace: kube-system\nContainers:\n  kube-apiserver:\n    State:  Waiting\n      Reason: CrashLoopBackOff\n    Last State: Terminated\n      Exit Code: 1\nEvents:\n  Warning  Unhealthy  1m (x88 over 38m)  kubelet  Liveness probe failed: connection refused',
-                events: ['Warning  Unhealthy  1m (x88 over 38m)  kubelet  Liveness probe failed: connection refused'] },
+              { name: 'etcd-cp-1', ready: '0/1', status: 'CrashLoopBackOff', restarts: 24, age: '38m', node: 'cp-1', ip: '10.0.0.10' },
+              { name: 'kube-apiserver-cp-1', ready: '0/1', status: 'CrashLoopBackOff', restarts: 19, age: '38m', node: 'cp-1', ip: '10.0.0.10' },
+              { name: 'kube-controller-manager-cp-1', ready: '1/1', status: 'Running', restarts: 7, age: '210d', node: 'cp-1', ip: '10.0.0.10' },
+              { name: 'kube-scheduler-cp-1', ready: '1/1', status: 'Running', restarts: 6, age: '210d', node: 'cp-1', ip: '10.0.0.10' },
             ],
             deployments: [],
             services: [],
           },
           responses: [
-            { re: /^ls -la? \/backup\/?$/, out: 'total 62M\n-rw-r--r-- 1 root root 61M Sep  4 02:00 etcd-2026-09-04.db\n-rw-r--r-- 1 root root 60M Sep  3 02:00 etcd-2026-09-03.db' },
             {
-              re: /etcdctl.*snapshot status/,
-              out: '+----------+----------+------------+------------+\n|   HASH   | REVISION | TOTAL KEYS | TOTAL SIZE |\n+----------+----------+------------+------------+\n| 8f2c1a4e |   492817 |       1642 |      61 MB |\n+----------+----------+------------+------------+\n\n✅ Snapshot padha ja sakta hai — 1642 keys, 61 MB. Restore ke liye theek hai.',
+              // crictl = container runtime se seedhi baat — API server ki zaroorat nahi
+              re: /^crictl ps\b(.*)$/,
+              out: (s, m) => {
+                const all = /(^| )(-a|--all)\b/.test(m[1] || '');
+                const H = 'CONTAINER           IMAGE               CREATED              STATE               NAME                      ATTEMPT             POD ID              POD';
+                const rows = s.cluster.restored ? [
+                  '7a1b2c3d4e5f6       a9e7e6b294baf       About a minute ago   Running             kube-apiserver            20                  1c2d3e4f5a6b7       kube-apiserver-cp-1',
+                  '9e8d7c6b5a4f3       3861cfcd7c04c       2 minutes ago        Running             etcd                      0                   6f5e4d3c2b1a0       etcd-cp-1',
+                  'c3d2e1f0a9b87       c7aad43836fa5       9 minutes ago        Running             kube-controller-manager   7                   2d3e4f5a6b7c8       kube-controller-manager-cp-1',
+                  'd4e3f2a1b0c98       259c8277fcbbc       9 minutes ago        Running             kube-scheduler            6                   3e4f5a6b7c8d9       kube-scheduler-cp-1',
+                ] : [
+                  '4f1c2b9e8a7d3       3861cfcd7c04c       41 seconds ago       Exited              etcd                      24                  9a8b7c6d5e4f3       etcd-cp-1',
+                  'b7e6d5c4a3f21       a9e7e6b294baf       2 minutes ago        Exited              kube-apiserver            19                  1c2d3e4f5a6b7       kube-apiserver-cp-1',
+                  'c3d2e1f0a9b87       c7aad43836fa5       9 minutes ago        Running             kube-controller-manager   7                   2d3e4f5a6b7c8       kube-controller-manager-cp-1',
+                  'd4e3f2a1b0c98       259c8277fcbbc       9 minutes ago        Running             kube-scheduler            6                   3e4f5a6b7c8d9       kube-scheduler-cp-1',
+                ];
+                const nm = ((m[1] || '').match(/--name[= ](\S+)/) || [])[1];
+                const shown = (all ? rows : rows.filter(r => / Running /.test(r))).filter(r => !nm || r.split(/\s+/)[4].includes(nm));
+                if (/(^| )(-q|--quiet)\b/.test(m[1] || '')) return shown.map(r => r.split(/\s+/)[0]).join('\n');
+                const tail = !all && !s.cluster.restored
+                  ? '\n\n⚠️ etcd aur kube-apiserver list mein hi nahi — dono abhi Exited hain. crictl ps bina -a ke sirf chalte containers dikhata hai: crictl ps -a'
+                  : '';
+                return [H].concat(shown).join('\n') + tail;
+              },
             },
             {
-              re: /etcdctl.*snapshot restore/,
-              out: (s) => {
-                s.cluster.snapshotRestored = true;
-                return '2026-09-04T04:12:08Z\tinfo\tsnapshot/v3_snapshot.go:260\trestoring snapshot\t{"path": "/backup/etcd-2026-09-04.db", "wal-dir": "/var/lib/etcd-restored/member/wal"}\n2026-09-04T04:12:11Z\tinfo\tmembership/store.go:141\tadded member\n2026-09-04T04:12:11Z\tinfo\tsnapshot/v3_snapshot.go:287\trestored snapshot\n\n✅ Nayi data directory ban gayi: /var/lib/etcd-restored\n⚠️ etcd abhi bhi PURANI directory (/var/lib/etcd) padh raha hai. Agla kadam: static pod manifest ka hostPath nayi directory par point karo.';
+              re: /^crictl logs\b.*?(\S+)$/,
+              out: (s, m) => {
+                const id = m[1] || '';
+                if (id.length >= 4 && '4f1c2b9e8a7d3'.startsWith(id)) {
+                  s.cluster.readEtcdLogs = true;
+                  return '{"level":"info","ts":"2026-09-04T04:09:51.116Z","caller":"etcdmain/etcd.go:73","msg":"Running: ","args":["etcd","--data-dir=/var/lib/etcd","--name=cp-1","--listen-client-urls=https://127.0.0.1:2379,https://10.0.0.10:2379"]}\n{"level":"info","ts":"2026-09-04T04:09:51.117Z","caller":"etcdmain/etcd.go:116","msg":"server has been already initialized","data-dir":"/var/lib/etcd","dir-type":"member"}\n{"level":"info","ts":"2026-09-04T04:09:51.121Z","caller":"etcdserver/backend.go:81","msg":"opened backend db","path":"/var/lib/etcd/member/snap/db","took":"3.1ms"}\n{"level":"fatal","ts":"2026-09-04T04:09:51.392Z","caller":"etcdserver/storage.go:105","msg":"failed to read WAL, cannot be repaired","error":"walpb: crc mismatch"}';
+                }
+                if (id.length >= 4 && 'b7e6d5c4a3f21'.startsWith(id))
+                  return 'I0904 04:08:12.402115       1 options.go:221] external host was not specified, using 10.0.0.10\nI0904 04:08:12.403588       1 server.go:148] Version: v1.30.2\nW0904 04:08:13.118410       1 logging.go:59] [core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "127.0.0.1:2379", ServerName: "127.0.0.1:2379", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 127.0.0.1:2379: connect: connection refused"\nF0904 04:08:32.120871       1 instance.go:290] Error creating leases: error creating storage factory: context deadline exceeded\n\n⚠️ kube-apiserver khud theek hai — woh 127.0.0.1:2379 (etcd) tak nahi pahunch pa raha. Asli mareez etcd hai.';
+                if (id.length >= 4 && ('c3d2e1f0a9b87'.startsWith(id) || 'd4e3f2a1b0c98'.startsWith(id)))
+                  return 'E0904 04:09:58.771204       1 leaderelection.go:347] error retrieving resource lock kube-system/kube-scheduler: Get "https://10.0.0.10:6443/apis/coordination.k8s.io/v1/namespaces/kube-system/leases/kube-scheduler?timeout=5s": dial tcp 10.0.0.10:6443: connect: connection refused\n\n⚠️ Yeh container sirf API server ka intezaar kar raha hai — iski bimari doosron ki wajah se hai.';
+                return `E0904 04:12:01.000000    3121 remote_runtime.go:432] "ContainerStatus from runtime service failed" err="rpc error: code = NotFound desc = an error occurred when try to find container \\"${id}\\": not found" containerID="${id}"\nFATA[0000] rpc error: code = NotFound desc = an error occurred when try to find container "${id}": not found\n\n⚠️ crictl logs ko CONTAINER ID chahiye (crictl ps -a ka pehla column), naam nahi. Jaise: crictl logs 4f1c2b9e8a7d3`;
               },
+            },
+            {
+              re: /^journalctl\b.*kubelet/,
+              out: 'Sep 04 04:10:02 cp-1 kubelet[812]: E0904 04:10:02.311204     812 pod_workers.go:1298] "Error syncing pod, skipping" err="failed to \\"StartContainer\\" for \\"etcd\\" with CrashLoopBackOff: \\"back-off 5m0s restarting failed container=etcd pod=etcd-cp-1_kube-system(5f0c8e1d)\\"" pod="kube-system/etcd-cp-1"\nSep 04 04:10:05 cp-1 kubelet[812]: E0904 04:10:05.118320     812 kubelet_node_status.go:544] "Error updating node status, will retry" err="error getting node \\"cp-1\\": Get \\"https://10.0.0.10:6443/api/v1/nodes/cp-1?timeout=10s\\": dial tcp 10.0.0.10:6443: connect: connection refused"',
+            },
+            {
+              re: /^ls( -[a-zA-Z]+)? \/backup\/?$/,
+              out: (s, m) => (m[1] && /l/.test(m[1] || '')
+                ? 'total 121M\n-rw-r--r-- 1 root root 61M Sep  4 02:00 etcd-2026-09-04.db\n-rw-r--r-- 1 root root 60M Sep  3 02:00 etcd-2026-09-03.db'
+                : 'etcd-2026-09-03.db  etcd-2026-09-04.db'),
+            },
+            {
+              re: /^cat \/etc\/kubernetes\/manifests\/etcd\.yaml$/,
+              out: s => `apiVersion: v1\nkind: Pod\nmetadata:\n  name: etcd\n  namespace: kube-system\nspec:\n  containers:\n  - name: etcd\n    image: registry.k8s.io/etcd:3.5.12-0\n    command:\n    - etcd\n    - --data-dir=/var/lib/etcd\n    - --name=cp-1\n    # ... (certs aur URLs wale flags chhote kiye)\n    volumeMounts:\n    - mountPath: /var/lib/etcd\n      name: etcd-data\n    - mountPath: /etc/kubernetes/pki/etcd\n      name: etcd-certs\n  hostNetwork: true\n  volumes:\n  - hostPath:\n      path: ${s.cluster.restored ? s.cluster.restoreDir : '/var/lib/etcd'}\n      type: DirectoryOrCreate\n    name: etcd-data\n  - hostPath:\n      path: /etc/kubernetes/pki/etcd\n      type: DirectoryOrCreate\n    name: etcd-certs`,
+            },
+            {
+              re: /^(vi|vim|nano) \/etc\/kubernetes\/manifests\/etcd\.yaml$/,
+              out: '(Simulator mein editor nahi khulta.) Badlaav sirf ek line ka hai: volumes → etcd-data → hostPath.path ko /var/lib/etcd se restore wali directory par le jao. Container ke andar --data-dir=/var/lib/etcd hi rehta hai — mountPath wahi hai, sirf node ki directory badalti hai. Yahi kaam: ls → bash point-manifest.sh (ya sed -i)',
+            },
+            {
+              re: /^sed -i .*\/etc\/kubernetes\/manifests\/etcd\.yaml$/,
+              out: (s, m) => {
+                const dirs = ((m[0] || '').match(/\/var\/lib\/[\w.-]+/g) || []).filter(d => d !== '/var/lib/etcd');
+                const target = dirs[dirs.length - 1];
+                if (!target) return '⚠️ sed ne kuch nahi badla — naya path kahan hai? Jaise: sed -i \'s#path: /var/lib/etcd$#path: /var/lib/etcd-restored#\' /etc/kubernetes/manifests/etcd.yaml';
+                return pointEtcdTo(s, target);
+              },
+            },
+            {
+              re: /^(etcdutl|(ETCDCTL_API=3 )?etcdctl)\b.*snapshot status\b(.*)$/,
+              out: (s, m) => {
+                const dep = /etcdctl/.test(m[1] || '') ? 'Deprecated: Use `etcdutl snapshot status` instead.\n\n' : '';
+                const file = ((m[3] || '').match(/\S+\.db\b/) || [])[0];
+                const snap = { '/backup/etcd-2026-09-04.db': ['8f2c1a4e', 492817, 1642, '61 MB'], '/backup/etcd-2026-09-03.db': ['3b9d07c2', 480112, 1630, '60 MB'] }[file];
+                if (!snap) return dep + `Error: stat ${file || '(file ka path do)'}: no such file or directory\n\n⚠️ ls /backup se sahi file naam dekho`;
+                if (file.endsWith('09-04.db')) s.cluster.snapshotVerified = true;
+                const table = /-w table|--write-out[= ]table/.test(m[3] || '');
+                const body = table
+                  ? `+----------+----------+------------+------------+\n|   HASH   | REVISION | TOTAL KEYS | TOTAL SIZE |\n+----------+----------+------------+------------+\n| ${snap[0]} |   ${snap[1]} |       ${snap[2]} |      ${snap[3]} |\n+----------+----------+------------+------------+`
+                  : `${snap[0]}, ${snap[1]}, ${snap[2]}, ${snap[3]}`;
+                const note = file.endsWith('09-04.db')
+                  ? `\n\n✅ Snapshot padha ja sakta hai — ${snap[2]} keys. Yahi sabse naya hai (aaj 02:00). Restore ke liye theek.`
+                  : '\n\n⚠️ Yeh 3 Sep wala purana snapshot hai. 4 Sep 02:00 wala naya maujood hai — purane se restore kiya toh ek din ka data aur khoyega.';
+                return dep + body + note;
+              },
+            },
+            {
+              re: /^(etcdutl|(ETCDCTL_API=3 )?etcdctl)\b.*snapshot restore\b(.*)$/,
+              out: (s, m) => {
+                const dep = /etcdctl/.test(m[1] || '') ? 'Deprecated: Use `etcdutl snapshot restore` instead.\n\n' : '';
+                const file = ((m[3] || '').match(/\S+\.db\b/) || [])[0];
+                if (file !== '/backup/etcd-2026-09-04.db' && file !== '/backup/etcd-2026-09-03.db')
+                  return dep + `Error: stat ${file || '(snapshot file ka path do)'}: no such file or directory`;
+                if (file.endsWith('09-03.db'))
+                  return dep + '⚠️ ROKO — yeh 3 Sep wala snapshot hai. 4 Sep 02:00 wala naya aur verified snapshot maujood hai; purane se restore karne par ek poore din ka data aur khoyega. Naye wale se restore karo.';
+                const dd = ((m[3] || '').match(/--data-dir[= ](\S+)/) || [])[1];
+                if (!dd)
+                  return dep + '2026-09-04T04:12:08Z\tinfo\tsnapshot/v3_snapshot.go:266\trestoring snapshot\t{"path": "/backup/etcd-2026-09-04.db", "wal-dir": "default.etcd/member/wal", "data-dir": "default.etcd", "snap-dir": "default.etcd/member/snap"}\n2026-09-04T04:12:11Z\tinfo\tsnapshot/v3_snapshot.go:294\trestored snapshot\t{"path": "/backup/etcd-2026-09-04.db", "data-dir": "default.etcd"}\n\n⚠️ --data-dir nahi diya, isliye snapshot current folder ke "default.etcd" mein restore hua. Manifest ko ek saaf, pakka path chahiye: --data-dir=/var/lib/etcd-restored';
+                const dir = dd.replace(/\/+$/, '');
+                if (dir === '/var/lib/etcd' || dir === s.cluster.restoreDir)
+                  return dep + `Error: data-dir "${dir}" not empty or could not be read\n\n⚠️ Restore sirf KHAALI (ya nayi) directory mein hota hai. Corrupt data ke upar restore nahi hota — nayi directory do: --data-dir=/var/lib/etcd-restored`;
+                s.cluster.restoreDir = dir;
+                return dep + `2026-09-04T04:12:08Z\tinfo\tsnapshot/v3_snapshot.go:266\trestoring snapshot\t{"path": "/backup/etcd-2026-09-04.db", "wal-dir": "${dir}/member/wal", "data-dir": "${dir}", "snap-dir": "${dir}/member/snap"}\n2026-09-04T04:12:10Z\tinfo\tmembership/store.go:141\tTrimming membership information from the backend...\n2026-09-04T04:12:10Z\tinfo\tmembership/cluster.go:421\tadded member\t{"cluster-id": "cdf818194e3a8c32", "local-member-id": "0", "added-peer-id": "8e9e05c52164694d", "added-peer-peer-urls": ["http://localhost:2380"]}\n2026-09-04T04:12:11Z\tinfo\tsnapshot/v3_snapshot.go:294\trestored snapshot\t{"path": "/backup/etcd-2026-09-04.db", "wal-dir": "${dir}/member/wal", "data-dir": "${dir}", "snap-dir": "${dir}/member/snap"}\n\n✅ Nayi data directory ban gayi: ${dir}\n⚠️ etcd abhi bhi PURANI directory (/var/lib/etcd) padh raha hai. Agla kadam: static pod manifest ka hostPath nayi directory par le jao.`;
+              },
+            },
+            {
+              re: /^(ETCDCTL_API=3 )?etcdctl\b/,
+              out: s => (s.cluster.restored
+                ? 'Is mission mein yeh etcdctl command scripted nahi hai — kubectl get pods -n kube-system se cluster dekho'
+                : '{"level":"warn","ts":"2026-09-04T04:12:30.512Z","logger":"etcd-client","caller":"v3/retry_interceptor.go:62","msg":"retrying of unary invoker failed","target":"etcd-endpoints://0xc0002a4000/127.0.0.1:2379","attempt":0,"error":"rpc error: code = DeadlineExceeded desc = latest balancer error: last connection error: connection error: desc = \\"transport: Error while dialing: dial tcp 127.0.0.1:2379: connect: connection refused\\""}\nError: context deadline exceeded\n\n⚠️ etcdctl chalte hue etcd se network par baat karta hai — aur etcd mara pada hai. Snapshot ki file par offline kaam etcdutl karta hai.'),
+            },
+            {
+              re: /^crictl\b/,
+              out: 'Is mission mein crictl ke yeh do command scripted hain: crictl ps -a  aur  crictl logs <CONTAINER-ID>',
+            },
+            {
+              re: /^ls( -[a-zA-Z]+)? \/var\/lib\/?$/,
+              out: s => 'containerd  dpkg  etcd' + (s.cluster.restoreDir === '/var/lib/etcd-restored' ? '  etcd-restored' : '') + '  kubelet',
+            },
+            {
+              re: /^systemctl (restart|status) kubelet$/,
+              out: (s, m) => (m[1] === 'status'
+                ? '● kubelet.service - kubelet: The Kubernetes Node Agent\n     Loaded: loaded (/lib/systemd/system/kubelet.service; enabled)\n     Active: active (running) since Thu 2026-03-12 10:02:41 UTC; 5 months 23 days ago\n\n⚠️ kubelet zinda hai — woh etcd ko baar-baar chala raha hai, aur etcd baar-baar mar raha hai.'
+                : ETCD_KUBELET_RESTART),
             },
           ],
           files: {
-            'point-manifest.yaml': {
-              desc: '/etc/kubernetes/manifests/etcd.yaml ka hostPath /var/lib/etcd-restored par le jaata hai',
-              apply: s => {
-                if (!s.cluster.snapshotRestored)
-                  return '⚠️ Nayi data directory /var/lib/etcd-restored maujood hi nahi hai. Pehle etcdctl snapshot restore --data-dir=/var/lib/etcd-restored chalao, tab manifest ko us directory par point karo.';
-                s.cluster.restored = true;
-                s.cluster.pods.forEach(p => {
-                  p.status = 'Running'; p.ready = '1/1'; p.restarts = 0;
-                  p.logs = p.name.startsWith('etcd')
-                    ? '{"level":"info","msg":"serving client traffic","address":"127.0.0.1:2379"}'
-                    : 'I0904 04:13:02 Serving securely on [::]:6443\nI0904 04:13:04 Storage version of apiregistration.k8s.io updated';
-                });
-                return 'etcd.yaml updated (hostPath → /var/lib/etcd-restored)\nkubelet ne static pod ko dobara chalu kiya\n\n✅ etcd Running · kube-apiserver Running\n⚠️ Cluster ab 02:00 wale snapshot par hai. 02:00 ke baad bane objects gayab hain — team ko batao.';
-              },
+            'point-manifest.sh': {
+              desc: '/etc/kubernetes/manifests/etcd.yaml ka hostPath restore wali directory par le jaati hai',
+              content: '#!/bin/bash\n# etcd static pod ko restore wali nayi directory par le jao.\n# Sirf hostPath badalta hai — container ke andar mountPath (/var/lib/etcd) aur --data-dir wahi rehte hain.\nsed -i \'s#path: /var/lib/etcd$#path: /var/lib/etcd-restored#\' /etc/kubernetes/manifests/etcd.yaml\n# kubelet manifests folder ko dekhta rehta hai: file badli → etcd pod naye hostPath ke saath dobara banta hai',
+              apply: s => pointEtcdTo(s, '/var/lib/etcd-restored'),
             },
-            'restart-kubelet.yaml': {
-              desc: 'cp-1 par kubelet restart karta hai',
-              apply: () => 'systemctl restart kubelet\n\n⚠️ etcd phir wahi crash de raha hai: "walpb: crc mismatch". etcd ki data directory corrupt hai — restart se corrupt file theek nahi hoti. Snapshot restore hi ek raasta hai.',
+            'restart-kubelet.sh': {
+              desc: 'cp-1 par kubelet restart karti hai',
+              content: '#!/bin/bash\nsystemctl restart kubelet',
+              apply: () => ETCD_KUBELET_RESTART,
             },
-            'delete-etcd-pod.yaml': {
-              desc: 'etcd pod delete karta hai taaki naya bane',
-              apply: () => 'pod "etcd-cp-1" deleted\n\n⚠️ etcd ek STATIC POD hai — kubelet usse /etc/kubernetes/manifests/etcd.yaml se seedha banata hai, koi controller nahi. Delete karte hi kubelet ne wahi pod dobara bana diya, aur wahi corrupt data directory phir se padhi. Status waisa ka waisa: CrashLoopBackOff.',
+            'wipe-etcd-data.sh': {
+              desc: '/var/lib/etcd ko delete karke etcd ko khaali shuru karti hai',
+              content: '#!/bin/bash\nrm -rf /var/lib/etcd/member',
+              apply: () => '⚠️ ROKO — script nahi chalayi gayi. Data directory mita di toh etcd KHAALI shuru hoga: API server upar aa jayega, par cluster sab bhool chuka hoga — har Deployment, Secret, ConfigMap, RBAC rule gayab. Snapshot maujood hai, isliye sab kuch mitaane ki koi wajah nahi. Restore karo.',
             },
           },
           success: allOf(T_ETCD),
-          successText: 'Do cheezein saabit hui. <b>Pehli:</b> etcd aur kube-apiserver <b>static pods</b> hain — kubelet unhe seedha <code>/etc/kubernetes/manifests/</code> se banata hai, isliye pod delete karne ya kubelet restart karne se kuch nahi badalta; asli badlav manifest file mein hota hai. <b>Doosri:</b> restore sirf snapshot restore chalane se poora nahi hota — <code>--data-dir</code> ek <b>nayi</b> directory banata hai, aur etcd tab tak purani corrupt directory hi padhta rehta hai jab tak manifest ka hostPath nayi directory par na jaye. Aur yaad rakho: cluster ab 02:00 ke snapshot par hai, isliye 02:00 ke baad bana har object gayab hai.',
+          successText: 'Teen cheezein saabit hui. <b>Pehli:</b> API server down ho toh kubectl andha hai — node par <code>crictl ps -a</code> aur <code>crictl logs</code> hi aankhein hain, kyunki control plane ke containers kubelet seedha container runtime mein chalata hai. <b>Doosri:</b> etcd aur kube-apiserver <b>static pods</b> hain — kubelet unhe <code>/etc/kubernetes/manifests/</code> se banata hai, isliye kubelet restart se kuch nahi badla; asli badlav manifest file mein hua. <b>Teesri:</b> <code>snapshot restore</code> ek <b>nayi</b> data directory banata hai — etcd tab tak purani corrupt directory padhta raha jab tak manifest ka hostPath nayi directory par nahi gaya. Aur yaad rakho: cluster ab 02:00 ke snapshot par hai — 02:00 ke baad bana har object gayab hai. <i>Tool note:</i> etcd 3.6 (kubeadm 1.34+) mein <code>etcdctl snapshot status/restore</code> hata diye gaye — offline kaam <code>etcdutl</code> karta hai, <code>etcdctl</code> sirf online kaam (jaise <code>snapshot save</code>) ke liye.',
           hints: [
-            'kubectl get pods -n kube-system — etcd aur apiserver dono CrashLoopBackOff mein hain',
-            'kubectl logs etcd-cp-1 --previous — "walpb: crc mismatch" matlab data directory corrupt hai',
-            'ls /backup — snapshot maujood hai. Pehle verify: ETCDCTL_API=3 etcdctl snapshot status /backup/etcd-2026-09-04.db',
-            'ETCDCTL_API=3 etcdctl snapshot restore /backup/etcd-2026-09-04.db --data-dir=/var/lib/etcd-restored',
-            'ls chalao — point-manifest.yaml se etcd.yaml ka hostPath nayi directory par le jao',
+            'kubectl get pods -n kube-system → "connection refused"? API server hi down hai. Node par container runtime se seedha poochho: sudo crictl ps -a',
+            'etcd ka CONTAINER ID lo aur logs padho: sudo crictl logs 4f1c2b9e8a7d3 — "walpb: crc mismatch" matlab etcd ki data directory corrupt hai',
+            'ls /backup — phir naya snapshot verify karo: etcdutl snapshot status /backup/etcd-2026-09-04.db -w table',
+            'etcdutl snapshot restore /backup/etcd-2026-09-04.db --data-dir=/var/lib/etcd-restored  (purani /var/lib/etcd mein restore nahi hota — directory khaali honi chahiye)',
+            'cat /etc/kubernetes/manifests/etcd.yaml | grep -A2 hostPath → ls → bash point-manifest.sh → kubectl get pods -n kube-system',
+          ],
+          solution: [
+            'kubectl get pods -n kube-system',
+            'sudo crictl ps -a',
+            'sudo crictl logs 4f1c2b9e8a7d3',
+            'ls /backup',
+            'etcdutl snapshot status /backup/etcd-2026-09-04.db -w table',
+            'etcdutl snapshot restore /backup/etcd-2026-09-04.db --data-dir=/var/lib/etcd-restored',
+            'cat /etc/kubernetes/manifests/etcd.yaml | grep -A2 hostPath',
+            'bash point-manifest.sh',
+            'kubectl get pods -n kube-system',
           ],
         },
       ],
@@ -3355,10 +3590,10 @@ ETCDCTL_API=3 etcdctl snapshot restore /backup/etcd-2026-09-04.db \\
           {
             q: 'Interviewer: "<code>kubectl drain</code> aur <code>kubectl delete pod</code> mein PDB ke hisaab se kya farq hai?"',
             choices: [
-              'drain Eviction API se chalta hai jo PDB maanti hai; delete seedha object hataata hai aur PDB ko poori tarah ignore karta hai',
-              'Dono PDB maante hain',
-              'Dono PDB ignore karte hain',
-              'delete PDB maanta hai, drain nahi',
+              'drain Eviction API se chalta hai jo PDB maanti hai; delete seedha hatata hai, PDB dekhta hi nahi',
+              'Dono PDB maante hain — farq sirf itna hai ki drain node ko cordon bhi kar deta hai',
+              'Dono PDB ignore karte hain — PDB sirf HPA ke scale-down ke waqt hi lagu hota hai',
+              'delete PDB maanta hai, drain nahi — drain maintenance ke liye jaan-boojh ke PDB todta hai',
             ],
             answer: 0,
             explain: 'PDB ka lagoo hona sirf <b>Eviction API</b> (<code>POST /pods/&lt;name&gt;/eviction</code>) par hota hai. <code>kubectl drain</code> wahi API use karta hai, isliye drain safe hai — PDB tootne wali eviction reject ho jaati hai. <code>kubectl delete pod</code> seedha object delete karta hai aur PDB check hota hi nahi. Isliye maintenance ke liye hamesha drain, kabhi delete nahi. (Node ka kernel OOM killer aur node ka crash bhi PDB nahi maante — PDB sirf <i>voluntary</i> disruptions se bachata hai.)',
@@ -3366,10 +3601,10 @@ ETCDCTL_API=3 etcdctl snapshot restore /backup/etcd-2026-09-04.db \\
           {
             q: 'Interviewer: "etcd snapshot restore ke baad kya-kya khoya hai, yeh kaise batao ge?"',
             choices: [
-              'Sab kuch jo snapshot ke BAAD bana ya badla — naye Deployments, naye Secrets, naye PVC, RBAC ke badlav — aur nodes par chal rahe orphan containers bhi ho sakte hain',
-              'Kuch nahi khota, etcd apne aap sync kar leta hai',
-              'Sirf pods khote hain, baaki objects bach jaate hain',
-              'Sirf woh objects khote hain jo default namespace mein the',
+              'Snapshot ke BAAD bana ya badla sab kuch — naye Deployments, Secrets, PVC, RBAC — aur orphan containers',
+              'Kuch nahi khota — etcd restore ke baad nodes se baaki state apne aap sync kar leta hai',
+              'Sirf pods khote hain — Deployments, Secrets jaise baaki objects har hal mein bach jaate hain',
+              'Sirf woh objects khote hain jo default namespace mein the, baaki namespaces surakshit hain',
             ],
             answer: 0,
             explain: 'etcd cluster ka <b>poora</b> state rakhta hai. Restore cluster ko snapshot wale exact waqt par le jaata hai — us waqt ke baad ka har badlav gayab. Do khaas khatre: <b>(1)</b> nodes par chal rahe containers ka etcd ko pata hi nahi tha, isliye restore ke baad aise pods chal rahe honge jinka koi object hi nahi hai (orphans) — inhe dhoondh ke saaf karna padta hai; <b>(2)</b> agar kisi ne snapshot ke baad Secret rotate ki thi, to purani (rotate ho chuki) Secret wapas aa jayegi. Isliye restore ke baad har application ki halat khud verify karni padti hai.',
@@ -3467,11 +3702,17 @@ front-proxy-client         Sep 04, 2026 03:11 UTC   &lt;invalid&gt;
 CERTIFICATE AUTHORITY      EXPIRES                  RESIDUAL TIME
 ca                         Sep 02, 2035 03:11 UTC   8y             ← CA 10 saal ki hai
 
-# Sab renew karo
+# Sab renew karo — yeh sirf DISK par files badalta hai
 kubeadm certs renew all
-# static pods ko naya certificate uthana hoga:
-# /etc/kubernetes/manifests/ ki file ko touch karo ya kubelet restart karo
-# aur NAYA admin kubeconfig lo:
+
+# Static pods naye certificates tabhi uthate hain jab dobara banein. kubectl se nahi hota,
+# aur file "touch" karna ya kubelet restart karna container ko restart NAHI karta.
+# kubeadm ka tarika: manifests 20 second ke liye bahar rakho, phir wapas.
+mkdir -p /tmp/m &amp;&amp; mv /etc/kubernetes/manifests/*.yaml /tmp/m/
+sleep 20
+mv /tmp/m/*.yaml /etc/kubernetes/manifests/
+
+# Aur NAYA admin kubeconfig lo (purani file mein purana certificate embedded hai)
 cp /etc/kubernetes/admin.conf ~/.kube/config</pre>
          <div class="war-story"><b>⚡ Saal mein ek baar aane wala outage:</b> kubeadm ke client
          certificates <b>1 saal</b> ke hote hain, par CA <b>10 saal</b> ki. Jo cluster har kuch mahine
@@ -3582,24 +3823,24 @@ front-proxy-ca             Sep 02, 2035 03:11 UTC   8y`,
             {
               q: 'Kya production cluster sach mein down hai?',
               choices: [
-                'Nahi — API server zinda hai (healthz ok) aur applications traffic le rahi hain. Sirf admin ki kubectl pahunch tooti hai kyunki client certificate expire ho gaya',
-                'Haan — poora control plane down hai',
-                'Haan — nodes ka etcd se rishta toot gaya hai',
-                'Nahi — sirf DNS ka masla hai',
+                'Nahi — API server zinda (healthz ok), apps traffic le rahi hain; tooti hai certificate wali pahunch',
+                'Haan — poora control plane down hai, isliye apps ka traffic bhi kuch der mein ruk jayega',
+                'Haan — nodes ka etcd se rishta toot gaya hai, isliye kubelet ek-ek karke pods band kar raha hai',
+                'Nahi — sirf CoreDNS ka masla hai, kubectl API server ka naam hi resolve nahi kar pa raha',
               ],
               answer: 0,
-              explain: 'Teen saboot: <code>curl -k https://…/healthz</code> ne <code>ok</code> diya (API server zinda), application endpoint ne 412 orders dikhaye (traffic chal raha hai), aur error TLS handshake ke padav par hai. <b>Chal rahe pods ko control plane ki zaroorat hoti hi nahi</b> — kubelet apne containers chalaata rehta hai aur kube-proxy ke iptables rules waise ke waise kaam karte hain. Certificate expiry admin ki pahunch todti hai, applications nahi. (Haan, jab tak control plane wapas na aaye, koi naya deploy ya scaling nahi ho sakti.)',
+              explain: 'Teen saboot: <code>curl -k https://…/healthz</code> ne <code>ok</code> diya (API server zinda), application endpoint ne 412 orders dikhaye (traffic chal raha hai), aur error TLS handshake ke padav par hai. <b>Chal rahe pods ko control plane ki zaroorat hoti hi nahi</b> — kubelet apne containers chalaata rehta hai aur kube-proxy ke rules waise ke waise kaam karte hain. Certificate expiry <b>pahunch</b> todti hai, applications nahi — admin ka kubectl, aur controller-manager/scheduler ki bhi (unke certificates bhi usi din expire hue). Isliye jab tak renew + control plane restart na ho, koi naya pod schedule nahi hoga aur controllers kuch theek nahi karenge.',
             },
             {
               q: 'CA 8 saal aur chalegi par saare client certificates expire hain. Sahi ilaaj?',
               choices: [
-                'sudo kubeadm certs renew all — phir static pods restart karo aur naya /etc/kubernetes/admin.conf le lo',
-                'Cluster ko kubeadm reset karke dobara banao',
-                'kubectl ko --insecure-skip-tls-verify ke saath chalao',
-                'Har node par ghadi peeche kar do',
+                'sudo kubeadm certs renew all — phir control plane static pods restart karo aur naya admin.conf lo',
+                'Cluster ko kubeadm reset karke dobara banao — expired cluster ko theek karne ka yahi raasta hai',
+                'kubectl ko --insecure-skip-tls-verify ke saath chalao — certificate ki jaanch hi band ho jayegi',
+                'Har node par ghadi ek din peeche kar do — certificates phir se valid ho jayenge, cluster chalega',
               ],
               answer: 0,
-              explain: 'CA zinda hai, isliye <code>kubeadm certs renew all</code> usi CA se saare leaf certificates dobara jaari kar deta hai — kuch second ka kaam. Uske baad do cheezein zaroori hain: <b>(1)</b> control plane ke static pods ko naye certificate uthane hain (manifest file <code>touch</code> karo ya kubelet restart karo); <b>(2)</b> <code>/etc/kubernetes/admin.conf</code> se naya kubeconfig copy karo, kyunki purani admin.conf mein purana expired certificate embedded hai. <code>--insecure-skip-tls-verify</code> yahan kaam bhi nahi karega — problem <b>client</b> certificate ki hai, server ke verification ki nahi. Ghadi peeche karna cluster-wide corruption ka nyota hai.',
+              explain: 'CA zinda hai, isliye <code>kubeadm certs renew all</code> usi CA se saare leaf certificates dobara jaari kar deta hai — kuch second ka kaam. Uske baad do cheezein zaroori hain: <b>(1)</b> control plane ke static pods ko naye certificate uthane hain — manifests ko 20 second ke liye <code>/etc/kubernetes/manifests/</code> se bahar rakho aur wapas laao (file <code>touch</code> karne ya kubelet restart se container restart nahi hota); <b>(2)</b> <code>/etc/kubernetes/admin.conf</code> se naya kubeconfig copy karo, kyunki purani kubeconfig mein purana expired certificate embedded hai. <code>--insecure-skip-tls-verify</code> kaam nahi karega — tumhara apna <b>client</b> certificate bhi expire hai, API server use Unauthorized bol dega. Ghadi peeche karna cluster-wide corruption ka nyota hai.',
             },
           ],
         },
@@ -3638,11 +3879,15 @@ kubectl create rolebinding alice-edit \\
         {
           type: 'terminal',
           title: '🖥️ Mission: expired certificates renew karo',
-          instructions: 'kubectl kaam nahi kar raha. Pehle expiry confirm karo, phir renew karo, phir naya kubeconfig lo.',
-          goal: '<code>kubeadm certs check-expiration</code> chalao, phir <code>kubeadm certs renew all</code>, phir <code>ls</code> se naya kubeconfig lagao.',
+          instructions: 'Tum control-plane node <code>cp-1</code> par SSH karke baithe ho. kubectl kaam nahi kar raha. Pehle expiry confirm karo, phir renew karo, control plane restart karo, phir naya kubeconfig lo.',
+          goal: '<code>kubectl get nodes</code> ka error padho → <code>kubeadm certs check-expiration</code> → <code>kubeadm certs renew all</code> → <code>ls</code> se scripts dekho: pehle control plane restart, phir naya admin kubeconfig (<code>bash &lt;script&gt;</code>) → aakhir mein <code>kubectl get nodes</code> se pakka karo.',
           tasks: T_CERT,
           cluster: {
             apiReachable: false,
+            // client + server dono certificates 03:11 par expire — kubectl TLS handshake par hi atakta hai
+            apiError: s => (s.cluster.apiReachable ? null
+              : s.cluster.insecure ? 'error: specifying a root certificates file with the insecure flag is not allowed'
+              : 'Unable to connect to the server: tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2026-09-04T09:12:44Z is after 2026-09-04T03:11:00Z'),
             renewed: false,
             nodes: [{ name: 'cp-1', status: 'Ready', roles: 'control-plane', age: '366d', version: 'v1.30.2' }],
             pods: [{ name: 'shop-api-6b7c8d9e0-aa1bb', ready: '1/1', status: 'Running', restarts: 0, age: '92d', node: 'cp-1', ip: '10.244.1.5', logs: '{"msg":"handled GET /health","status":200}' }],
@@ -3661,34 +3906,72 @@ kubectl create rolebinding alice-edit \\
                 return 'certificate embedded in the kubeconfig file for the admin to use renewed\ncertificate for serving the Kubernetes API renewed\ncertificate the apiserver uses to access etcd renewed\ncertificate for the API server to connect to kubelet renewed\ncertificate embedded in the kubeconfig file for the controller manager to use renewed\ncertificate for the front proxy client renewed\ncertificate embedded in the kubeconfig file for the scheduler manager to use renewed\n\nDone renewing certificates. You must restart the kube-apiserver, kube-controller-manager,\nkube-scheduler and etcd, so that they can use the new certificates.\n\n⚠️ Certificates renew ho gaye par tumhari ~/.kube/config mein abhi bhi PURANA certificate hai.';
               },
             },
+            {
+              re: /kubeadm certs renew (?!all\b)(\S+)/,
+              out: (s, m) => `certificate ${m[1] || ''} renewed\n\n⚠️ Sirf EK certificate renew hua. check-expiration ne dikhaya tha ki saare client certificates expire hain — sab ek saath: kubeadm certs renew all`,
+            },
+            {
+              re: /^openssl x509 .*\/etc\/kubernetes\/pki\/apiserver\.crt/,
+              out: s => (s.cluster.renewed
+                ? 'notBefore=Sep  4 09:14:02 2026 GMT\nnotAfter=Sep  4 09:14:02 2027 GMT'
+                : 'notBefore=Sep  4 03:06:00 2025 GMT\nnotAfter=Sep  4 03:11:00 2026 GMT'),
+            },
             { re: /curl -sk? https?:\/\/\S*healthz/, out: 'ok' },
+            { re: /^kubeadm\b/, out: 'Is mission mein kubeadm ke yeh command scripted hain: kubeadm certs check-expiration  aur  kubeadm certs renew all' },
           ],
           files: {
-            'copy-admin-conf.yaml': {
-              desc: '/etc/kubernetes/admin.conf ko ~/.kube/config par copy karta hai (naya certificate embedded ke saath)',
+            'restart-control-plane.sh': {
+              desc: 'control plane ke static pods (apiserver, controller-manager, scheduler, etcd) ko naye certificates ke saath dobara chalati hai',
+              content: '#!/bin/bash\n# Static pods kubectl se restart nahi hote — kubelet unhe manifest files se chalata hai.\n# Manifest hatao → kubelet pod rok deta hai. Wapas rakho → kubelet naye certificates ke saath dobara chalata hai.\nmkdir -p /tmp/manifests-backup\nmv /etc/kubernetes/manifests/*.yaml /tmp/manifests-backup/\nsleep 20\nmv /tmp/manifests-backup/*.yaml /etc/kubernetes/manifests/',
+              apply: s => {
+                if (!s.cluster.renewed)
+                  return '⚠️ Abhi renew hi nahi hua — restart karne par control plane wahi PURANE, expired certificates dobara load karega. Pehle: sudo kubeadm certs renew all';
+                s.cluster.cpRestarted = true;
+                return 'mv /etc/kubernetes/manifests/*.yaml /tmp/manifests-backup/   (kubelet ne chaaron static pods roke)\nsleep 20\nmv /tmp/manifests-backup/*.yaml /etc/kubernetes/manifests/   (kubelet ne naye certificates ke saath dobara chalaye)\n\n✅ kube-apiserver, kube-controller-manager, kube-scheduler, etcd — sab naye certificates par.\n⚠️ Tumhari ~/.kube/config mein abhi bhi PURANA certificate embedded hai.';
+              },
+            },
+            'copy-admin-conf.sh': {
+              desc: '/etc/kubernetes/admin.conf ko ~/.kube/config par copy karti hai (naya certificate embedded ke saath)',
+              content: '#!/bin/bash\ncp /etc/kubernetes/admin.conf ~/.kube/config\nchown $(id -u):$(id -g) ~/.kube/config',
               apply: s => {
                 if (!s.cluster.renewed)
                   return '⚠️ admin.conf mein abhi bhi purana expired certificate hai. Pehle "sudo kubeadm certs renew all" chalao, tab admin.conf copy karo.';
                 s.cluster.apiReachable = true;
-                return 'cp /etc/kubernetes/admin.conf ~/.kube/config\n\n$ kubectl get nodes\nNAME   STATUS   ROLES           AGE    VERSION\ncp-1   Ready    control-plane   366d   v1.30.2\n\n✅ kubectl wapas chal raha hai. Yaad rakho: renew ke baad naya admin.conf lena zaroori tha, kyunki purani kubeconfig mein purana certificate EMBEDDED tha.';
+                s.cluster.insecure = false;   // nayi file — skip-tls wala jugaad bhi saath mein gaya
+                s.cluster.reachableAt = s.history.length;
+                return 'cp /etc/kubernetes/admin.conf ~/.kube/config\n\n✅ ~/.kube/config mein ab naya certificate embedded hai. Pakka karo: kubectl get nodes';
               },
             },
-            'skip-tls.yaml': {
-              desc: 'kubeconfig mein insecure-skip-tls-verify: true lagata hai',
-              apply: () => 'error: specifying a root certificates file with the insecure flag is not allowed\n\n⚠️ Aur agar chal bhi jaata, to kaam nahi karta. <code>--insecure-skip-tls-verify</code> ka asar sirf itna hai ki client SERVER ka certificate verify na kare. Yahan CLIENT ka certificate expire hua hai — API server usse reject kar raha hai. Flag galat problem par lagaya ja raha hai.',
+            'skip-tls.sh': {
+              desc: 'kubeconfig mein insecure-skip-tls-verify: true lagati hai',
+              content: '#!/bin/bash\nkubectl config set-cluster kubernetes --insecure-skip-tls-verify=true',
+              apply: s => {
+                s.cluster.insecure = true;
+                return 'Cluster "kubernetes" set.\n\n⚠️ Ab har kubectl command "specifying a root certificates file with the insecure flag is not allowed" dega — kubeconfig mein CA bhi hai aur insecure flag bhi. Aur CA hata bhi do, tab bhi kaam nahi banega: --insecure-skip-tls-verify sirf SERVER ka certificate jaanchna band karta hai. Tumhara apna CLIENT certificate bhi expire hai — API server usse "Unauthorized" bol ke lauta dega. Galat problem par galat flag. (Naya admin.conf copy karne se yeh jugaad bhi mit jayega.)';
+              },
             },
-            'reset-cluster.yaml': {
-              desc: 'kubeadm reset karke cluster dobara banata hai',
+            'reset-cluster.sh': {
+              desc: 'kubeadm reset karke cluster dobara banati hai',
+              content: '#!/bin/bash\nkubeadm reset -f\nkubeadm init',
               apply: () => '⚠️ ROKO. check-expiration ne dikhaya tha ki CA 8 saal aur chalegi. CA zinda ho to poora cluster dobara banane ki zaroorat bilkul nahi — "kubeadm certs renew all" kuch second ka kaam hai. Reset se saare workloads, saare secrets aur saara etcd data chala jayega.',
             },
           },
           success: allOf(T_CERT),
-          successText: 'Do cheezein yaad rakhne layak. <b>Pehli:</b> certificate expiry se applications nahi rukti — chal rahe pods, kube-proxy ke rules, sab kaam karte rehte hain; sirf control plane tak <i>admin ki pahunch</i> rukti hai. <b>Doosri:</b> <code>kubeadm certs renew all</code> ke baad naya <code>admin.conf</code> lena zaroori hai, kyunki purani kubeconfig mein purana certificate <b>embedded</b> hota hai — file khud badalti nahi. Aur CA 10 saal ki hoti hai, isliye leaf certificates expire hone par cluster dobara banane ka sawal hi nahi uthta.',
+          successText: 'Teen cheezein yaad rakhne layak. <b>Pehli:</b> certificate expiry se chal rahe applications nahi rukte — pods aur kube-proxy ke rules kaam karte rehte hain; rukti hai control plane tak <i>pahunch</i> — admin ki bhi, aur controller-manager/scheduler ki bhi (isliye naye pods schedule nahi hote, controllers kuch theek nahi karte). <b>Doosri:</b> renew sirf disk par files badalta hai. controller-manager aur scheduler ki kubeconfig mein certificate <b>embedded</b> hai aur woh memory mein purana hi pakde rehte hain — isliye kubeadm kehta hai control plane static pods restart karo (manifest 20 second ke liye bahar). <b>Teesri:</b> tumhari apni <code>~/.kube/config</code> mein bhi purana certificate embedded tha — naya <code>admin.conf</code> copy karna zaroori tha. Aur CA 10 saal ki hoti hai, isliye leaf certificates expire hone par cluster dobara banane ka sawal hi nahi uthta. <i>Bachaav:</i> <code>kubeadm upgrade apply</code> har upgrade par certificates renew karta hai — saal mein ek upgrade = expiry kabhi nahi.',
           hints: [
-            'sudo kubeadm certs check-expiration — dekho kya expire hua aur CA kitni bachi hai',
+            'kubectl get nodes — "x509: certificate has expired" padho, time bhi likha hai. Ab node par: sudo kubeadm certs check-expiration',
             'CA 8 saal aur chalegi, isliye sirf renew chahiye: sudo kubeadm certs renew all',
-            'Renew ke baad bhi purani kubeconfig mein purana certificate embedded hai',
-            'ls chalao — copy-admin-conf.yaml se naya kubeconfig lo',
+            'Renew ne sirf files badli. ls → bash restart-control-plane.sh (static pods naye certificates load karein)',
+            'Tumhari ~/.kube/config mein purana certificate embedded hai: bash copy-admin-conf.sh → kubectl get nodes',
+          ],
+          solution: [
+            'kubectl get nodes',
+            'sudo kubeadm certs check-expiration',
+            'sudo kubeadm certs renew all',
+            'ls',
+            'bash restart-control-plane.sh',
+            'bash copy-admin-conf.sh',
+            'kubectl get nodes',
           ],
         },
       ],
@@ -3697,10 +3980,10 @@ kubectl create rolebinding alice-edit \\
           {
             q: 'Interviewer: "Ek user ko <code>Unauthorized</code> (401) mil raha hai aur doosre ko <code>Forbidden</code> (403). Dono ke liye kahan dekhoge?"',
             choices: [
-              '401 = pehchaan hi nahi bani (certificate/CA/token ka masla). 403 = pehchaan ban gayi par RBAC permission nahi. Do bilkul alag jagah',
-              'Dono RBAC ka masla hai',
-              'Dono certificate ka masla hai',
-              '401 = RBAC, 403 = certificate',
+              '401 = pehchaan nahi bani (certificate/CA/token). 403 = pehchaan bani par RBAC ijaazat nahi',
+              'Dono RBAC ka masla hai — 401 matlab Role hi nahi bana, 403 matlab RoleBinding nahi bani',
+              'Dono certificate ka masla hai — 401 matlab expire hua, 403 matlab galat CA se signed hai',
+              '401 = RBAC mein ijaazat nahi. 403 = client certificate expire ho gaya ya token galat hai',
             ],
             answer: 0,
             explain: '<b>401 Unauthorized</b> authentication ka padav hai — API server yeh tay hi nahi kar paaya ki tum kaun ho. Wajah: certificate expire, galat CA se signed, ya token invalid. <b>403 Forbidden</b> authorization ka padav hai — API server jaanta hai ki tum kaun ho (message mein aksar naam bhi likha hota hai: <code>User "alice" cannot list pods</code>) par RBAC ne mana kar diya. 403 asli mein ek achhi khabar hai: iska matlab certificate bilkul theek kaam kar raha hai. Debug: <code>kubectl auth can-i list pods --as=alice -n shop</code>.',
@@ -3970,21 +4253,21 @@ spec:
           {
             q: 'Interviewer: "Ek line ka badlav jo har container ki suraksha sabse zyada badhaye — kaunsa?"',
             choices: [
-              'seccompProfile: { type: RuntimeDefault } — default Unconfined hoti hai, yaani container koi bhi syscall kar sakta hai',
-              'runAsUser: 1000',
-              'readOnlyRootFilesystem: true',
-              'imagePullPolicy: Always',
+              'seccompProfile: { type: RuntimeDefault } — default Unconfined hai, yaani koi bhi syscall chal sakta hai',
+              'runAsUser: 1000 — root na hone se container escape ke saare raaste apne aap band ho jaate hain',
+              'readOnlyRootFilesystem: true — bina likhe koi attacker container mein kuch kar hi nahi sakta',
+              'imagePullPolicy: Always — har baar taazi image aane se purani vulnerabilities kabhi nahi chalti',
             ],
             answer: 0,
-            explain: 'Sabse chaunkane wali baat yeh hai ki Kubernetes ka default seccomp profile <b>Unconfined</b> hai — yaani container kernel se koi bhi syscall kar sakta hai, jisme container-escape wale khatarnak syscalls bhi shamil hain. <code>RuntimeDefault</code> container runtime ki curated blocklist lagata hai (~44 syscalls block, jaise <code>kexec_load</code>, <code>bpf</code>, <code>mount</code>) aur 99% applications par koi asar nahi padta. Baaki options bhi achhe hain par kam asar dete hain: <code>runAsUser</code> ke saath <code>runAsNonRoot: true</code> chahiye warna image apna user bhi de sakta hai; <code>readOnlyRootFilesystem</code> zaroori hai par escape nahi rokta; <code>imagePullPolicy</code> ka suraksha se seedha rishta hi nahi.',
+            explain: 'Sabse chaunkane wali baat yeh hai ki Kubernetes ka default seccomp profile <b>Unconfined</b> hai — yaani container kernel se koi bhi syscall kar sakta hai, jisme container-escape wale khatarnak syscalls bhi shamil hain. <code>RuntimeDefault</code> container runtime ki curated blocklist lagata hai (~44 syscalls block, jaise <code>kexec_load</code>, <code>bpf</code>, <code>mount</code>) aur 99% applications par koi asar nahi padta. Baaki options bhi achhe hain par kam asar dete hain: <code>runAsUser: 1000</code> root se bachata hai par syscalls ka darwaza waisa hi khula rehta hai (aur kernel ke bugs non-root se bhi chhue ja sakte hain); <code>readOnlyRootFilesystem</code> zaroori hai par escape nahi rokta — attacker memory aur <code>/tmp</code> jaise volumes se kaam chala leta hai; <code>imagePullPolicy</code> ka suraksha se seedha rishta hi nahi.',
           },
           {
             q: 'Interviewer: "Team kehti hai ki unka pod restricted namespace mein nahi chal raha, isliye namespace ko privileged kar do. Tumhara jawab?"',
             choices: [
-              'Nahi — pehle exact violation dekho (PodSecurity message poori list deta hai) aur spec theek karo. Sach mein exception chahiye to us workload ke liye alag namespace banao',
-              'Haan, unblock karna sabse zaroori hai',
-              'Haan, par baad mein ticket bana denge',
-              'Nahi — restricted namespace mein koi pod chal hi nahi sakta',
+              'Nahi — PodSecurity ka message har violation batata hai; spec theek karo, exception ho to alag namespace',
+              'Haan — team ko unblock karna sabse zaroori hai, suraksha ka kaam baad mein aaram se dekh lenge',
+              'Haan, par ek ticket bana ke — 30 din baad namespace ko wapas restricted par le aayenge',
+              'Nahi — restricted namespace mein koi bhi pod chal hi nahi sakta, unhe naya cluster de do',
             ],
             answer: 0,
             explain: 'PodSecurity ka error message har violation naam se likhta hai (<code>runAsNonRoot != true</code>, <code>seccompProfile</code>, <code>capabilities.drop</code>), isliye fix karne mein aksar 5 minute lagte hain. Namespace ko <code>privileged</code> karna us namespace ke <b>har</b> workload ki suraksha hata deta hai — aaj ka ek pod kal ke pachaas pods ka rasta khol deta hai. Agar koi workload sach mein privileged chahiye (jaise ek node agent), to usse apne alag namespace mein rakho jispe alag label ho, aur uske ServiceAccount ki RBAC bhi tight rakho. <b>Ek workload ke liye poora namespace kholna galat trade hai.</b>',
@@ -4148,10 +4431,10 @@ node-3   350m         8%     2800Mi          35%`,
             {
               q: 'checkout-api aur payments-api dono ke endpoints khaali hain. Kya dono ki bimari ek hai?',
               choices: [
-                'Nahi — khaali endpoints dono jagah ek lakshan hai. checkout-api Pending hai (16Gi request), payments-api CrashLoop mein hai (missing env var). Endpoints isliye khaali hain kyunki dono ke pods ready nahi hain',
-                'Haan — dono ke Service selectors galat hain',
-                'Haan — dono ke targetPort galat hain',
-                'Nahi — checkout-api ka selector galat hai aur payments-api ka targetPort',
+                'Nahi — khaali endpoints lakshan hai: checkout Pending (16Gi), payments CrashLoop (env gayab)',
+                'Haan — dono Services ke selectors galat hain, isliye dono ke endpoints ek saath khaali hain',
+                'Haan — dono ke targetPort galat hain, isliye endpoint controller unke pods nahi jodta',
+                'Nahi — checkout-api ka selector galat hai aur payments-api ka targetPort galat likha hai',
               ],
               answer: 0,
               explain: 'Endpoints ek <b>derived</b> cheez hai: endpoint controller wahi pods daalta hai jo selector se match karein <b>aur</b> ready hon. Ek bhi ready pod na ho to endpoints khaali. Isliye khaali endpoints se hamesha selector par shaq karna galat hai — pehle dekho ki koi ready pod hai bhi ya nahi. Yahan checkout-api ke pods Pending hain aur payments-api ke pods CrashLoop mein — dono jagah zero ready pods, isliye dono jagah khaali endpoints. Dono ke fix bilkul alag hain.',
@@ -4159,10 +4442,10 @@ node-3   350m         8%     2800Mi          35%`,
             {
               q: 'catalog-api ke pods Running hain, endpoints bhare hain, phir bhi purana data dikh raha hai. Kyun?',
               choices: [
-                'ConfigMap update ho gayi par pods 41 din purane hain — envFrom wale environment variables container ke banne ke waqt set hote hain aur pod restart ke bina nahi badalte',
-                'catalog-api ki Service ka selector galat hai',
-                'CoreDNS purana IP cache kiye baitha hai',
-                'catalog-api ki readiness probe fail ho rahi hai',
+                'ConfigMap badli par pods 41 din purane hain — envFrom ki values pod dobara bane bina nahi badalti',
+                'catalog-api ki Service ka selector galat hai, isliye traffic kisi purane pod par ja raha hai',
+                'CoreDNS ne catalog-api ka purana IP cache kar rakha hai, isliye clients purane pod tak jaate hain',
+                'catalog-api ki readiness probe fail ho rahi hai, isliye Service sirf purana cached data deti hai',
               ],
               answer: 0,
               explain: 'Sabooot saaf hai: ConfigMap mein <code>new_pricing=true</code> hai par pod ke andar <code>printenv</code> ne <code>new_pricing=false</code> diya. Pods ki age 41 din hai, yaani unke containers ConfigMap ke purane version ke saath bane the. <code>envFrom</code> se aayi values pod ke dobara bane bina nahi badalti. Fix: <code>kubectl rollout restart deployment/catalog-api -n shop</code>, aur aage ke liye pod template mein config ka checksum annotation daalo.',
@@ -4170,10 +4453,10 @@ node-3   350m         8%     2800Mi          35%`,
             {
               q: 'Teeno ko theek karne ka sabse achha kram kya hai?',
               choices: [
-                'Teeno ko alag-alag theek karo, aur har fix ke baad get all + get endpoints dobara chalao — kyunki ek fix doosri bimari ka lakshan badal sakta hai',
-                'Poore namespace ko delete karke dobara deploy karo',
-                'Pehle teeno deployments ko rollout undo karo, phir soch ke aage badho',
-                'Nodes badha do — teeno ka karan capacity hi hai',
+                'Ek-ek karke theek karo, har fix ke baad get all + get endpoints — ek fix doosre lakshan badalta hai',
+                'Poore namespace ko delete karke dobara deploy karo — saaf shuruaat sabse tez raasta hai',
+                'Pehle teeno deployments ko rollout undo karo, phir aaram se soch ke ek-ek cheez aage badho',
+                'Nodes badha do — Pending, CrashLoop aur stale data, teeno ka asli karan capacity ki kami hai',
               ],
               answer: 0,
               explain: 'Teeno bimariyon ka karan alag hai (galat memory request, missing environment variable, stale config), isliye teeno ke fix bhi alag hain. Ek fix ke baad dobara dekhna zaroori hai kyunki lakshan aapas mein jude hote hain — checkout-api theek hote hi uske endpoints apne aap bhar jayenge, aur "endpoints tooti hai" wali theory apne aap khatm ho jayegi. <b>Namespace delete karna</b> asli galtiyan chhod dega aur naye pods bhi wahi teen bimariyan lekar aayenge. <b>Rollout undo</b> theek hai agar tumhe pata ho ki release se pehle sab theek tha — par catalog-api ki bimari release se pehle bhi maujood thi (ConfigMap 41 din se stale thi), isliye undo usse theek nahi karta.',
@@ -4197,7 +4480,7 @@ node-3   350m         8%     2800Mi          35%`,
                 describe: 'Name:      checkout-api-7d9c4b6f8-aa1bb\nNamespace: shop\nStatus:    Pending\nContainers:\n  api:\n    Requests:\n      cpu:     1\n      memory:  16Gi\nEvents:\n  Warning  FailedScheduling  1m (x6 over 6m)  default-scheduler  0/3 nodes are available: 3 Insufficient memory. preemption: 0/3 nodes are available: 3 No preemption victims found for incoming pod.',
                 events: ['Warning  FailedScheduling  1m (x6 over 6m)  default-scheduler  0/3 nodes are available: 3 Insufficient memory.'] },
               { name: 'payments-api-6b5c4d3e2-gg4hh', ready: '0/1', status: 'CrashLoopBackOff', restarts: 9, age: '6m', node: 'node-2', ip: '10.244.2.44',
-                logs: 'Error from server (BadRequest): container "api" in pod is waiting to start: CrashLoopBackOff',
+                logs: '{"level":"info","msg":"payments-api v3.1.0 starting"}\n{"level":"info","msg":"loading config"}\n{"level":"fatal","msg":"STRIPE_WEBHOOK_SECRET is empty, refusing to start"}',
                 prevLogs: '{"level":"info","msg":"payments-api v3.1.0 starting"}\n{"level":"info","msg":"loading config"}\n{"level":"fatal","msg":"STRIPE_WEBHOOK_SECRET is empty, refusing to start"}',
                 describe: 'Name:      payments-api-6b5c4d3e2-gg4hh\nNamespace: shop\nContainers:\n  api:\n    State:          Waiting\n      Reason:       CrashLoopBackOff\n    Last State:     Terminated\n      Reason:       Error\n      Exit Code:    1\n    Restart Count:  9\nEvents:\n  Warning  BackOff  24s (x38 over 6m)  kubelet  Back-off restarting failed container api',
                 events: ['Warning  BackOff  24s (x38 over 6m)  kubelet  Back-off restarting failed container api'] },
@@ -4286,7 +4569,7 @@ node-3   350m         8%     2800Mi          35%`,
           successText: `🏆 <b>Teen bimari, teen alag karan, teen alag fix.</b><br><br>
             <b>1. checkout-api Pending</b> — release mein memory request <code>1Gi</code> se <code>16Gi</code> ho gaya tha (ek zero zyada).
             <code>kubectl top nodes</code> ne 37% dikhaya tha aur bhatkaya tha — par scheduler asli usage dekhta hi nahi, scheduler requests ka jod dekhta hai.<br>
-            <b>2. payments-api CrashLoop</b> — missing environment variable. Jawab sirf <code>--previous</code> logs mein tha.<br>
+            <b>2. payments-api CrashLoop</b> — missing environment variable. Jawab mare hue run ke logs mein tha (<code>--previous</code>) — describe ka Exit Code 1 sirf itna bata raha tha ki app ne khud exit kiya.<br>
             <b>3. catalog-api stale</b> — pods Running the, endpoints bhare the, par 41 din purane containers purani ConfigMap chala rahe the. <code>envFrom</code> restart ke bina nahi badalta.<br><br>
             Aur sabse badi seekh: <b>khaali endpoints ek lakshan the, karan nahi.</b> Do services ke endpoints khaali the sirf isliye ki unka koi pod ready nahi tha. Pods theek hote hi endpoints apne aap bhar gaye — Service ko chhuna pada hi nahi.`,
           hints: [
@@ -4304,10 +4587,10 @@ node-3   350m         8%     2800Mi          35%`,
           {
             q: 'Interviewer: "Ek outage mein paanch cheezein ek saath tooti hui dikh rahi hain. Kahan se shuru karoge?"',
             choices: [
-              'Har toote hue cheez ko uske status ke hisaab se baanto (Pending / CrashLoop / Running-not-ready), phir ek waqt par ek theek karo aur har fix ke baad dobara jaancho',
-              'Poora namespace delete karke dobara deploy karo',
-              'Saare deployments ko rollout undo kar do',
-              'Aur nodes jod do — zyadatar outages capacity ke hote hain',
+              'Status ke hisaab se baanto (Pending / CrashLoop / Running-not-ready), phir ek-ek fix, har baar jaancho',
+              'Poora namespace delete karke dobara deploy karo — paanch cheezein ek saath theek ho jayengi',
+              'Saare deployments ko rollout undo kar do — outage hamesha pichhle release ke saath hi aata hai',
+              'Pehle aur nodes jod do — zyadatar outages capacity ki kami se hi shuru hote hain, baaki baad mein',
             ],
             answer: 0,
             explain: 'Bade outage mein sabse zaroori kaam hai <b>alag karna</b> — kyunki paanch lakshan aksar do ya teen karan se aate hain, aur kuch lakshan doosre lakshan ka <i>natija</i> hote hain (jaise khaali endpoints, jo asli mein "koi ready pod nahi" ka natija hai). Status ke hisaab se baantne se har group ka apna diagnostic raasta mil jaata hai. Ek waqt par ek fix karne se pata chalta rehta hai ki kaunsa fix kis lakshan ko hataata hai — aur aksar aadhe lakshan pehle fix ke baad hi gayab ho jaate hain.',

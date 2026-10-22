@@ -5,8 +5,10 @@
    {
      type: 'terminal', title, instructions,
      goal: 'HTML — kya karna hai',
-     cluster: { nodes:[], pods:[], deployments:[], services:[], configmaps:[], events:[] },
-     files: { 'fix.yaml': { desc, apply(sim) -> 'message' } },   // kubectl apply -f ke liye
+     cluster: { nodes:[], pods:[], deployments:[], services:[], configmaps:[], events:[],
+                apiError?: 'text' | fn(sim) -> 'text'|null },     // API server down → har kubectl yahi error
+     files: { 'fix.yaml': { desc, apply(sim) -> 'message', content? } },  // kubectl apply -f ke liye
+            // '.sh' files node par chalne wali scripts hain: bash fix.sh (API down ho tab bhi chalti hain)
      responses: [ { re: /regex/, out: 'text' | fn(sim, m), mutate?: fn(sim, m) } ],
      tasks: [ { text, check(sim) -> bool } ],                    // checklist (optional)
      success: fn(sim) -> bool,  successText: 'HTML',
@@ -364,7 +366,8 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
   function runOne(cmdline) {
     // 'k' alias YAHIN kubectl ban jaata hai — taaki scripted responses (/^kubectl rollout.../)
     // aur history-based tasks dono 'k ...' ko bhi pehchaanein
-    const norm = cmdline.replace(/^k(?= |$)/, 'kubectl');
+    // 'sudo' bhi hata do — node par asli admin "sudo crictl ps" hi likhta hai
+    const norm = cmdline.replace(/^sudo\s+/, '').replace(/^k(?= |$)/, 'kubectl');
     sim.history.push(norm);
     sawErr = false;
     // "cmd > file" — output file mein (screen par nahi)
@@ -427,6 +430,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
         '  kubectl logs <pod> [--previous] [-c <container>]',
         '  kubectl delete pod <name>',
         '  kubectl apply -f <file>        (files dekhne ke liye: ls)',
+        '  bash <file>.sh                 (node par chalne wali script — API down ho tab bhi)',
         '  kubectl exec [-it] <pod> -- <cmd>',
         '  kubectl top <pods|nodes>',
         '  helm <cmd>                     (Helm mission: "helm help")',
@@ -456,6 +460,17 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     }
 
     let toks = norm.split(' ');
+    // node par script: bash fix.sh / sh fix.sh / ./fix.sh — kubectl se alag, API down ho tab bhi chalti hai
+    const script = /^(bash|sh)$/.test(toks[0]) && toks.length === 2 ? toks[1] : (toks.length === 1 && /^\.\/\S+$/.test(toks[0]) ? toks[0] : null);
+    if (script) {
+      const fname = script.replace(/^\.\//, '');
+      const f = sim.files[fname];
+      if (!f) { print('err', `${toks[0] === fname ? 'bash' : toks[0]}: ${fname}: No such file or directory ('ls' se files dekho)`); return; }
+      if (!/\.sh$/.test(fname)) { print('err', `${fname}: line 1: apiVersion:: command not found — yeh YAML hai, script nahi. Lagane ke liye: kubectl apply -f ${fname}`); return; }
+      const msg = f.apply(sim);
+      print('ok', msg || `${fname} chal gayi`);
+      return;
+    }
     // helm commands helmsim.js sambhalta hai
     if (toks[0] === 'helm' && typeof KG.helm === 'function') { KG.helm(sim, toks, print); return; }
     // argocd CLI aur `kubectl argo rollouts ...` argosim.js sambhalta hai
@@ -465,6 +480,9 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       print('err', `bash: ${toks[0]}: command not found — yahan sirf kubectl chalta hai 🙂 ('help' try karo)`);
       return;
     }
+    // API server down (etcd toota, certificate expire) → kubectl ka har command wahin atakta hai
+    const apiErr = typeof sim.cluster.apiError === 'function' ? sim.cluster.apiError(sim) : sim.cluster.apiError;
+    if (apiErr && !/^kubectl (help|version --client|config )/.test(norm)) { print('err', apiErr); return; }
     // flags nikal do jo hum ignore/parse karte hain
     const wide = toks.includes('-o') && toks[toks.indexOf('-o') + 1] === 'wide' || toks.includes('-owide') || toks.includes('-o=wide') || toks.includes('--output=wide');
     // -o yaml / json / jsonpath=… (wide ke alawa koi bhi output format)
@@ -563,7 +581,25 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       const want = podName(args[0]);
       const p = find('pods', want);
       if (!p) { print('err', `Error from server (NotFound): pods "${want || ''}" not found`); return; }
-      const logs = prev ? (p.prevLogs || p.logs) : p.logs;
+      const cname = p.container || p.name.replace(/(-[a-z0-9]{6,10})?-[a-z0-9]{5}$/, '');
+      // asli kubelet: --previous sirf tab jab container kam se kam ek baar mar ke restart hua ho
+      if (prev && !p.prevLogs && !p.restarts) {
+        print('err', `Error from server (BadRequest): previous terminated container "${cname}" in pod "${p.name}" not found`);
+        return;
+      }
+      // bina flag: sabse naya run. Naya run shuru na hua ho (CrashLoopBackOff ka wait) toh kubelet aakhri mara hua run deta hai
+      const logs = prev ? (p.prevLogs || p.logs) : (p.logs != null ? p.logs : p.prevLogs);
+      if (logs == null && !prev) {
+        if (p.status === 'Pending' && (!p.node || p.node === '<none>')) {
+          print('sys', '(kuch nahi aaya — pod kisi node par schedule hi nahi hua, container bana hi nahi. Wajah describe ke Events mein hai.)');
+          return;
+        }
+        // container kabhi start hi nahi hua → logs hain hi nahi
+        const waitMsg = { ImagePullBackOff: 'trying and failing to pull image', ErrImagePull: "image can't be pulled" }[p.status]
+          || (/^Init:/.test(p.status) ? 'PodInitializing'
+          : /^(ContainerCreating|CreateContainerConfigError|CreateContainerError|PodInitializing|RunContainerError)$/.test(p.status) ? p.status : null);
+        if (waitMsg) { print('err', `Error from server (BadRequest): container "${cname}" in pod "${p.name}" is waiting to start: ${waitMsg}`); return; }
+      }
       print('ok', typeof logs === 'function' ? logs(sim) : (logs || '(no logs)'));
       return;
     }
@@ -602,6 +638,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       fname = fname.replace(/^\.\//, '');
       const f = sim.files[fname];
       if (!f) { print('err', `error: the path "${fname}" does not exist ('ls' se files dekho)`); return; }
+      if (/\.sh$/.test(fname)) { print('err', `error: error parsing ${fname}: error converting YAML to JSON — yeh shell script hai, manifest nahi. Chalane ke liye: bash ${fname}`); return; }
       const msg = f.apply(sim);
       print('ok', msg || `${fname} applied`);
       return;

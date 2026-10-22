@@ -54,16 +54,19 @@ function walk(node, out) {
   return out;
 }
 global.document = { getElementById: () => fakeEl(), createElement: t => fakeEl(t), createTextNode: () => ({}) };
-global.window = { scrollTo: noop };
+// window = global object (decisions.js/reallabs.js `window.showX = …` likhte hain → free function ban jaate hain)
+global.window = global;
+global.scrollTo = noop;
 let store = {};
 global.localStorage = { getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; } };
 global.confirm = () => false;
 global.Element = function () {}; Element.prototype = {};
 
 const FILES = ['core.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'terminal.js',
-  'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js',
+  'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
-  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-gaps.js', 'data-ext-sdd.js', 'app.js'];
+  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-gaps.js', 'data-ext-sdd.js',
+  'data-decisions.js', 'app.js'];
 
 const missing = FILES.filter(f => !fs.existsSync(path.join(DIR, f)));
 if (missing.length) { console.error('❌ missing files:', missing.join(', ')); process.exit(1); }
@@ -416,10 +419,128 @@ labStages.forEach(l => renderLab(l.at, l.stage));
 // orphan visuals
 Object.keys(VISUALS).forEach(k => { if (!seenIds.has(k)) problems.push('VISUALS["' + k + '"]: koi level use nahi karta'); });
 
+
+/* ============ 1c. DECISION DOJO — trees sahi bane hain? ============
+   Har tree: start se har node tak raasta, koi cycle nahi, har sawal mein 2+ options,
+   har leaf mein pick/one/why + when/avoid/gotchas, scenarios ke jawab leaf hon,
+   level/lab links maujood hon, aur HTML tags balanced hon (ek khula <b> poora page bold kar deta hai). */
+const realLabIds = new Set((KG.realLabs || []).map(l => l.id));
+const treeIds = new Set();
+let nTrees = 0, nLeaves = 0, nScen = 0;
+function tagBalance(str, where) {
+  ['b', 'code', 'i', 'ul', 'ol', 'li', 'details', 'summary', 'span', 'div', 'table', 'pre'].forEach(tg => {
+    const o = (String(str).match(new RegExp('<' + tg + '[ >]', 'g')) || []).length;
+    const c = (String(str).match(new RegExp('</' + tg + '>', 'g')) || []).length;
+    if (o !== c) problems.push(where + ': <' + tg + '> ' + o + ' baar khula, ' + c + ' baar band');
+  });
+}
+(KG.decisions || []).forEach(tree => {
+  nTrees++;
+  const tc = 'decision ' + tree.id;
+  if (treeIds.has(tree.id)) problems.push(tc + ': DUPLICATE tree id');
+  treeIds.add(tree.id);
+  ['id', 'icon', 'title', 'short', 'tldr', 'start', 'nodes'].forEach(k => { if (!tree[k]) problems.push(tc + ': missing ' + k); });
+  const nodes = tree.nodes || {};
+  if (!nodes[tree.start]) { problems.push(tc + ': start node "' + tree.start + '" nahi hai'); return; }
+  if (nodes[tree.start].leaf) problems.push(tc + ': start node khud leaf hai');
+  const picks = {};
+  Object.entries(nodes).forEach(([id, n]) => {
+    const nc = tc + '/' + id;
+    if (n.leaf) {
+      nLeaves++;
+      ['pick', 'one', 'why'].forEach(k => { if (!n[k]) problems.push(nc + ': leaf missing ' + k); });
+      ['when', 'avoid', 'gotchas'].forEach(k => { if (!Array.isArray(n[k]) || !n[k].length) problems.push(nc + ': leaf ka ' + k + '[] khaali'); });
+      if (n.pick) { if (picks[n.pick]) problems.push(nc + ': pick "' + n.pick + '" do leaves mein (practice mein confusing)'); picks[n.pick] = 1; }
+      if (n.level && !KG.findLevel(n.level)) problems.push(nc + ': level "' + n.level + '" maujood nahi');
+      if (n.lab && !realLabIds.has(n.lab)) problems.push(nc + ': lab "' + n.lab + '" maujood nahi');
+      if (n.options) problems.push(nc + ': leaf par options? (leaf:true hatao ya options)');
+    } else {
+      if (!n.q) problems.push(nc + ': sawal (q) missing');
+      if (!Array.isArray(n.options) || n.options.length < 2) problems.push(nc + ': kam se kam 2 options chahiye');
+      (n.options || []).forEach((o, i) => {
+        if (!o.t) problems.push(nc + ' option' + i + ': text missing');
+        if (!nodes[o.next]) problems.push(nc + ' option' + i + ': next "' + o.next + '" node nahi hai');
+      });
+      const texts = (n.options || []).map(o => o.t);
+      if (new Set(texts).size !== texts.length) problems.push(nc + ': duplicate option text');
+    }
+    Object.values(n).forEach(v => (Array.isArray(v) ? v : [v]).forEach(x => {
+      if (typeof x === 'string') tagBalance(x, nc);
+      else if (x && typeof x === 'object' && x.t) tagBalance(x.t, nc);
+    }));
+  });
+  // DFS: cycle (walk kabhi khatam nahi hoga) + orphan nodes (kabhi dikhenge nahi)
+  const color = {};
+  (function dfs(id) {
+    color[id] = 1;
+    const n = nodes[id];
+    ((n && !n.leaf && n.options) || []).forEach(o => {
+      if (!nodes[o.next]) return;
+      if (color[o.next] === 1) problems.push(tc + ': CYCLE ' + id + ' -> ' + o.next);
+      else if (!color[o.next]) dfs(o.next);
+    });
+    color[id] = 2;
+  })(tree.start);
+  Object.keys(nodes).forEach(id => { if (!color[id]) problems.push(tc + ': node "' + id + '" tak koi raasta nahi (orphan)'); });
+  (tree.levels || []).forEach(id => { if (!KG.findLevel(id)) problems.push(tc + ': level "' + id + '" maujood nahi'); });
+  (tree.labs || []).forEach(id => { if (!realLabIds.has(id)) problems.push(tc + ': lab "' + id + '" maujood nahi'); });
+  if (tree.compare) {
+    const cols = (tree.compare.cols || []).length;
+    (tree.compare.rows || []).forEach((r, i) => {
+      if (r.length !== cols) problems.push(tc + ': compare row' + i + ' mein ' + r.length + ' cells, ' + cols + ' columns');
+      r.forEach(c => tagBalance(c, tc + ' compare row' + i));
+    });
+  }
+  const sc = tree.scenarios || [];
+  nScen += sc.length;
+  if (sc.length < 3) problems.push(tc + ': sirf ' + sc.length + ' scenarios (3+ chahiye)');
+  const seenS = new Set();
+  sc.forEach((x, i) => {
+    if (!x.s || !x.answer || !x.explain) problems.push(tc + ' scenario' + i + ': incomplete');
+    else if (!nodes[x.answer] || !nodes[x.answer].leaf) problems.push(tc + ' scenario' + i + ': answer "' + x.answer + '" leaf nahi hai');
+    if (seenS.has(x.s)) problems.push(tc + ' scenario' + i + ': duplicate scenario');
+    seenS.add(x.s);
+    tagBalance(x.s || '', tc + ' scenario' + i);
+    tagBalance(x.explain || '', tc + ' scenario' + i);
+  });
+  ['title', 'short', 'tldr'].forEach(k => tagBalance(tree[k] || '', tc + ' ' + k));
+});
+
+/* ============ 1d. REAL LABS — app ka catalogue aur real-labs/ folder ek hi baat bolein ============ */
+const labDir = path.join(DIR, 'real-labs');
+const labFolders = fs.existsSync(labDir) ? fs.readdirSync(labDir).filter(f => /^\\d\\d-/.test(f)) : [];
+const seenLab = new Set();
+(KG.realLabs || []).forEach(l => {
+  const lc = 'real lab ' + l.id;
+  if (seenLab.has(l.id)) problems.push(lc + ': DUPLICATE id');
+  seenLab.add(l.id);
+  ['id', 'num', 'icon', 'title', 'mins', 'concept', 'decision'].forEach(k => { if (!l[k]) problems.push(lc + ': missing ' + k); });
+  if (l.num && l.id.slice(0, 2) !== l.num) problems.push(lc + ': num "' + l.num + '" id se match nahi karta');
+  (l.levels || []).forEach(id => { if (!KG.findLevel(id)) problems.push(lc + ': level "' + id + '" maujood nahi'); });
+  (l.trees || []).forEach(id => { if (!treeIds.has(id)) problems.push(lc + ': tree "' + id + '" maujood nahi'); });
+  const d = path.join(labDir, l.id);
+  if (!fs.existsSync(d)) { problems.push(lc + ': real-labs/' + l.id + ' folder nahi hai'); return; }
+  ['README.md', 'verify.sh', 'solution'].forEach(f => { if (!fs.existsSync(path.join(d, f))) problems.push(lc + ': ' + f + ' missing'); });
+  fs.readdirSync(d).filter(f => f.endsWith('.sh')).forEach(f => {
+    if (!(fs.statSync(path.join(d, f)).mode & 0o111)) problems.push(lc + ': ' + f + ' executable nahi (chmod +x)');
+  });
+  // app jo start/cleanup commands dikhata hai, README mein bhi wahi hon
+  // (poori line match — substring se "delete ns lab04" galti se "delete ns lab04 lab04-frontend" mein mil jaata)
+  const cmdOf = line => line.replace(/\\s+#.*$/, '').trim();
+  const readme = fs.existsSync(path.join(d, 'README.md')) ? fs.readFileSync(path.join(d, 'README.md'), 'utf8') : '';
+  const readmeCmds = new Set(readme.split('\\n').map(cmdOf));
+  [l.start || 'kubectl apply -f setup.yaml', l.cleanup || ('kubectl delete ns lab' + l.num)].join('\\n').split('\\n').forEach(line => {
+    const cmd = cmdOf(line);
+    if (cmd && !cmd.startsWith('#') && !readmeCmds.has(cmd)) problems.push(lc + ': app ki command "' + cmd + '" README mein nahi');
+  });
+});
+labFolders.forEach(f => { if (!seenLab.has(f)) problems.push('real-labs/' + f + ': app ke KG.realLabs mein entry nahi'); });
+
 ctx.summary = {
   tracks: KG.tracks.map(t => t.icon + t.id + ':' + KG.levelsOf(t).length).join('  '),
   levels: nLevels, cards: nCards, stages: nStages, interviews: nLevels, missions: nTerm,
   byType: JSON.stringify(byType), visuals: Object.keys(VISUALS).length, labs: labStages.length,
+  trees: nTrees, leaves: nLeaves, scenarios: nScen, realLabs: (KG.realLabs || []).length,
 };
 `;
 
@@ -747,6 +868,121 @@ function term(cluster, extra) {
     get done() { return done; }, st, outEl,
   };
 }
+console.log('\ndecision dojo + real labs (asli screens, headless):');
+const findAll = (root, cls) => walk(root).filter(x => x.classList && x.classList.contains(cls));
+const leafIds = tree => Object.keys(tree.nodes).filter(id => tree.nodes[id].leaf);
+t('decision trees: har recommendation tak sawal-dar-sawal click karke pahunch sakte hain', () => {
+  KG.state = KG.defaultState(); KG.session = null;
+  let n = 0;
+  KG.decisions.forEach(tree => {
+    leafIds(tree).forEach(leafId => {
+      showDecisionTree(tree);
+      const route = KG.decisionPath(tree, leafId);
+      assert(route.length, tree.id + '/' + leafId + ': start se raasta nahi');
+      route.forEach(step => {
+        const b = findAll(appEl, 'dd-opt').find(o => o.innerHTML === step.a);
+        assert(b, tree.id + ': option "' + step.a + '" screen par nahi');
+        b.click();
+      });
+      const leaf = findAll(appEl, 'dd-leaf')[0];
+      assert(leaf && leaf.innerHTML.includes(tree.nodes[leafId].pick), tree.id + '/' + leafId + ': recommendation card nahi dikha');
+      n++;
+    });
+    assert(KG.state.decisions[tree.id].seen.length === leafIds(tree).length, tree.id + ': "dekhe" ginti galat');
+    // map: saari recommendations dikhni chahiye
+    showDecisionTree(tree);
+    findAll(appEl, 'btn').find(b => /Poora map/.test(b.innerHTML)).click();
+    const map = findAll(appEl, 'dd-map')[0];
+    assert(map, tree.id + ': map nahi khula');
+    leafIds(tree).forEach(id => assert(map.innerHTML.includes(tree.nodes[id].pick), tree.id + ': map mein "' + tree.nodes[id].pick + '" nahi'));
+    // undo: ek sawal peeche
+    const first = findAll(appEl, 'dd-opt')[0]; first.click();
+    findAll(appEl, 'btn').find(b => /peeche/.test(b.innerHTML)).click();
+    assert(findAll(appEl, 'dd-step').length === 0, tree.id + ': undo ke baad trail khaali honi chahiye');
+  });
+  assert(n === KG.decisions.reduce((a, tr) => a + leafIds(tr).length, 0), 'saari leaves walk hui');
+});
+function playPractice(tree, wrongFirst) {
+  showDecisionPractice(tree);
+  let guard = 0, total = 0;
+  while (!findAll(appEl, 'stage-summary').length && guard++ < 100) {
+    const scEl = findAll(appEl, 'dd-scenario')[0];
+    assert(scEl, 'scenario dikha nahi');
+    const pool = tree ? [tree] : KG.decisions;
+    let hit = null;
+    pool.forEach(tr => (tr.scenarios || []).forEach(x => { if (scEl.innerHTML === '🏭 ' + x.s) hit = { tr, x }; }));
+    assert(hit, 'scenario data mein nahi mila');
+    const leaf = hit.tr.nodes[hit.x.answer];
+    const choices = findAll(appEl, 'choice');
+    assert(choices.length >= 2 && choices.length <= 5, 'options 2-5 hone chahiye, mile ' + choices.length);
+    const right = choices.find(c => c.innerHTML === (leaf.icon || '🎯') + ' ' + leaf.pick);
+    assert(right, hit.tr.id + ': sahi jawab "' + leaf.pick + '" options mein hi nahi!');
+    if (wrongFirst) choices.find(c => c !== right).click();
+    right.click();
+    total++;
+    findAll(appEl, 'btn').filter(b => /Agla scenario|Score dekho/.test(b.innerHTML)).pop().click();
+  }
+  return total;
+}
+t('decision practice: sahi jawab hamesha options mein (max 5), score/XP/best sahi', () => {
+  KG.state = KG.defaultState(); KG.session = null;
+  KG.decisions.forEach(tree => {
+    for (let rep = 0; rep < 3; rep++) {          // random distractors — 3 baar khelo
+      const total = playPractice(tree, false);
+      assert(total === tree.scenarios.length, tree.id + ': saare scenarios nahi aaye');
+      assert(KG.state.decisions[tree.id].best === total, tree.id + ': best score ' + KG.state.decisions[tree.id].best);
+    }
+  });
+  const xp = KG.state.xp;
+  assert(xp === KG.decisions.reduce((a, tr) => a + tr.scenarios.length, 0) * KG.XP_PER_ITEM, 'XP sirf pehli baar: ' + xp);
+  assert(playPractice(null, false) === 8, 'mixed practice = 8 scenarios');
+});
+t('decision practice: galat jawab → mistake card + score nahi', () => {
+  KG.state = KG.defaultState(); KG.session = null;
+  const tree = KG.decisions[0];
+  playPractice(tree, true);
+  assert(KG.state.decisions[tree.id].best === 0, 'galti ke baad bhi score mila');
+  assert(Object.keys(KG.state.dojo).length === tree.scenarios.length, 'har galti ka Revision card bana: ' + Object.keys(KG.state.dojo).length);
+});
+t('real labs: catalogue + har lab ka screen + "ho gaya" XP sirf ek baar', () => {
+  KG.state = KG.defaultState(); KG.session = null;
+  showRealLabs();
+  assert(findAll(appEl, 'rl-card').length === KG.realLabs.length, 'har lab ka card');
+  KG.realLabs.forEach(lab => {
+    showRealLab(lab);
+    assert(findAll(appEl, 'rl-cmd').length === 3, lab.id + ': start/check/cleanup blocks');
+  });
+  const lab = KG.realLabs[0];
+  showRealLab(lab);
+  const markBtn = () => findAll(appEl, 'btn').find(b => /ho gaya/i.test(b.innerHTML) && /big/.test(b.className));
+  markBtn().click();
+  const xp1 = KG.state.xp;
+  assert(KG.state.realLabsDone.includes(lab.id) && xp1 === KG.TERMINAL_XP, 'done + XP');
+  markBtn().click(); markBtn().click();                // undo + phir done
+  assert(KG.state.xp === xp1 && KG.state.realLabsDone.includes(lab.id), 'toggle se XP farm nahi');
+});
+t('home: mood picker ke teeno button + level intro ka "kab use karein" box', () => {
+  KG.state = KG.defaultState(); KG.session = null;
+  showHome();
+  const moods = findAll(appEl, 'mood-btn');
+  assert(moods.length === 3, 'mood buttons: ' + moods.length);
+  moods[0].click();
+  assert(findAll(appEl, 'dd-scenario').length === 1, '🐢 (koi card due nahi) → decision practice');
+  showHome(); findAll(appEl, 'mood-btn')[1].click();
+  assert(findAll(appEl, 'lesson-card').length > 0, '🎯 → agla level intro');
+  showHome(); findAll(appEl, 'mood-btn')[2].click();
+  assert(findAll(appEl, 'rl-cmd').length === 3, '🔥 → pehla real lab');
+  showHome(); findAll(appEl, 'featcard').forEach(c => { c.click(); showHome(); });
+  let boxes = 0;
+  KG.tracks.forEach(tr => KG.levelsOf(tr).forEach(l => {
+    if (!KG.decisionsForLevel(l.id).length && !KG.realLabsForLevel(l.id).length) return;
+    showIntro(l);
+    assert(findAll(appEl, 'kab-box').length === 1, l.id + ': kab-box nahi dikha');
+    boxes++;
+  }));
+  assert(boxes > 10, 'kab-box levels: ' + boxes);
+  KG.state = KG.defaultState();
+});
 t('terminal: k alias scripted responses + history tak pahunchta hai', () => {
   let hit = 0;
   const T = term({ pods: [] }, { responses: [{ re: /^kubectl rollout undo deploy\/web$/, out: 'rolled back', mutate: () => { hit++; } }] });
@@ -792,7 +1028,9 @@ console.log('  levels:  ' + ctx.summary.levels + '  |  visuals: ' + ctx.summary.
 console.log('  stages:  ' + ctx.summary.stages + ' + ' + ctx.summary.interviews +
   ' interviews  |  terminal missions: ' + ctx.summary.missions +
   '  |  interactive labs: ' + ctx.summary.labs);
-console.log('  types:   ' + ctx.summary.byType + '\n');
+console.log('  types:   ' + ctx.summary.byType);
+console.log('  🧭 decision trees: ' + ctx.summary.trees + ' (' + ctx.summary.leaves + ' recommendations, ' +
+  ctx.summary.scenarios + ' practice scenarios)  |  🧪 real labs: ' + ctx.summary.realLabs + '\n');
 
 /* ---------- non-Latin script leak guard ----------
    Content Hinglish hai — Latin akshar. Kabhi-kabhi typing ke dauraan

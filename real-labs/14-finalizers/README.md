@@ -94,6 +94,11 @@ Phas gaye? → `solution/steps.sh`
 
 ## 🧹 Cleanup
 
+Lab adhoora chhoda? Toh pehle finalizers hatao — warna `delete ns` hamesha `Terminating` mein atka rahega
+(yahi toh is lab ka sabak hai 🙂). `NotFound` aaye toh theek hai — woh pehle hi hat chuka.
+
 ```bash
-kubectl delete ns lab14
+kubectl -n lab14 patch configmap orders-cache --type=merge -p '{"metadata":{"finalizers":null}}'
+kubectl -n lab14-legacy patch configmap legacy-cache --type=merge -p '{"metadata":{"finalizers":null}}'
+kubectl delete ns lab14 lab14-legacy --ignore-not-found
 ```

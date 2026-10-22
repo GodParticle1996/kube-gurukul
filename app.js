@@ -66,6 +66,38 @@ function showHome() {
     appEl.appendChild(card);
   }
 
+  // ⚡ mood picker — "aaj kitni energy hai?" ek click mein sahi size ka kaam
+  const mood = el('section', 'moodbar');
+  mood.appendChild(el('div', 'mood-q', '⚡ Aaj ka mood?'));
+  const moods = [
+    { icon: '🐢', label: 'Thoda sa', sub: '~5 min', go: moodQuick },
+    { icon: '🎯', label: 'Ek level', sub: '15–20 min', go: moodLevel },
+    { icon: '🔥', label: 'Full focus', sub: '45 min+ · real cluster', go: moodDeep },
+  ];
+  moods.forEach(m => {
+    const b = el('button', 'mood-btn', `<span class="mood-icon">${m.icon}</span><span class="mood-l">${m.label}</span><span class="mood-s">${m.sub}</span>`);
+    b.onclick = m.go;
+    mood.appendChild(b);
+  });
+  appEl.appendChild(mood);
+
+  // 🧭 + 🧪 — decision-making aur asli cluster
+  const feat = el('section', 'featrow');
+  const nTrees = (KG.decisions || []).length;
+  const ddCard = el('div', 'featcard clickable', `
+    <div class="feat-icon">🧭</div>
+    <div><div class="feat-title">Decision Dojo — kab kya use karein?</div>
+    <div class="feat-sub">${nTrees} decision-trees: Deployment ya StatefulSet? Ingress ya Gateway? HPA ya KEDA? Sawal-dar-sawal raasta → recommendation + gotchas + YAML.</div></div>`);
+  ddCard.onclick = () => showDecisionDojo();
+  const labsDone = (KG.state.realLabsDone || []).length;
+  const rlCard = el('div', 'featcard clickable', `
+    <div class="feat-icon">🧪</div>
+    <div><div class="feat-title">Real Cluster Labs — kind par asli practice</div>
+    <div class="feat-sub">${(KG.realLabs || []).length} toote hue production scenarios + <code>verify.sh</code> (❌ par hint, jawab nahi). ✅ ${labsDone} ho gaye.</div></div>`);
+  rlCard.onclick = () => showRealLabs();
+  feat.append(ddCard, rlCard);
+  appEl.appendChild(feat);
+
   // dojo + streak strip
   const due = KG.dueCards();
   const deckSize = Object.keys(KG.state.dojo).length;
@@ -136,6 +168,31 @@ function showHome() {
   appEl.appendChild(foot);
 }
 
+/* ---------- ⚡ mood picker ke raaste ---------- */
+function moodQuick() {
+  // due flashcards pehle (bhoolne se pehle), warna decision practice
+  if (KG.dueCards().length) showDojo();
+  else showDecisionPractice(null);
+}
+function nextLevel() {
+  // chalu track (jisme progress hai) ko pehle, warna pehla khula track
+  const open = KG.tracks.filter(t => KG.trackUnlocked(t) && !KG.trackProgress(t).complete && KG.levelsOf(t).length);
+  const track = open.find(t => KG.trackProgress(t).done > 0) || open[0];
+  if (!track) return null;
+  return KG.levelsOf(track).find(l => !KG.state.completed.includes(l.id)) || null;
+}
+function moodLevel() {
+  const res = KG.getResume();
+  if (res) return resumeLevel(res);
+  const lvl = nextLevel();
+  if (lvl) showIntro(lvl); else showDecisionDojo();     // saare levels ho gaye → decisions practice
+}
+function moodDeep() {
+  const done = KG.state.realLabsDone || [];
+  const lab = (KG.realLabs || []).find(l => !done.includes(l.id));
+  if (lab) showRealLab(lab); else showRealLabs();
+}
+
 /* ============================================================
    TRACK — level map
    ============================================================ */
@@ -197,6 +254,27 @@ function showIntro(level) {
     wrap.appendChild(el('div', 'obj-box', `
       <h4>🎯 Is level mein tum seekhoge</h4>
       <ul>${level.objectives.map(o => `<li>${o}</li>`).join('')}</ul>`));
+  }
+
+  // 🧭 "Kab use karein?" — is level se jude decision-trees + asli cluster labs
+  const trees = KG.decisionsForLevel ? KG.decisionsForLevel(level.id) : [];
+  const labs = KG.realLabsForLevel ? KG.realLabsForLevel(level.id) : [];
+  if (trees.length || labs.length) {
+    const box = el('div', 'kab-box');
+    box.appendChild(el('h4', '', '🧭 Kab use karein? · 🧪 Asli cluster par'));
+    const chips = el('div', 'dd-chips');
+    trees.forEach(t => {
+      const b = el('button', 'dd-chip', `🧭 ${t.icon} ${t.short || t.title}`);
+      b.onclick = () => showDecisionTree(t);
+      chips.appendChild(b);
+    });
+    labs.forEach(l => {
+      const b = el('button', 'dd-chip lab', `🧪 Lab ${l.num}: ${l.title}`);
+      b.onclick = () => showRealLab(l);
+      chips.appendChild(b);
+    });
+    box.appendChild(chips);
+    wrap.appendChild(box);
   }
 
   const hero = diagramFor(level.id, true);

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Saare labs ka kachra saaf (cluster bacha rehta hai). Poora cluster hatana: kind delete cluster --name gurukul
+# lab14: finalizer wale objects pehle chhudao — warna namespace hamesha Terminating mein atka rahega
+kubectl -n lab14 patch configmap orders-cache --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+kubectl -n lab14-legacy patch configmap legacy-cache --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
 for ns in lab01 lab02 lab03 lab04 lab04-frontend lab05 lab06 lab07 lab08 lab09 lab10 lab11 lab12 lab13 lab14 lab14-legacy lab15 netpol-check; do
   kubectl delete ns "$ns" --ignore-not-found --wait=false
 done

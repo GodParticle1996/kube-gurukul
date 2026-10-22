@@ -32,7 +32,9 @@ function fakeEl(tag) {
     get textContent() { return el._text; },
     appendChild(c) { el.children.push(c); return c; },
     append(...cs) { cs.forEach(c => el.children.push(c)); },
-    querySelector: () => fakeEl(),
+    // same selector = same element (renderer aur test ek hi <input>/.term-out pakdein)
+    _qs: {},
+    querySelector(sel) { return (el._qs[sel] = el._qs[sel] || fakeEl()); },
     querySelectorAll: () => [],
     addEventListener(ev, fn) { (el._handlers[ev] = el._handlers[ev] || []).push(fn); },
     click() {
@@ -40,7 +42,7 @@ function fakeEl(tag) {
       if (el.onclick) el.onclick({ stopPropagation: noop, preventDefault: noop });
       (el._handlers.click || []).forEach(fn => fn({ stopPropagation: noop, preventDefault: noop }));
     },
-    fire(ev) { (el._handlers[ev] || []).forEach(fn => fn({ stopPropagation: noop, preventDefault: noop })); },
+    fire(ev, extra) { (el._handlers[ev] || []).forEach(fn => fn(Object.assign({ stopPropagation: noop, preventDefault: noop }, extra || {}))); },
     scrollIntoView: noop, remove: noop, focus: noop,
   };
   return el;
@@ -476,7 +478,310 @@ t('har mission ke callbacks clone ke baad bhi zinda hain', () => {
   assert(checked > 0, 'kuch toh check hona chahiye');
 });
 `;
-const TESTS = '/* ============ 2. ENGINE TESTS ============ */\nconsole.log(\'engine:\');\nt(\'SRS: due-scheduling, box advance/reset, interval cap\', () => {\n  KG.state = KG.defaultState();\n  KG.addCard(\'c1\', \'F\', \'B\', \'tag\');\n  assert(KG.dueCards().length === 0, \'naya card abhi due nahi\');\n  KG.state.dojo.c1.due = Date.now() - 1000;\n  assert(KG.dueCards().length === 1, \'overdue card due hona chahiye\');\n  KG.reviewCard(\'c1\', true);\n  assert(KG.state.dojo.c1.box === 1 && KG.state.dojo.c1.due > Date.now() + 2.9 * KG.DAY, \'box/interval\');\n  KG.reviewCard(\'c1\', false);\n  assert(KG.state.dojo.c1.box === 0, \'wrong par box reset\');\n  for (let i = 0; i < 10; i++) KG.reviewCard(\'c1\', true);\n  assert(KG.state.dojo.c1.box === KG.SRS_INTERVALS.length - 1, \'box capped\');\n});\nt(\'mistake cards dedupe + replay mode XP/cards block karta hai\', () => {\n  KG.state = KG.defaultState(); KG.session = null;\n  KG.noteMistake(\'same?\', \'ans\'); KG.noteMistake(\'same?\', \'ans\');\n  assert(Object.keys(KG.state.dojo).length === 1, \'duplicate mistake card\');\n  KG.state = KG.defaultState(); KG.session = { replay: true };\n  KG.addXP(100); KG.noteMistake(\'q\', \'a\');\n  assert(KG.state.xp === 0 && Object.keys(KG.state.dojo).length === 0, \'replay mode\');\n  KG.session = null;\n});\nt(\'streak: same-day once, yesterday +1, gap reset, best preserved\', () => {\n  KG.state = KG.defaultState();\n  const ds = d => d.getFullYear() + \'-\' + String(d.getMonth() + 1).padStart(2, \'0\') + \'-\' + String(d.getDate()).padStart(2, \'0\');\n  KG.touchStreak(); KG.touchStreak();\n  assert(KG.state.streak.count === 1, \'same day\');\n  const y = new Date(); y.setDate(y.getDate() - 1); KG.state.streak.last = ds(y);\n  KG.touchStreak(); assert(KG.state.streak.count === 2, \'yesterday +1\');\n  const g = new Date(); g.setDate(g.getDate() - 5); KG.state.streak.last = ds(g);\n  KG.touchStreak();\n  assert(KG.state.streak.count === 1 && KG.state.streak.best === 2, \'gap reset, best rakha\');\n});\nt(\'track gating: sequential + alwaysUnlocked side-tracks\', () => {\n  KG.state = KG.defaultState();\n  assert(KG.trackUnlocked(KG.tracks[0]), \'beginner khula\');\n  assert(!KG.trackUnlocked(KG.tracks[1]), \'intermediate band\');\n  assert(!KG.trackUnlocked(KG.tracks[2]), \'advanced band\');\n  KG.tracks.filter(t2 => t2.alwaysUnlocked).forEach(t2 =>\n    assert(KG.trackUnlocked(t2), \'side-track \' + t2.id + \' hamesha khula\'));\n  KG.levelsOf(KG.tracks[0]).forEach(l => KG.state.completed.push(l.id));\n  assert(KG.trackUnlocked(KG.tracks[1]), \'beginner ke baad intermediate khula\');\n});\nt(\'corrupt/purana localStorage safely handle hota hai\', () => {\n  store[\'kubegurukul-v1\'] = \'{not json\';\n  assert(KG.loadState().xp === 0, \'corrupt -> fresh\');\n  store[\'kubegurukul-v1\'] = JSON.stringify({ xp: 50, completed: [\'a\'] });\n  const s2 = KG.loadState();\n  assert(s2.xp === 50 && s2.dojo && s2.streak && typeof s2.levelStarts === \'number\', \'forward-compat\');\n});\nt(\'missing data file se app crash nahi hota\', () => {\n  const saved = KG.levelSets.helm; delete KG.levelSets.helm;\n  const h = KG.tracks.find(x => x.id === \'helm\');\n  assert(KG.levelsOf(h).length === 0 && KG.trackProgress(h).complete === false, \'khaali track\');\n  KG.harvestQuestions();\n  KG.levelSets.helm = saved;\n});\n\n/* ============ 3. SIMULATORS ============ */\nconsole.log(\'\\nsimulators:\');\nlet out = [];\nconst P = (k, txt) => out.push(txt);\nconst run = (sim, cmd) => { out = []; const toks = cmd.split(\' \'); \n  if (toks[0] === \'helm\') KG.helm(sim, toks, P);\n  else KG.argo(sim, toks, P);\n  return out.join(\'\\n\'); };\n\nt(\'helm: install/upgrade/rollback + values precedence + get values\', () => {\n  const sim = { cluster: { pods: [], releases: [], repos: [], valuesFiles: { \'p.yaml\': { r: 10 } },\n    charts: { \'./a\': { name: \'a\', version: \'0.1.0\', appVersion: \'1.0\', defaults: { r: 1, keep: \'yes\' },\n      render: v => \'r=\' + v.r, onUpgrade: (s, rel) => rel.values.r !== 999 } } }, history: [] };\n  run(sim, \'helm install a ./a --set r=3\');\n  let rel = sim.cluster.releases[0];\n  assert(rel.values.r === 3 && rel.values.keep === \'yes\', \'defaults deep-merge + --set\');\n  assert(!rel.userValues.keep, \'get values sirf user-supplied dikhata hai\');\n  run(sim, \'helm upgrade a ./a -f p.yaml\');\n  assert(sim.cluster.releases[0].values.r === 10 && sim.cluster.releases[0].revision === 2, \'upgrade + --set bhool jaana\');\n  run(sim, \'helm rollback a 1\');\n  assert(sim.cluster.releases[0].revision === 3 && sim.cluster.releases[0].values.r === 3, \'rollback = naya revision\');\n  const o = run(sim, \'helm upgrade a ./a --set r=999 --atomic\');\n  assert(/automatic rollback/.test(o) && sim.cluster.releases[0].status === \'deployed\', \'--atomic auto-rollback\');\n});\nt(\'helm: stuck release block karta hai jab tak rollback na ho\', () => {\n  const sim = { cluster: { releases: [], repos: [], charts: { \'./a\': { name: \'a\', version: \'1\', appVersion: \'1\', defaults: {} } } }, history: [] };\n  run(sim, \'helm install a ./a\');\n  sim.cluster.releases[0].status = \'pending-upgrade\';\n  assert(/another operation/.test(run(sim, \'helm upgrade a ./a\')), \'blocked\');\n  run(sim, \'helm rollback a 1\');\n  assert(/has been upgraded/.test(run(sim, \'helm upgrade a ./a\')), \'rollback ke baad chalta hai\');\n});\nt(\'argocd: list/get/diff/sync + prune + Synced hone par diff khaali\', () => {\n  const sim = { cluster: { services: [], apps: [{\n    name: \'x\', sync: \'OutOfSync\', health: \'Missing\', destNamespace: \'default\',\n    resources: [{ kind: \'Deployment\', name: \'d\', status: \'OutOfSync\', health: \'Missing\' },\n                { kind: \'Service\', name: \'old\', status: \'OutOfSync\', pruneMe: true }],\n    diff: \'DIFF-TEXT\', history: [], onSync: () => true }] }, history: [] };\n  assert(/OutOfSync/.test(run(sim, \'argocd app list\')), \'list\');\n  assert(/Sync Status/.test(run(sim, \'argocd app get x\')), \'get\');\n  assert(/DIFF-TEXT/.test(run(sim, \'argocd app diff x\')), \'diff\');\n  let o = run(sim, \'argocd app sync x\');\n  assert(sim.cluster.apps[0].sync === \'Synced\', \'sync\');\n  assert(/NAHI hatega/.test(o) || sim.cluster.apps[0].resources.some(r => r.pruneMe && !r.pruned), \'bina --prune ke prune nahi\');\n  run(sim, \'argocd app sync x --prune\');\n  assert(!sim.cluster.apps[0].resources.some(r => r.pruneMe && !r.pruned), \'--prune ne hataya\');\n  assert(/koi diff nahi/.test(run(sim, \'argocd app diff x\')), \'Synced par diff khaali\');\n});\nt(\'argocd: failed sync, selfHeal ke saath rollback block, app set\', () => {\n  const sim = { cluster: { apps: [{ name: \'y\', sync: \'OutOfSync\', health: \'Healthy\', resources: [],\n    history: [{ id: 1, revision: \'r1\', deployedAt: \'d\' }], syncError: \'boom\', onSync: () => false }] }, history: [] };\n  const o = run(sim, \'argocd app sync y\');\n  assert(/FAILED/.test(o) && sim.cluster.apps[0].health === \'Degraded\', \'sync fail\');\n  run(sim, \'argocd app set y --sync-policy automated --self-heal\');\n  assert(sim.cluster.apps[0].syncPolicy.automated.selfHeal === true, \'set policy\');\n  assert(/git revert/.test(run(sim, \'argocd app rollback y 1\')), \'selfHeal par rollback guidance\');\n});\nt(\'rollouts: get/promote/abort weights aur status sahi badalte hain\', () => {\n  const sim = { cluster: { pods: [], rollouts: [{ name: \'r\', strategy: \'canary\', status: \'Paused\',\n    step: 1, weight: 10, steps: [\'setWeight: 10\', \'pause: {}\', \'setWeight: 50\', \'setWeight: 100\'] }] }, history: [] };\n  assert(/Paused/.test(run(sim, \'kubectl argo rollouts get rollout r\')), \'get\');\n  run(sim, \'kubectl argo rollouts promote r\');\n  assert(sim.cluster.rollouts[0].step === 2, \'promote step++\');\n  run(sim, \'kubectl argo rollouts abort r\');\n  assert(sim.cluster.rollouts[0].aborted && sim.cluster.rollouts[0].weight === 0, \'abort -> 0%\');\n});\nt(\'karpenter: Pending pod -> NodeClaim -> Node -> pod Running\', () => {\n  const sim = { cluster: {\n    karpenter: { enabled: true, tick: 0, log: [] },\n    nodes: [], nodeclaims: [], events: [],\n    pods: [{ name: \'p\', status: \'Pending\', ready: \'0/1\', requests: { cpu: \'3\', memory: \'6Gi\' } }],\n    nodepools: [{ name: \'default\', requirements: [\n      { key: \'karpenter.sh/capacity-type\', operator: \'In\', values: [\'spot\'] },\n      { key: \'karpenter.k8s.aws/instance-category\', operator: \'In\', values: [\'c\', \'m\'] }],\n      limits: { cpu: 100 }, used: { cpu: 0 }, disruption: { consolidationPolicy: \'WhenEmptyOrUnderutilized\' } }],\n    ec2nodeclasses: [{ name: \'default\' }] } };\n  KG.karpenter.reconcile(sim);\n  assert(sim.cluster.nodeclaims.length === 1, \'NodeClaim bana\');\n  assert(sim.cluster.nodeclaims[0].capacity === \'spot\', \'spot chuna\');\n  assert(sim.cluster.nodeclaims[0].cpu >= 3, \'fit karne wala type\');\n  assert(sim.cluster.pods[0].status === \'Pending\', \'abhi bhi Pending (node aa raha hai)\');\n  KG.karpenter.reconcile(sim);\n  assert(sim.cluster.nodes.length === 1 && sim.cluster.pods[0].status === \'Running\', \'node ready -> pod Running\');\n});\nt(\'karpenter: limits, no-match, aur "koi type fit nahi" — teeno alag Events\', () => {\n  const base = () => ({ cluster: { karpenter: { enabled: true, tick: 0, log: [] }, nodes: [], nodeclaims: [], events: [],\n    pods: [], nodepools: [], ec2nodeclasses: [] } });\n  // (a) koi nodepool nahi\n  let s = base(); s.cluster.pods = [{ name: \'a\', status: \'Pending\', requests: { cpu: \'1\' } }];\n  KG.karpenter.reconcile(s);\n  assert(s.cluster.pods[0].unschedulable && /NodePool/.test(s.cluster.pods[0].describe), \'no nodepool\');\n  // (b) limit full\n  s = base();\n  s.cluster.nodepools = [{ name: \'d\', requirements: [], limits: { cpu: 2 }, used: { cpu: 2 }, disruption: {} }];\n  s.cluster.pods = [{ name: \'b\', status: \'Pending\', requests: { cpu: \'2\' } }];\n  KG.karpenter.reconcile(s);\n  assert(/limit/i.test(s.cluster.pods[0].describe), \'limit reached\');\n  // (c) koi instance type itna bada nahi\n  s = base();\n  s.cluster.nodepools = [{ name: \'d\', requirements: [], limits: { cpu: 1000 }, used: { cpu: 0 }, disruption: {} }];\n  s.cluster.pods = [{ name: \'c\', status: \'Pending\', requests: { cpu: \'64\', memory: \'512Gi\' } }];\n  KG.karpenter.reconcile(s);\n  assert(/instance type/i.test(s.cluster.pods[0].describe), \'no instance type\');\n});\nt(\'karpenter: consolidation khaali node hataata hai, do-not-disrupt rokta hai\', () => {\n  const mk = (dnd) => ({ cluster: { karpenter: { enabled: true, tick: 5, log: [] }, events: [],\n    nodes: [{ name: \'n1\', karpenter: true, cpu: 4, mem: 8, usedCpu: 0, usedMem: 0 }],\n    nodeclaims: [{ name: \'nc1\', nodeName: \'n1\', ready: \'True\' }],\n    pods: dnd ? [{ name: \'p\', status: \'Running\', node: \'n1\', doNotDisrupt: true, requests: { cpu: \'1\' } }] : [],\n    nodepools: [{ name: \'d\', requirements: [], limits: { cpu: 100 }, used: { cpu: 0 },\n      disruption: { consolidationPolicy: \'WhenEmptyOrUnderutilized\' } }], ec2nodeclasses: [] } });\n  let s = mk(false); KG.karpenter.reconcile(s);\n  assert(s.cluster.nodes.length === 0, \'khaali node hata\');\n  s = mk(true); s.cluster.nodes[0].usedCpu = 1; KG.karpenter.reconcile(s);\n  assert(s.cluster.nodes.length === 1, \'do-not-disrupt ne bachaya\');\n});\nt(\'karpenter: cost calculator spot/on-demand sahi ginta hai\', () => {\n  const sim = { cluster: { nodes: [\n    { karpenter: true, instanceType: \'c6a.xlarge\', capacityType: \'spot\' },\n    { karpenter: true, instanceType: \'c6a.xlarge\', capacityType: \'on-demand\' }] } };\n  const c = KG.karpenter.cost(sim);\n  assert(c.nodes === 2 && c.hourly > 0 && c.monthly > c.hourly, \'cost math\');\n  const spotOnly = KG.karpenter.cost({ cluster: { nodes: [{ karpenter: true, instanceType: \'c6a.xlarge\', capacityType: \'spot\' }] } });\n  const odOnly = KG.karpenter.cost({ cluster: { nodes: [{ karpenter: true, instanceType: \'c6a.xlarge\', capacityType: \'on-demand\' }] } });\n  assert(spotOnly.hourly < odOnly.hourly, \'spot sasta hai\');\n});\n\n';
+/* ============ 2 + 3. ENGINE + SIMULATOR TESTS ============
+   String.raw — taaki backslash waise ke waise rahein aur yeh block padhne layak rahe.
+   (Pehle yeh ek hi line ki escaped string thi — koi padh/badal nahi sakta tha.) */
+const TESTS = String.raw`
+console.log('engine:');
+t('SRS: due-scheduling, box advance/reset, interval cap', () => {
+  KG.state = KG.defaultState();
+  KG.addCard('c1', 'F', 'B', 'tag');
+  assert(KG.dueCards().length === 0, 'naya card abhi due nahi');
+  KG.state.dojo.c1.due = Date.now() - 1000;
+  assert(KG.dueCards().length === 1, 'overdue card due hona chahiye');
+  KG.reviewCard('c1', true);
+  assert(KG.state.dojo.c1.box === 1 && KG.state.dojo.c1.due > Date.now() + 2.9 * KG.DAY, 'box/interval');
+  KG.reviewCard('c1', false);
+  assert(KG.state.dojo.c1.box === 0, 'wrong par box reset');
+  for (let i = 0; i < 10; i++) KG.reviewCard('c1', true);
+  assert(KG.state.dojo.c1.box === KG.SRS_INTERVALS.length - 1, 'box capped');
+});
+t('mistake cards dedupe + replay mode XP/cards block karta hai', () => {
+  KG.state = KG.defaultState(); KG.session = null;
+  KG.noteMistake('same?', 'ans'); KG.noteMistake('same?', 'ans');
+  assert(Object.keys(KG.state.dojo).length === 1, 'duplicate mistake card');
+  KG.state = KG.defaultState(); KG.session = { replay: true };
+  KG.addXP(100); KG.noteMistake('q', 'a');
+  assert(KG.state.xp === 0 && Object.keys(KG.state.dojo).length === 0, 'replay mode');
+  KG.session = null;
+});
+t('streak: same-day once, yesterday +1, gap reset, best preserved', () => {
+  KG.state = KG.defaultState();
+  const ds = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  KG.touchStreak(); KG.touchStreak();
+  assert(KG.state.streak.count === 1, 'same day');
+  const y = new Date(); y.setDate(y.getDate() - 1); KG.state.streak.last = ds(y);
+  KG.touchStreak(); assert(KG.state.streak.count === 2, 'yesterday +1');
+  const g = new Date(); g.setDate(g.getDate() - 5); KG.state.streak.last = ds(g);
+  KG.touchStreak();
+  assert(KG.state.streak.count === 1 && KG.state.streak.best === 2, 'gap reset, best rakha');
+});
+t('track gating: sequential + alwaysUnlocked side-tracks', () => {
+  KG.state = KG.defaultState();
+  assert(KG.trackUnlocked(KG.tracks[0]), 'beginner khula');
+  assert(!KG.trackUnlocked(KG.tracks[1]), 'intermediate band');
+  assert(!KG.trackUnlocked(KG.tracks[2]), 'advanced band');
+  KG.tracks.filter(t2 => t2.alwaysUnlocked).forEach(t2 =>
+    assert(KG.trackUnlocked(t2), 'side-track ' + t2.id + ' hamesha khula'));
+  KG.levelsOf(KG.tracks[0]).forEach(l => KG.state.completed.push(l.id));
+  assert(KG.trackUnlocked(KG.tracks[1]), 'beginner ke baad intermediate khula');
+});
+t('track gating: pichle track mein naya level judne se chalu track band NAHI hota', () => {
+  KG.state = KG.defaultState();
+  KG.state.completed.push(KG.levelsOf(KG.tracks[1])[0].id);     // intermediate ka ek level ho chuka
+  assert(KG.trackUnlocked(KG.tracks[1]), 'progress wala track khula rahe');
+});
+t('corrupt/purana localStorage safely handle hota hai', () => {
+  store['kubegurukul-v1'] = '{not json';
+  assert(KG.loadState().xp === 0, 'corrupt -> fresh');
+  store['kubegurukul-v1'] = JSON.stringify({ xp: 50, completed: ['a'] });
+  const s2 = KG.loadState();
+  assert(s2.xp === 50 && s2.dojo && s2.streak && typeof s2.levelStarts === 'number' && s2.resume === null, 'forward-compat');
+});
+t('resume-anywhere: checkpoint save/get/clear + gayab level = null', () => {
+  KG.state = KG.defaultState();
+  const lvl = KG.levelsOf(KG.tracks[0])[1];
+  KG.saveResume({ level: lvl, firstTry: 3, total: 4, replay: false }, 2);
+  const r = KG.getResume();
+  assert(r && r.level === lvl && r.stageIdx === 2 && r.firstTry === 3 && r.total === 4, 'resume wapas mila');
+  KG.state.resume.levelId = 'aisa-koi-level-nahi';
+  assert(KG.getResume() === null, 'missing level par resume null');
+  KG.clearResume(); assert(KG.state.resume === null, 'clear');
+});
+t('missing data file se app crash nahi hota', () => {
+  const saved = KG.levelSets.helm; delete KG.levelSets.helm;
+  const h = KG.tracks.find(x => x.id === 'helm');
+  assert(KG.levelsOf(h).length === 0 && KG.trackProgress(h).complete === false, 'khaali track');
+  KG.harvestQuestions();
+  KG.levelSets.helm = saved;
+});
+
+console.log('\nsimulators:');
+let out = [];
+const P = (k, txt) => out.push(txt);
+const run = (sim, cmd) => { out = []; const toks = cmd.split(' ');
+  if (toks[0] === 'helm') KG.helm(sim, toks, P);
+  else KG.argo(sim, toks, P);
+  return out.join('\n'); };
+
+t('helm: install/upgrade/rollback + values precedence + get values', () => {
+  const sim = { cluster: { pods: [], releases: [], repos: [], valuesFiles: { 'p.yaml': { r: 10 } },
+    charts: { './a': { name: 'a', version: '0.1.0', appVersion: '1.0', defaults: { r: 1, keep: 'yes' },
+      render: v => 'r=' + v.r, onUpgrade: (s, rel) => rel.values.r !== 999 } } }, history: [] };
+  run(sim, 'helm install a ./a --set r=3');
+  let rel = sim.cluster.releases[0];
+  assert(rel.values.r === 3 && rel.values.keep === 'yes', 'defaults deep-merge + --set');
+  assert(!rel.userValues.keep, 'get values sirf user-supplied dikhata hai');
+  run(sim, 'helm upgrade a ./a -f p.yaml');
+  assert(sim.cluster.releases[0].values.r === 10 && sim.cluster.releases[0].revision === 2, 'upgrade + --set bhool jaana');
+  run(sim, 'helm rollback a 1');
+  assert(sim.cluster.releases[0].revision === 3 && sim.cluster.releases[0].values.r === 3, 'rollback = naya revision');
+  const o = run(sim, 'helm upgrade a ./a --set r=999 --atomic');
+  assert(/automatic rollback/.test(o) && sim.cluster.releases[0].status === 'deployed', '--atomic auto-rollback');
+});
+t('helm: history STATUS asli jaisa — superseded / failed / rollback', () => {
+  const sim = { cluster: { releases: [], repos: [], charts: { './a': { name: 'a', version: '1', appVersion: '1',
+    defaults: { r: 1 }, onUpgrade: (s, rel) => rel.values.r !== 666 } } }, history: [] };
+  run(sim, 'helm install a ./a');
+  run(sim, 'helm upgrade a ./a --set r=2');
+  let h = sim.cluster.releases[0].history.map(x => x.status).join(',');
+  assert(h === 'superseded,deployed', 'upgrade ke baad purana superseded: ' + h);
+  run(sim, 'helm upgrade a ./a --set r=666');
+  h = sim.cluster.releases[0].history.map(x => x.status).join(',');
+  assert(h === 'superseded,deployed,failed' && sim.cluster.releases[0].status === 'failed', 'failed upgrade: purana deployed rehta hai: ' + h);
+  run(sim, 'helm rollback a');               // bina revision = current-1 (asli helm)
+  const rel = sim.cluster.releases[0];
+  h = rel.history.map(x => x.status).join(',');
+  assert(rel.revision === 4 && rel.values.r === 2 && h === 'superseded,superseded,superseded,deployed', 'rollback: ' + h);
+  assert(/Rollback to 2/.test(rel.history[3].description), 'description');
+});
+t('helm: --set typing asli helm (strvals) jaisa — float string rehta hai', () => {
+  const sim = { cluster: { releases: [], repos: [], charts: { './a': { name: 'a', version: '1', appVersion: '1', defaults: {} } } }, history: [] };
+  run(sim, 'helm install a ./a --set image.tag=2.0 --set n=007 --set r=3 --set on=TRUE --set s=10,t.u=x --set-string v=5 --set q="1.10"');
+  const v = sim.cluster.releases[0].values;
+  assert(v.image.tag === '2.0', 'float -> string: ' + typeof v.image.tag);
+  assert(v.n === '007' && v.r === 3 && v.on === true && v.v === '5' && v.q === '1.10', 'types: ' + JSON.stringify(v));
+  assert(v.s === 10 && v.t.u === 'x', 'comma-separated --set');
+  assert(/tag: "2.0"/.test(run(sim, 'helm get values a')), 'get values string ko quote karta hai');
+});
+t('helm: arg-less commands crash nahi karte + template NAME CHART', () => {
+  const sim = { cluster: { releases: [], repos: [], charts: { './shop': { name: 'shop', version: '1', appVersion: '1', defaults: { r: 1 }, render: (v, rel) => 'name=' + rel.name } } }, history: [] };
+  ['helm template', 'helm lint x', 'helm show values', 'helm package', 'helm diff upgrade', 'helm upgrade', 'helm dependency list']
+    .forEach(c => run(sim, c));                // throw na ho, bas
+  assert(/name=myrel/.test(run(sim, 'helm template myrel ./shop')), 'template NAME CHART');
+  assert(/name=release-name/.test(run(sim, 'helm template ./shop')), 'template CHART');
+  run(sim, 'helm install shop ./shop');
+  assert(/requires 2 arguments/.test(run(sim, 'helm upgrade shop')), 'upgrade bina chart = asli error');
+  assert(/failed to download/.test(run(sim, 'helm upgrade shop ./galat')), 'galat chart par silent fallback nahi');
+});
+t('helm: stuck release block karta hai jab tak rollback na ho', () => {
+  const sim = { cluster: { releases: [], repos: [], charts: { './a': { name: 'a', version: '1', appVersion: '1', defaults: {} } } }, history: [] };
+  run(sim, 'helm install a ./a');
+  sim.cluster.releases[0].status = 'pending-upgrade';
+  assert(/another operation/.test(run(sim, 'helm upgrade a ./a')), 'blocked');
+  run(sim, 'helm rollback a 1');
+  assert(/has been upgraded/.test(run(sim, 'helm upgrade a ./a')), 'rollback ke baad chalta hai');
+});
+t('argocd: list/get/diff/sync + prune — bina prune app OutOfSync hi rehta hai', () => {
+  const sim = { cluster: { services: [], apps: [{
+    name: 'x', sync: 'OutOfSync', health: 'Missing', destNamespace: 'default',
+    resources: [{ kind: 'Deployment', name: 'd', status: 'OutOfSync', health: 'Missing' },
+                { kind: 'Service', name: 'old', status: 'OutOfSync', pruneMe: true }],
+    diff: 'DIFF-TEXT', history: [], onSync: () => true }] }, history: [] };
+  assert(/OutOfSync/.test(run(sim, 'argocd app list')), 'list');
+  assert(/Sync Status/.test(run(sim, 'argocd app get x')), 'get');
+  assert(/DIFF-TEXT/.test(run(sim, 'argocd app diff x')), 'diff');
+  const o = run(sim, 'argocd app sync x');
+  assert(sim.cluster.apps[0].sync === 'OutOfSync', 'asli ArgoCD: requires-pruning resource ke saath app OutOfSync rehta hai');
+  assert(/NAHI hatega/.test(o) && sim.cluster.apps[0].resources.some(r => r.pruneMe && !r.pruned), 'bina --prune ke prune nahi');
+  assert(/requires pruning/.test(run(sim, 'argocd app get x')), 'get mein requires pruning dikhe');
+  run(sim, 'argocd app sync x --prune');
+  assert(sim.cluster.apps[0].sync === 'Synced' && !sim.cluster.apps[0].resources.some(r => r.pruneMe), '--prune ke baad Synced');
+  assert(/koi diff nahi/.test(run(sim, 'argocd app diff x')), 'Synced par diff khaali');
+});
+t('argocd: failed sync, selfHeal ke saath rollback block, app set', () => {
+  const sim = { cluster: { apps: [{ name: 'y', sync: 'OutOfSync', health: 'Healthy', resources: [],
+    history: [{ id: 1, revision: 'r1', deployedAt: 'd' }], syncError: 'boom', onSync: () => false }] }, history: [] };
+  const o = run(sim, 'argocd app sync y');
+  assert(/FAILED/.test(o) && sim.cluster.apps[0].health === 'Degraded', 'sync fail');
+  run(sim, 'argocd app set y --sync-policy automated --self-heal');
+  assert(sim.cluster.apps[0].syncPolicy.automated.selfHeal === true, 'set policy');
+  assert(/git revert/.test(run(sim, 'argocd app rollback y 1')), 'selfHeal par rollback guidance');
+});
+t('rollouts: get/promote/abort/retry + naam ki parsing (flags, galat naam)', () => {
+  const sim = { cluster: { pods: [], rollouts: [{ name: 'r', strategy: 'canary', status: 'Paused',
+    step: 1, weight: 10, steps: ['setWeight: 10', 'pause: {}', 'setWeight: 50', 'setWeight: 100'] }] }, history: [] };
+  assert(/Paused/.test(run(sim, 'kubectl argo rollouts get rollout r -n default')), 'get (with -n)');
+  run(sim, 'kubectl argo rollouts promote r');
+  assert(sim.cluster.rollouts[0].step === 2, 'promote step++');
+  assert(/not found/.test(run(sim, 'kubectl argo rollouts promote galat')), 'galat naam = NotFound (pehle ros[0] chupke se chal jaata tha)');
+  run(sim, 'kubectl argo rollouts abort r');
+  assert(sim.cluster.rollouts[0].aborted && sim.cluster.rollouts[0].weight === 0, 'abort -> 0%');
+  run(sim, 'kubectl argo rollouts retry rollout r');
+  assert(!sim.cluster.rollouts[0].aborted && sim.cluster.rollouts[0].weight === 10, 'retry -> step 1');
+});
+t('karpenter: Pending pod -> NodeClaim -> Node -> pod Running', () => {
+  const sim = { cluster: {
+    karpenter: { enabled: true, tick: 0, log: [] },
+    nodes: [], nodeclaims: [], events: [],
+    pods: [{ name: 'p', status: 'Pending', ready: '0/1', requests: { cpu: '3', memory: '6Gi' } }],
+    nodepools: [{ name: 'default', requirements: [
+      { key: 'karpenter.sh/capacity-type', operator: 'In', values: ['spot'] },
+      { key: 'karpenter.k8s.aws/instance-category', operator: 'In', values: ['c', 'm'] }],
+      limits: { cpu: 100 }, used: { cpu: 0 }, disruption: { consolidationPolicy: 'WhenEmptyOrUnderutilized' } }],
+    ec2nodeclasses: [{ name: 'default' }] } };
+  KG.karpenter.reconcile(sim);
+  assert(sim.cluster.nodeclaims.length === 1, 'NodeClaim bana');
+  assert(sim.cluster.nodeclaims[0].capacity === 'spot', 'spot chuna');
+  assert(sim.cluster.nodeclaims[0].cpu >= 3, 'fit karne wala type');
+  assert(sim.cluster.pods[0].status === 'Pending', 'abhi bhi Pending (node aa raha hai)');
+  KG.karpenter.reconcile(sim);
+  assert(sim.cluster.nodes.length === 1 && sim.cluster.pods[0].status === 'Running', 'node ready -> pod Running');
+});
+t('karpenter: limits, no-match, aur "koi type fit nahi" — teeno alag Events', () => {
+  const base = () => ({ cluster: { karpenter: { enabled: true, tick: 0, log: [] }, nodes: [], nodeclaims: [], events: [],
+    pods: [], nodepools: [], ec2nodeclasses: [] } });
+  let s = base(); s.cluster.pods = [{ name: 'a', status: 'Pending', requests: { cpu: '1' } }];
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.pods[0].unschedulable && /NodePool/.test(s.cluster.pods[0].describe), 'no nodepool');
+  s = base();
+  s.cluster.nodepools = [{ name: 'd', requirements: [], limits: { cpu: 2 }, used: { cpu: 2 }, disruption: {} }];
+  s.cluster.pods = [{ name: 'b', status: 'Pending', requests: { cpu: '2' } }];
+  KG.karpenter.reconcile(s);
+  assert(/limit/i.test(s.cluster.pods[0].describe), 'limit reached');
+  s = base();
+  s.cluster.nodepools = [{ name: 'd', requirements: [], limits: { cpu: 1000 }, used: { cpu: 0 }, disruption: {} }];
+  s.cluster.pods = [{ name: 'c', status: 'Pending', requests: { cpu: '64', memory: '512Gi' } }];
+  KG.karpenter.reconcile(s);
+  assert(/instance type/i.test(s.cluster.pods[0].describe), 'no instance type');
+});
+t('karpenter: consolidation khaali node hataata hai, do-not-disrupt rokta hai, NodePool used ghatta hai', () => {
+  const mk = (dnd) => ({ cluster: { karpenter: { enabled: true, tick: 5, log: [] }, events: [],
+    nodes: [{ name: 'n1', karpenter: true, nodepool: 'd', cpu: 4, mem: 8, usedCpu: 0, usedMem: 0 }],
+    nodeclaims: [{ name: 'nc1', nodeName: 'n1', ready: 'True' }],
+    pods: dnd ? [{ name: 'p', status: 'Running', node: 'n1', doNotDisrupt: true, requests: { cpu: '1' } }] : [],
+    nodepools: [{ name: 'd', requirements: [], limits: { cpu: 100 }, used: { cpu: 4 },
+      disruption: { consolidationPolicy: 'WhenEmptyOrUnderutilized' } }], ec2nodeclasses: [] } });
+  let s = mk(false); KG.karpenter.reconcile(s);
+  assert(s.cluster.nodes.length === 0, 'khaali node hata');
+  assert(s.cluster.nodepools[0].used.cpu === 0, 'NodePool used.cpu bhi kam hua (warna limit jhooth-mooth bharti)');
+  s = mk(true); s.cluster.nodes[0].usedCpu = 1; KG.karpenter.reconcile(s);
+  assert(s.cluster.nodes.length === 1, 'do-not-disrupt ne bachaya');
+});
+t('karpenter: kubectl delete pod ke baad node ki capacity wapas milti hai', () => {
+  const sim = { cluster: { karpenter: { enabled: true, tick: 5, log: [] }, events: [], nodeclaims: [],
+    nodes: [{ name: 'n1', karpenter: true, nodepool: 'd', cpu: 4, mem: 8, usedCpu: 3, usedMem: 6 }],
+    pods: [{ name: 'big', status: 'Running', node: 'n1', requests: { cpu: '3', memory: '6Gi' } },
+           { name: 'x', status: 'Running', node: 'n1', requests: { cpu: '0.5', memory: '1Gi' } }],
+    nodepools: [{ name: 'd', requirements: [], limits: { cpu: 100 }, used: { cpu: 4 }, disruption: {} }], ec2nodeclasses: [] } };
+  KG.karpenter.reconcile(sim);                      // pehli baar: maujooda pods ka hisaab
+  sim.cluster.pods = sim.cluster.pods.filter(p => p.name !== 'big');   // kubectl delete pod big
+  sim.cluster.pods.push({ name: 'new', status: 'Pending', requests: { cpu: '2', memory: '2Gi' } });
+  KG.karpenter.reconcile(sim);
+  assert(sim.cluster.pods.find(p => p.name === 'new').node === 'n1', 'chhoda hua space naye pod ko mila');
+  assert(sim.cluster.nodeclaims.length === 0, 'faltu naya node launch nahi hua');
+});
+t('karpenter: cost calculator spot/on-demand sahi ginta hai', () => {
+  const sim = { cluster: { nodes: [
+    { karpenter: true, instanceType: 'c6a.xlarge', capacityType: 'spot' },
+    { karpenter: true, instanceType: 'c6a.xlarge', capacityType: 'on-demand' }] } };
+  const c = KG.karpenter.cost(sim);
+  assert(c.nodes === 2 && c.hourly > 0 && c.monthly > c.hourly, 'cost math');
+  const spotOnly = KG.karpenter.cost({ cluster: { nodes: [{ karpenter: true, instanceType: 'c6a.xlarge', capacityType: 'spot' }] } });
+  const odOnly = KG.karpenter.cost({ cluster: { nodes: [{ karpenter: true, instanceType: 'c6a.xlarge', capacityType: 'on-demand' }] } });
+  assert(spotOnly.hourly < odOnly.hourly, 'spot sasta hai');
+});
+
+/* kubectl terminal — asli renderer headless chala ke (input Enter dabake) */
+function term(cluster, extra) {
+  const arena = document.createElement('div');
+  let done = null;
+  const st = Object.assign({ goal: 'g', cluster, success: () => false }, extra || {});
+  KG.renderers.terminal(st, arena, r => { done = r; });
+  const termEl = arena.children[1];
+  const input = termEl.querySelector('input'), outEl = termEl.querySelector('.term-out');
+  return {
+    run(cmd) { const before = outEl.children.length; input.value = cmd; input.fire('keydown', { key: 'Enter' });
+               return outEl.children.slice(before).filter(c => !c.classList.contains('t-cmd')).map(c => c.textContent).join('\n'); },
+    get done() { return done; }, st, outEl,
+  };
+}
+t('terminal: k alias scripted responses + history tak pahunchta hai', () => {
+  let hit = 0;
+  const T = term({ pods: [] }, { responses: [{ re: /^kubectl rollout undo deploy\/web$/, out: 'rolled back', mutate: () => { hit++; } }] });
+  assert(/rolled back/.test(T.run('k rollout undo deploy/web')) && hit === 1, 'k -> kubectl');
+});
+t('terminal: pipes, && chain, get <name>, comma kinds, PVC capacity', () => {
+  const T = term({ pods: [{ name: 'web-1', ready: '1/1', status: 'Running', restarts: 0, age: '1m' },
+                          { name: 'db-0', ready: '0/1', status: 'Pending', restarts: 0, age: '1m' }],
+                   services: [{ name: 'web', type: 'ClusterIP', clusterIP: '10.0.0.1', ports: '80/TCP', age: '1m' }],
+                   pvcs: [{ name: 'data', status: 'Bound', volume: 'pv-1', capacity: '10Gi', accessModes: 'RWO', storageClass: 'standard', age: '1m' }] });
+  let o = T.run('kubectl get pods | grep Pending');
+  assert(/db-0/.test(o) && !/web-1/.test(o), 'grep filter: ' + o);
+  o = T.run('kubectl get pods | wc -l');
+  assert(/^3$/.test(o.trim()), 'wc -l: ' + o);
+  o = T.run('kubectl get pod web-1');
+  assert(/web-1/.test(o) && !/db-0/.test(o), 'get <name>');
+  assert(/NotFound/.test(T.run('kubectl get pod nope')), 'get <galat naam>');
+  o = T.run('kubectl get pods,svc');
+  assert(/web-1/.test(o) && /ClusterIP/.test(o), 'comma kinds');
+  assert(/10Gi/.test(T.run('kubectl get pvc')), 'PVC CAPACITY (duplicate key bug)');
+  o = T.run('kubectl get nodes-galat && kubectl get pods');
+  assert(!/web-1/.test(o), '&& pehla fail -> doosra nahi chalta');
+  T.run('kubectl get pods ; kubectl get svc');
+  assert(T.st && true, 'chain ok');
+});
+t('terminal: throw karta callback app ko nahi todta + checklist live hai', () => {
+  let flag = false;
+  const tasks = [{ text: 'x', check: () => flag }];
+  const T = term({ pods: [] }, { tasks, responses: [{ re: /^boom$/, out: () => { throw new Error('kaboom'); } },
+                                                   { re: /^on$/, out: 'on', mutate: () => { flag = true; } },
+                                                   { re: /^off$/, out: 'off', mutate: () => { flag = false; } }] });
+  assert(/Simulator error/.test(T.run('boom')), 'error dikha');
+  T.run('on'); T.run('off');
+  assert(true, 'no throw');
+});
+`;
 eval(src + checks + TESTS + EXTRA_TESTS);
 
 console.log('\n🛕 KubeGurukul — validate\n');

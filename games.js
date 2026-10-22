@@ -50,6 +50,9 @@ KG.renderers.bins = function renderBins(stage, arena, onDone) {
     });
     chip.addEventListener('click', e => {
       e.stopPropagation();
+      // bin mein rakhi chip dobara select nahi honi chahiye — warna wahi bin
+      // dobara click karne par woh phir se "sahi" ginti (XP + placed++)
+      if (chip.classList.contains('placed')) return;
       selectChip(selected === chip ? null : chip);
     });
     pool.appendChild(chip);
@@ -62,6 +65,7 @@ KG.renderers.bins = function renderBins(stage, arena, onDone) {
   }
 
   function attempt(chip, binId, zone) {
+    if (chip.classList.contains('placed')) return;
     const item = chip._item;
     if (item.bin === binId) {
       if (!wrongOnce.has(item.text)) { firstTry++; KG.addXP(KG.XP_PER_ITEM); }
@@ -260,6 +264,7 @@ KG.renderers.match = function renderMatch(stage, arena, onDone) {
     card.addEventListener('dragover', e => e.preventDefault());
     card.addEventListener('drop', e => {
       e.preventDefault();
+      if (card.classList.contains('done')) return;   // jodi pehle hi ban chuki
       const id = e.dataTransfer.getData('text/plain');
       const r = rightCol.querySelector(`[data-idx="${id}"]:not(.done)`);
       if (r) { selLeft = card; selRight = r; check(); }

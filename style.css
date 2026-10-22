@@ -1093,3 +1093,32 @@ pre {
   .lesson-card table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .lesson-card code, .choice code { overflow-wrap: anywhere; word-break: break-word; }
 }
+
+/* ---------- ▶ resume-anywhere (2026-10) — beech mein chhoda level, ek click mein wapas ---------- */
+.resume-card {
+  display: flex; align-items: center; gap: 16px; margin-top: 22px;
+  background: linear-gradient(120deg, #326ce522, #34d39914);
+  border: 1px solid #6b9fff88; border-radius: var(--radius);
+  padding: 16px 20px; box-shadow: 0 0 24px #326ce522;
+}
+.resume-card.clickable { cursor: pointer; transition: transform .15s, border-color .15s; }
+.resume-card.clickable:hover { transform: translateY(-2px); border-color: var(--good); }
+.rs-icon { font-size: 1.6rem; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent2); color: #fff; flex: 0 0 auto; }
+.rs-body { flex: 1; min-width: 0; }
+.rs-title { font-weight: 700; line-height: 1.35; }
+.rs-sub { color: var(--muted); font-size: .86rem; margin-top: 3px; }
+.rs-bar { height: 6px; border-radius: 4px; background: #091020; border: 1px solid var(--border); overflow: hidden; margin-top: 8px; }
+.rs-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--good)); }
+.rs-go { color: var(--good); font-weight: 700; white-space: nowrap; }
+.levelcard.resuming { border-color: var(--accent); box-shadow: 0 0 0 1px #6b9fff55, 0 8px 24px #326ce522; }
+.levelcard.resuming .lv-stars { color: var(--accent); font-weight: 700; }
+@media (max-width: 560px) { .resume-card { flex-wrap: wrap; } .rs-go { width: 100%; text-align: right; } }
+
+/* ---------- a11y: keyboard focus dikhe, motion kam karne ka respect ---------- */
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+button:focus:not(:focus-visible) { outline: none; }
+.clickable:focus-visible, .trackcard:focus-visible, .levelcard:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+}

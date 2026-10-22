@@ -47,10 +47,12 @@ KG.argo = (function () {
 
   /* app ke resources ka status recompute (sync ke baad) */
   function markSynced(app) {
-    app.sync = 'Synced';
-    (app.resources || []).forEach(r => { if (!r.pruneMe) r.status = 'Synced'; });
-    // prune wale resources hata do agar prune allowed hai
+    // prune wale resources hata do agar prune allowed tha
     if (app.resources) app.resources = app.resources.filter(r => !(r.pruneMe && r.pruned));
+    (app.resources || []).forEach(r => { r.status = r.pruneMe ? 'OutOfSync' : 'Synced'; });
+    // asli ArgoCD: git se hata hua resource cluster mein pada hai (bina prune) →
+    // sync operation chal jaata hai par app OutOfSync hi REHTA hai ("requires pruning")
+    app.sync = (app.resources || []).some(r => r.pruneMe) ? 'OutOfSync' : 'Synced';
   }
 
   function appGet(sim, app) {
@@ -70,9 +72,10 @@ KG.argo = (function () {
       '',
     ];
     if ((app.resources || []).length) {
-      lines.push(table([['GROUP', 'KIND', 'NAMESPACE', 'NAME', 'STATUS', 'HEALTH'],
+      lines.push(table([['GROUP', 'KIND', 'NAMESPACE', 'NAME', 'STATUS', 'HEALTH', 'MESSAGE'],
         ...app.resources.map(r => [r.group || '', r.kind, app.destNamespace || 'default', r.name,
-          r.status || 'Synced', r.health || (r.kind === 'Service' ? '' : 'Healthy')])]));
+          r.status || 'Synced', r.health || (r.kind === 'Service' ? '' : 'Healthy'),
+          r.pruneMe && !r.pruned ? 'ignored (requires pruning)' : (r.message || '')])]));
     }
     return lines.join('\n');
   }
@@ -83,8 +86,18 @@ KG.argo = (function () {
   function rolloutsExec(sim, toks, print) {
     const ros = sim.cluster.rollouts || [];
     const sub = toks[3];                       // kubectl argo rollouts <sub>
-    const name = toks[5] || toks[4];           // ... get rollout <name>  |  ... promote <name>
-    const ro = ros.find(r => r.name === name) || ros[0];
+    // naam = pehla non-flag arg ("get rollout <name>" mein 'rollout' shabd chhod do; -n ns ki value bhi)
+    const rest = [];
+    for (let i = 4; i < toks.length; i++) {
+      if (toks[i] === '-n' || toks[i] === '--namespace') { i++; continue; }
+      if (toks[i].startsWith('-')) continue;
+      rest.push(toks[i]);
+    }
+    // "get rollout X" / "retry rollout X" / "list rollouts" — beech ka 'rollout' shabd naam nahi hai
+    if (/^(rollout|rollouts|ro)$/.test(rest[0] || '') && (rest.length > 1 || sub === 'get' || sub === 'list')) rest.shift();
+    const name = rest[0];
+    // naam na diya ho aur ek hi rollout ho toh wahi (learning-friendly); galat naam = NotFound
+    const ro = name ? ros.find(r => r.name === name) : (ros.length === 1 ? ros[0] : null);
 
     if (sub === 'list') {
       if (!ros.length) { print('err', 'No rollouts found'); return true; }
@@ -93,7 +106,22 @@ KG.argo = (function () {
           r.weight != null ? r.weight : '-', r.ready || '3', r.desired || '3'])]));
       return true;
     }
-    if (!ro) { print('err', `Error: rollouts.argoproj.io "${name || ''}" not found`); return true; }
+    if (!ro) {
+      print('err', name ? `Error: rollouts.argoproj.io "${name}" not found` + (ros.length ? `\n(is mission ke rollouts: ${ros.map(r => r.name).join(', ')})` : '')
+                        : `Error: rollout ka naam do — e.g. kubectl argo rollouts get rollout ${ros[0] ? ros[0].name : '<name>'}`);
+      return true;
+    }
+    if (sub === 'retry') {
+      if (!ro.aborted && ro.status !== 'Degraded') { print('err', `Error: rollout '${ro.name}' aborted nahi hai — retry sirf abort ke baad`); return true; }
+      ro.aborted = false; ro.step = 1;
+      const first = ((ro.steps || [])[0] || '').match(/setWeight:\s*(\d+)/);
+      ro.weight = first ? parseInt(first[1], 10) : 0;
+      ro.status = 'Paused';
+      ro.images = ['app:v1 (stable)', 'app:v2 (canary)'];
+      print('ok', `rollout '${ro.name}' retried\n(canary phir se step 1 se shuru — weight ${ro.weight}%)`);
+      if (ro.onChange) ro.onChange(sim, ro);
+      return true;
+    }
 
     if (sub === 'get') {
       const stepList = (ro.steps || []).map((s, i) =>
@@ -152,7 +180,7 @@ ${ro.analysisMsg ? '\nANALYSIS:\n  ' + ro.analysisMsg : ''}`);
       print(ro.status === 'Degraded' ? 'err' : 'ok', `${ro.status === 'Paused' ? 'Paused - CanaryPauseStep' : ro.status}`);
       return true;
     }
-    print('err', `Error: unknown rollouts command "${sub || ''}"\n(get rollout <name> | list rollouts | promote | abort | undo | status)`);
+    print('err', `Error: unknown rollouts command "${sub || ''}"\n(get rollout <name> | list rollouts | promote | abort | retry | undo | status)`);
     return true;
   }
 
@@ -296,9 +324,9 @@ ${ro.analysisMsg ? '\nANALYSIS:\n  ' + ro.analysisMsg : ''}`);
         deployedAt: new Date().toISOString().slice(0, 19) + 'Z', note: 'Sync',
       });
       print('ok', `TIMESTAMP  GROUP  KIND  NAMESPACE  NAME  STATUS  HEALTH\n` +
-        (app.resources || []).map(r => `           ${r.group || ''}  ${r.kind}  ${app.destNamespace || 'default'}  ${r.name}  Synced  ${r.health || 'Healthy'}`).join('\n') +
+        (app.resources || []).map(r => `           ${r.group || ''}  ${r.kind}  ${app.destNamespace || 'default'}  ${r.name}  ${r.pruneMe ? 'OutOfSync (requires pruning)' : 'Synced'}  ${r.health || 'Healthy'}`).join('\n') +
         waveLog + pruneNote +
-        `\n\nApplication '${app.name}' synced — Sync: Synced, Health: ${app.health}`);
+        `\n\nApplication '${app.name}' sync operation complete — Sync: ${app.sync}, Health: ${app.health}`);
       return true;
     }
 

@@ -82,10 +82,24 @@ KG.karpenter = (function () {
 
   /* pod NodePool ke taints tolerate karta hai? */
   function tolerates(pod, np) {
-    const taints = np.taints || [];
+    const taints = (np && np.taints) || [];
     if (!taints.length) return true;
     const tols = pod.tolerations || [];
-    return taints.every(t => tols.some(tol => tol.key === t.key));
+    return taints.every(t => t.effect === 'PreferNoSchedule' || tols.some(tol =>
+      (tol.operator === 'Exists' && (!tol.key || tol.key === t.key)) ||
+      (tol.key === t.key && (tol.value === undefined || tol.value === t.value))));
+  }
+  function poolOf(sim, node) {
+    return (sim.cluster.nodepools || []).find(np => np.name === node.nodepool) || null;
+  }
+  /* node ki capacity ka hisaab: kaunse pod ne kitna liya (kubectl delete ke baad wapas milta hai) */
+  function acct(node, pod, d) { (node._acct = node._acct || {})[pod.name] = d; }
+  function releaseNode(sim, node) {
+    // node gaya → NodePool ka "used" bhi kam (warna limit jhooth-mooth bhar jaati)
+    const np = poolOf(sim, node);
+    if (np && np.used) np.used.cpu = Math.max(0, parseCpu(np.used.cpu) - (node.cpu || 0));
+    sim.cluster.nodes = sim.cluster.nodes.filter(x => x !== node);
+    sim.cluster.nodeclaims = sim.cluster.nodeclaims.filter(nc => nc.nodeName !== node.name);
   }
 
   /* ---------------------------------------------------------------
@@ -98,6 +112,20 @@ KG.karpenter = (function () {
     sim.cluster.nodeclaims = sim.cluster.nodeclaims || [];
     sim.cluster.nodes = sim.cluster.nodes || [];
     sim.cluster.pods = sim.cluster.pods || [];
+
+    /* 0) bookkeeping: jo pods node se chale gaye (kubectl delete pod), unki capacity wapas.
+       Pehli baar dekhe gaye pods ka usage pehle se node.usedCpu mein maana jaata hai. */
+    sim.cluster.nodes.filter(n => n.karpenter).forEach(n => {
+      const here = sim.cluster.pods.filter(p => p.node === n.name);
+      if (!n._acct) { n._acct = {}; here.forEach(p => { n._acct[p.name] = demand(p); }); return; }
+      Object.keys(n._acct).forEach(name => {
+        if (here.some(p => p.name === name)) return;
+        const d = n._acct[name];
+        n.usedCpu = Math.max(0, (n.usedCpu || 0) - d.cpu);
+        n.usedMem = Math.max(0, (n.usedMem || 0) - d.mem);
+        delete n._acct[name];
+      });
+    });
 
     /* 1) launching NodeClaims → Ready nodes (agla tick) */
     sim.cluster.nodeclaims.filter(nc => nc.ready === 'Unknown').forEach(nc => {
@@ -118,7 +146,7 @@ KG.karpenter = (function () {
           delete p.waitingFor;
           const d = demand(p);
           const node = sim.cluster.nodes.find(n => n.name === nc.nodeName);
-          if (node) { node.usedCpu += d.cpu; node.usedMem += d.mem; }
+          if (node) { node.usedCpu += d.cpu; node.usedMem += d.mem; node._acct = node._acct || {}; acct(node, p, d); }
           log(sim, `Normal  Scheduled  ${p.name}  Successfully assigned to ${nc.nodeName}`);
         });
       }
@@ -137,11 +165,12 @@ KG.karpenter = (function () {
         p.describe = p._baseDescribe + '\n\nEvents (latest):\n  Warning  FailedProvisioning  karpenter: ' + reason;
       };
       const d = demand(p);
-      // pehle: kya kisi maujooda node par fit ho jaata hai?
-      const fit = sim.cluster.nodes.find(n => n.karpenter && (n.cpu - n.usedCpu) >= d.cpu && (n.mem - n.usedMem) >= d.mem);
+      // pehle: kya kisi maujooda node par fit ho jaata hai? (us node ke NodePool ke taints bhi tolerate hone chahiye)
+      const fit = sim.cluster.nodes.find(n => n.karpenter && !n.drifted && tolerates(p, poolOf(sim, n)) &&
+        (n.cpu - n.usedCpu) >= d.cpu && (n.mem - n.usedMem) >= d.mem);
       if (fit) {
         p.status = 'Running'; p.node = fit.name; p.ready = p.ready === '0/1' ? '1/1' : p.ready;
-        fit.usedCpu += d.cpu; fit.usedMem += d.mem;
+        fit.usedCpu += d.cpu; fit.usedMem += d.mem; fit._acct = fit._acct || {}; acct(fit, p, d);
         log(sim, `Normal  Scheduled  ${p.name}  Assigned to existing node ${fit.name}`);
         return;
       }
@@ -188,33 +217,38 @@ KG.karpenter = (function () {
       log(sim, `Normal  Launched    ${nc.name}  Launched ${cap} ${chosen.name} in ${zone} ($${nc.price}/hr)`);
     });
 
-    /* 3) Consolidation — khaali ya kam bhare nodes hatao */
-    const pol = (sim.cluster.nodepools || [])[0];
-    const cpol = pol && pol.disruption && pol.disruption.consolidationPolicy;
-    if (cpol && k.consolidate !== false) {
+    /* 3) Consolidation — khaali ya kam bhare nodes hatao (har node apne NodePool ki policy maanta hai) */
+    if (k.consolidate !== false) {
       sim.cluster.nodes.filter(n => n.karpenter).forEach(n => {
+        if (!sim.cluster.nodes.includes(n)) return;          // is loop mein pehle hi hat chuka
+        const pool = poolOf(sim, n) || (sim.cluster.nodepools || [])[0];
+        const cpol = pool && pool.disruption && pool.disruption.consolidationPolicy;
+        if (!cpol) return;
         const podsOn = sim.cluster.pods.filter(p => p.node === n.name);
         const blocked = podsOn.some(p => p.doNotDisrupt);
         const empty = podsOn.length === 0;
         const under = !empty && (n.usedCpu / n.cpu) < 0.4 && podsOn.length <= 2;
         if (empty && (cpol === 'WhenEmpty' || cpol === 'WhenEmptyOrUnderutilized')) {
           if (blocked) return;
-          sim.cluster.nodes = sim.cluster.nodes.filter(x => x !== n);
-          sim.cluster.nodeclaims = sim.cluster.nodeclaims.filter(nc => nc.nodeName !== n.name);
+          releaseNode(sim, n);
           log(sim, `Normal  DisruptionTerminating  ${n.name}  Disrupting node via consolidation: EMPTY (paisa bach gaya 💰)`);
         } else if (under && cpol === 'WhenEmptyOrUnderutilized') {
           if (blocked) {
             log(sim, `Normal  DisruptionBlocked  ${n.name}  Cannot disrupt — pod has karpenter.sh/do-not-disrupt annotation`);
             return;
           }
-          // pods ko doosre node par shift karo agar jagah ho
-          const target = sim.cluster.nodes.find(o => o !== n && o.karpenter &&
+          // pods ko doosre node par shift karo agar jagah ho (aur us node ke taints tolerate hon)
+          const target = sim.cluster.nodes.find(o => o !== n && o.karpenter && !o.drifted &&
+            podsOn.every(p => tolerates(p, poolOf(sim, o))) &&
             (o.cpu - o.usedCpu) >= n.usedCpu && (o.mem - o.usedMem) >= n.usedMem);
           if (!target) return;
-          podsOn.forEach(p => { p.node = target.name; });
+          podsOn.forEach(p => {
+            p.node = target.name;
+            const d = (n._acct && n._acct[p.name]) || demand(p);
+            target._acct = target._acct || {}; acct(target, p, d);
+          });
           target.usedCpu += n.usedCpu; target.usedMem += n.usedMem;
-          sim.cluster.nodes = sim.cluster.nodes.filter(x => x !== n);
-          sim.cluster.nodeclaims = sim.cluster.nodeclaims.filter(nc => nc.nodeName !== n.name);
+          releaseNode(sim, n);
           log(sim, `Normal  DisruptionTerminating  ${n.name}  Disrupting via consolidation: UNDERUTILIZED — pods ${target.name} par shift hue 💰`);
         }
       });

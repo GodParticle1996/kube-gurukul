@@ -40,38 +40,101 @@ KG.helm = (function () {
     return out;
   }
 
-  // "image.tag=2.0" -> { image: { tag: '2.0' } }   (numbers/bools cast hote hain)
-  function setPath(obj, expr) {
-    const eq = expr.indexOf('=');
-    if (eq < 0) return obj;
-    const path = expr.slice(0, eq).split('.');
-    let raw = expr.slice(eq + 1);
-    let val = raw;
-    if (/^-?\d+$/.test(raw)) val = parseInt(raw, 10);
-    else if (/^-?\d*\.\d+$/.test(raw)) val = parseFloat(raw);
-    else if (raw === 'true') val = true;
-    else if (raw === 'false') val = false;
-    else if (raw === 'null') val = null;
-    let cur = obj;
-    path.forEach((p, i) => {
-      if (i === path.length - 1) cur[p] = val;
-      else { if (!cur[p] || typeof cur[p] !== 'object') cur[p] = {}; cur = cur[p]; }
+  /* --set ki value ka TYPE — asli Helm (pkg/strvals typedVal) jaisa:
+       true/false/null (case-insensitive) → bool/null
+       "0" ya 0 se shuru NA hone wala integer → int
+       baaki SAB string — floats bhi!  (--set image.tag=2.0 → "2.0", number 2 nahi)
+     --set-string → hamesha string. Shell quotes ("2.0") hata do — shell bhi hata deta. */
+  function typedVal(raw, asString) {
+    if (/^(["']).*\1$/.test(raw) && raw.length >= 2) return raw.slice(1, -1);
+    if (asString) return raw;
+    if (/^true$/i.test(raw)) return true;
+    if (/^false$/i.test(raw)) return false;
+    if (/^null$/i.test(raw)) return null;
+    if (raw === '0') return 0;
+    if (/^[-+]?[1-9]\d*$/.test(raw) && Math.abs(Number(raw)) <= Number.MAX_SAFE_INTEGER) return parseInt(raw, 10);
+    return raw;
+  }
+
+  /* "a=1,b.c=x" → alag-alag assignments (comma ke andar {} list ho sakti hai; \, escape) */
+  function splitSets(expr) {
+    const parts = []; let cur = '', depth = 0;
+    for (let i = 0; i < expr.length; i++) {
+      const ch = expr[i];
+      if (ch === '\\' && expr[i + 1] === ',') { cur += ','; i++; continue; }
+      if (ch === '{') depth++;
+      if (ch === '}') depth = Math.max(0, depth - 1);
+      if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    if (cur) parts.push(cur);
+    return parts;
+  }
+
+  // "image.tag=2.0" -> { image: { tag: '2.0' } } ;  "servers[0].port=80" ;  "hosts={a,b}"
+  function setPath(obj, expr, asString) {
+    splitSets(expr).forEach(one => {
+      const eq = one.indexOf('=');
+      if (eq < 0) return;
+      const raw = one.slice(eq + 1);
+      const val = /^\{.*\}$/.test(raw)
+        ? raw.slice(1, -1).split(',').filter(x => x !== '').map(x => typedVal(x, asString))
+        : typedVal(raw, asString);
+      // path segments: a.b[0].c → ['a','b',0,'c']
+      const segs = [];
+      one.slice(0, eq).split('.').forEach(p => {
+        const m = p.match(/^([^[\]]+)((?:\[\d+\])*)$/);
+        if (!m) { segs.push(p); return; }
+        segs.push(m[1]);
+        (m[2].match(/\d+/g) || []).forEach(n => segs.push(parseInt(n, 10)));
+      });
+      let cur = obj;
+      segs.forEach((p, i) => {
+        if (i === segs.length - 1) { cur[p] = val; return; }
+        const nextIsIdx = typeof segs[i + 1] === 'number';
+        if (!cur[p] || typeof cur[p] !== 'object') cur[p] = nextIsIdx ? [] : {};
+        cur = cur[p];
+      });
     });
     return obj;
+  }
+
+  /* YAML mein jo string number/bool jaisi dikhe usse quote karo — taaki
+     `helm get values` mein "2.0" (string) aur 2 (int) ka farak DIKHE */
+  function yScalar(v) {
+    if (v === null || v === undefined) return 'null';
+    if (typeof v !== 'string') return String(v);
+    if (v === '' || /^(true|false|yes|no|on|off|null|~)$/i.test(v) || /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(v) ||
+        /^[\s\-?:,[\]{}#&*!|>'"%@`]/.test(v) || /:\s|\s#|\s$/.test(v))
+      return JSON.stringify(v);
+    return v;
   }
 
   function toYaml(obj, indent) {
     indent = indent || 0;
     const pad = ' '.repeat(indent);
     if (obj === null || obj === undefined) return 'null';
-    if (typeof obj !== 'object') return String(obj);
-    if (Array.isArray(obj))
-      return obj.map(v => pad + '- ' + (typeof v === 'object' ? '\n' + toYaml(v, indent + 2) : String(v))).join('\n');
+    if (typeof obj !== 'object') return yScalar(obj);
+    if (Array.isArray(obj)) {
+      if (!obj.length) return pad + '[]';
+      return obj.map(v => {
+        if (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length) {
+          // "- key: val" (pehli key dash ke saath, baaki uske neeche)
+          const inner = toYaml(v, indent + 2).split('\n');
+          return pad + '- ' + inner[0].trimStart() + (inner.length > 1 ? '\n' + inner.slice(1).join('\n') : '');
+        }
+        if (v && typeof v === 'object') return pad + '- ' + (Array.isArray(v) ? '\n' + toYaml(v, indent + 2) : '{}');
+        return pad + '- ' + yScalar(v);
+      }).join('\n');
+    }
     return Object.keys(obj).map(k => {
       const v = obj[k];
-      if (v && typeof v === 'object')
+      if (v && typeof v === 'object') {
+        if (Array.isArray(v) && !v.length) return pad + k + ': []';
+        if (!Array.isArray(v) && !Object.keys(v).length) return pad + k + ': {}';
         return pad + k + ':\n' + toYaml(v, indent + 2);
-      return pad + k + ': ' + (v === null ? 'null' : String(v));
+      }
+      return pad + k + ': ' + yScalar(v);
     }).join('\n');
   }
 
@@ -87,23 +150,34 @@ KG.helm = (function () {
   }
 
   /* ---------- flag parsing ---------- */
+  // yeh flags agla token VALUE ke roop mein lete hain (warna woh value galti se positional arg ban jaati)
+  const VALUE_FLAGS = ['--version', '--timeout', '-o', '--output', '--kube-context', '--repo', '--description',
+    '--max', '--post-renderer', '--username', '--password', '--history-max', '--kubeconfig', '--show-only', '-s'];
+
   function parseFlags(toks, sim, print) {
-    const f = { values: {}, files: [], sets: [], flags: new Set(), namespace: 'default', revision: null, bad: null };
+    const f = { values: {}, files: [], sets: [], flags: new Set(), namespace: 'default', revision: null, bad: null, opts: {} };
     for (let i = 0; i < toks.length; i++) {
-      const t = toks[i];
+      let t = toks[i];
+      // --set=a=b · --values=x.yaml · -f=x.yaml · --namespace=prod → "flag value" jaisa
+      const eqm = t.match(/^(--set|--set-string|--values|-f|--namespace|-n|--revision)=(.*)$/);
+      let inlineVal = null;
+      if (eqm) { t = eqm[1]; inlineVal = eqm[2]; }
+      const next = () => (inlineVal != null ? inlineVal : toks[++i]);
       if (t === '-f' || t === '--values') {
-        const name = toks[++i];
+        const name = (next() || '').replace(/^\.\//, '');
         const vf = (sim.cluster.valuesFiles || {})[name];
-        if (vf === undefined) { f.bad = `Error: open ${name}: no such file or directory`; return f; }
+        if (vf === undefined) { f.bad = `Error: open ${name || '<file>'}: no such file or directory` + (Object.keys(sim.cluster.valuesFiles || {}).length ? `\n(available values files: ${Object.keys(sim.cluster.valuesFiles).join(', ')})` : ''); return f; }
         f.files.push(name);
         f.values = deepMerge(f.values, vf);
       } else if (t === '--set' || t === '--set-string') {
-        const expr = toks[++i];
-        if (expr) { f.sets.push(expr); setPath(f.values, expr); }
+        const expr = next();
+        if (expr) { f.sets.push(expr); setPath(f.values, expr, t === '--set-string'); }
       } else if (t === '-n' || t === '--namespace') {
-        f.namespace = toks[++i] || 'default';
+        f.namespace = next() || 'default';
       } else if (t === '--revision') {
-        f.revision = parseInt(toks[++i], 10);
+        f.revision = parseInt(next(), 10);
+      } else if (VALUE_FLAGS.includes(t)) {
+        f.opts[t.replace(/^-+/, '')] = toks[++i];
       } else if (t.startsWith('--')) {
         f.flags.add(t.slice(2));
       } else if (t.startsWith('-') && t.length > 1 && !/^-\d/.test(t)) {
@@ -118,6 +192,7 @@ KG.helm = (function () {
   }
 
   function findChart(sim, ref) {
+    if (!ref) return null;     // "helm template" bina chart ke → crash nahi, saaf error
     const charts = sim.cluster.charts || {};
     if (charts[ref]) return charts[ref];
     // "./shop" ~ "shop" ~ "bitnami/nginx" — thoda flexible raho
@@ -129,6 +204,13 @@ KG.helm = (function () {
   }
   function mergedValues(chart, userValues) {
     return deepMerge(chart.defaults || {}, userValues || {});
+  }
+
+  /* history mein naya revision — asli helm jaisa: naya 'deployed' aate hi purana
+     'deployed' → 'superseded' ban jaata hai (helm history ka STATUS column yahi dikhata hai) */
+  function pushHist(rel, entry) {
+    if (entry.status === 'deployed') rel.history.forEach(h => { if (h.status === 'deployed') h.status = 'superseded'; });
+    rel.history.push(entry);
   }
 
   /* ---------- release banana / badalna ---------- */
@@ -145,7 +227,7 @@ KG.helm = (function () {
       userValues: clone(userVals) || {},
       history: [{ revision: 1, updated: stamp(), status: 'deployed',
                   chart: chart.name + '-' + chart.version, appVersion: chart.appVersion || '1.0.0',
-                  description: 'Install complete',
+                  chartRef: chart._ref, description: 'Install complete',
                   values: clone(coalesced) || {}, userValues: clone(userVals) || {} }],
       notes: chart.notes || '',
     };
@@ -227,7 +309,9 @@ KG.helm = (function () {
 
     /* ---------------- list ---------------- */
     if (verb === 'list' || verb === 'ls') {
-      const rels = sim.cluster.releases;
+      // --keep-history se uninstall hui releases default list mein nahi dikhti (asli helm jaisa)
+      const showAll = f.flags.has('all') || f.flags.has('a') || f.flags.has('uninstalled');
+      const rels = sim.cluster.releases.filter(r => showAll || r.status !== 'uninstalled');
       if (!rels.length) { print('ok', 'NAME\tNAMESPACE\tREVISION\tUPDATED\tSTATUS\tCHART\tAPP VERSION\n(koi release nahi — "helm install" karo)'); return true; }
       print('ok', table([['NAME', 'NAMESPACE', 'REVISION', 'UPDATED', 'STATUS', 'CHART', 'APP VERSION'],
         ...rels.map(r => [r.name, r.namespace, r.revision, r.updated, r.status, r.chart, r.appVersion])]));
@@ -236,8 +320,13 @@ KG.helm = (function () {
 
     /* ---------------- install ---------------- */
     if (verb === 'install') {
-      const [name, chartRef] = a;
-      if (!name || !chartRef) { print('err', 'Error: must specify a release name and a chart\n(helm install <release> <chart>)'); return true; }
+      let [name, chartRef] = a;
+      if (f.flags.has('generate-name') && name && !chartRef) {
+        chartRef = name;
+        const ch = findChart(sim, chartRef);
+        name = (ch ? ch.name : chartRef.split('/').pop().replace(/^\.\//, '')) + '-' + String(Date.now()).slice(-10);
+      }
+      if (!name || !chartRef) { print('err', 'Error: must specify a release name and a chart\n(helm install <release> <chart>   ya   helm install <chart> --generate-name)'); return true; }
       if (findRelease(sim, name)) { print('err', `Error: INSTALLATION FAILED: cannot re-use a name that is still in use\n(chal raha hai — "helm upgrade ${name}" karo ya "helm uninstall ${name}")`); return true; }
       const chart = findChart(sim, chartRef);
       if (!chart) { print('err', `Error: failed to download "${chartRef}"\n(chart nahi mila — "ls" se local charts dekho, ya "helm repo add" + "helm search repo")`); return true; }
@@ -265,26 +354,55 @@ KG.helm = (function () {
     /* ---------------- upgrade ---------------- */
     if (verb === 'upgrade') {
       const [name, chartRef] = a;
+      if (!name || !chartRef) {
+        print('err', `Error: "helm upgrade" requires 2 arguments\n\nUsage:  helm upgrade [RELEASE] [CHART] [flags]` +
+          (name && findRelease(sim, name) && findRelease(sim, name).chartRef ? `\n(is release ka chart: ${findRelease(sim, name).chartRef})` : ''));
+        return true;
+      }
       let rel = findRelease(sim, name);
-      if (!rel) {
+      if (!rel || rel.status === 'uninstalled') {
         if (f.flags.has('install')) {
           const chart = findChart(sim, chartRef);
           if (!chart) { print('err', `Error: failed to download "${chartRef}"`); return true; }
+          if (chart.needsDeps && !chart._depsBuilt) {
+            print('err', 'Error: An error occurred while checking for chart dependencies. You may need to run `helm dependency build` to fetch missing dependencies: found in Chart.yaml, but missing in charts/ directory: ' +
+              (chart.deps || []).map(d => d.name).join(', '));
+            return true;
+          }
+          if (rel) sim.cluster.releases = sim.cluster.releases.filter(x => x !== rel);
           const r = newRelease(sim, chart, name, f.values, mergedValues(chart, f.values), f.namespace);
+          r.lastFiles = f.files.slice();
+          r.lastSets = f.sets.slice();
           if (chart.onInstall) chart.onInstall(sim, r);
-          print('ok', `Release "${name}" does not exist. Installing it now.\nNAME: ${name}\nSTATUS: deployed\nREVISION: 1`);
+          print('ok', `Release "${name}" does not exist. Installing it now.\nNAME: ${name}\nSTATUS: deployed\nREVISION: 1` +
+            (r.notes ? '\nNOTES:\n' + r.notes : ''));
           return true;
         }
-        print('err', `Error: UPGRADE FAILED: release: not found\n(--install flag se install-ya-upgrade dono ho jaate hain)`);
+        print('err', `Error: UPGRADE FAILED: "${name}" has no deployed releases\n(--install flag se install-ya-upgrade dono ho jaate hain)`);
         return true;
       }
-      if (rel.status === 'pending-upgrade' || rel.status === 'pending-install') {
+      if (rel.status === 'pending-upgrade' || rel.status === 'pending-install' || rel.status === 'pending-rollback') {
         print('err', `Error: UPGRADE FAILED: another operation (install/upgrade/rollback) is in progress\n` +
           `(release "${name}" ${rel.status} mein atki hai — "helm history ${name}" dekho, phir "helm rollback ${name}" se nikaalo)`);
         return true;
       }
-      const chart = findChart(sim, chartRef) || findChart(sim, rel.chartRef);
-      if (!chart) { print('err', `Error: failed to download "${chartRef}"`); return true; }
+      const chart = findChart(sim, chartRef);
+      if (!chart) {
+        print('err', `Error: failed to download "${chartRef}"` + (rel.chartRef ? `\n(is release ka chart: ${rel.chartRef} — wahi path do)` : ''));
+        return true;
+      }
+      if (chart.needsDeps && !chart._depsBuilt) {
+        print('err', 'Error: An error occurred while checking for chart dependencies. You may need to run `helm dependency build`: missing in charts/ directory: ' +
+          (chart.deps || []).map(d => d.name).join(', '));
+        return true;
+      }
+      if (f.flags.has('dry-run')) {
+        const reuseDry = f.flags.has('reuse-values');
+        const valsDry = deepMerge(reuseDry ? rel.values : (chart.defaults || {}), f.values);
+        print('ok', `Release "${name}" has been upgraded (dry run). Happy Helming!\nNAME: ${name}\nSTATUS: pending-upgrade\nREVISION: ${rel.revision + 1}\nMANIFEST:\n` +
+          (chart.render ? chart.render(valsDry, rel) : '(no templates)') + '\n\n(--dry-run: kuch badla NAHI — sirf render karke dikhaya)');
+        return true;
+      }
       const prev = clone(rel);
       // --reuse-values = purani values base; default = chart defaults + naye -f/--set
       const reuse = f.flags.has('reuse-values');
@@ -301,27 +419,38 @@ KG.helm = (function () {
       rel.status = 'deployed';
       rel.lastFiles = f.files.slice();
       rel.lastSets = f.sets.slice();
-      rel.history.push({ revision: rel.revision, updated: rel.updated, status: 'deployed',
-        chart: rel.chart, appVersion: rel.appVersion,
+      const entry = { revision: rel.revision, updated: rel.updated, status: 'deployed',
+        chart: rel.chart, appVersion: rel.appVersion, chartRef: rel.chartRef,
         description: 'Upgrade complete' + (f.files.length ? ' (-f ' + f.files.join(' -f ') + ')' : '') +
           (f.sets.length ? ' (--set ' + f.sets.join(' --set ') + ')' : ''),
-        values: clone(vals), userValues: clone(userVals) });
+        values: clone(vals), userValues: clone(userVals) };
       let failed = false;
       if (chart.onUpgrade) failed = chart.onUpgrade(sim, rel, prev) === false;
       if (failed) {
-        rel.status = f.flags.has('atomic') ? 'deployed' : 'failed';
-        rel.history[rel.history.length - 1].status = 'failed';
-        rel.history[rel.history.length - 1].description = 'Upgrade "' + name + '" failed';
+        // asli helm: naya revision 'failed', purana 'deployed' waisa hi rehta hai
+        entry.status = 'failed';
+        entry.description = 'Upgrade "' + name + '" failed: timed out waiting for the condition';
+        rel.history.push(entry);
+        rel.status = 'failed';
         if (f.flags.has('atomic')) {
-          // atomic = fail par khud rollback
-          const target = rel.history[rel.history.length - 2];
+          // atomic = fail par khud rollback — AAKHRI SAFAL (deployed/superseded) revision par
+          const target = [...rel.history].reverse().find(h => h.status === 'deployed' || h.status === 'superseded');
+          if (!target) {
+            print('err', 'Error: UPGRADE FAILED: unable to find a previously successful release when attempting to rollback');
+            return true;
+          }
+          rel.history.forEach(h => { if (h.revision === rel.revision) h.status = 'superseded'; });
           rel.revision += 1;
           rel.values = clone(target.values);
           rel.userValues = clone(target.userValues || {});
+          rel.chart = target.chart;
+          rel.appVersion = target.appVersion;
+          if (target.chartRef) rel.chartRef = target.chartRef;
           rel.updated = stamp();
-          rel.history.push({ revision: rel.revision, updated: rel.updated, status: 'deployed',
-            chart: target.chart, appVersion: target.appVersion,
-            description: 'Rollback to ' + target.revision + ' (--atomic)',
+          rel.status = 'deployed';
+          pushHist(rel, { revision: rel.revision, updated: rel.updated, status: 'deployed',
+            chart: target.chart, appVersion: target.appVersion, chartRef: target.chartRef,
+            description: 'Rollback to ' + target.revision,
             values: clone(target.values), userValues: clone(target.userValues || {}) });
           if (chart.onRollback) chart.onRollback(sim, rel, target);
           print('err', `Error: UPGRADE FAILED: timed out waiting for the condition\n` +
@@ -332,6 +461,7 @@ KG.helm = (function () {
           `(release ab "failed" hai — "helm rollback ${name}" se wapas jao. --atomic hota toh yeh khud ho jaata!)`);
         return true;
       }
+      pushHist(rel, entry);
       print('ok', `Release "${name}" has been upgraded. Happy Helming!\nNAME: ${name}\nSTATUS: deployed\nREVISION: ${rel.revision}`);
       return true;
     }
@@ -341,18 +471,25 @@ KG.helm = (function () {
       const name = a[0];
       const rel = findRelease(sim, name);
       if (!rel) { print('err', 'Error: release: not found'); return true; }
-      let target = a[1] ? rel.history.find(h => h.revision === parseInt(a[1], 10))
-                        : [...rel.history].reverse().find(h => h.revision < rel.revision && h.status !== 'failed');
-      if (!target) { print('err', `Error: release has no ${a[1] ? 'revision ' + a[1] : 'previous good revision'}`); return true; }
+      // asli helm (pkg/action/rollback.go): revision na do toh target = current - 1 (status jo bhi ho)
+      const want = a[1] && a[1] !== '0' ? parseInt(a[1], 10) : rel.revision - 1;
+      const target = rel.history.find(h => h.revision === want);
+      if (!target) {
+        print('err', `Error: release has no ${want} version` + (want < 1 ? '  (sirf ek hi revision hai — rollback ke liye pichla revision chahiye)' : `\n("helm history ${name}" se revisions dekho)`));
+        return true;
+      }
+      // jo abhi current hai (failed/pending bhi ho) woh 'superseded'
+      rel.history.forEach(h => { if (h.revision === rel.revision) h.status = 'superseded'; });
       rel.revision += 1;
       rel.values = clone(target.values);
       rel.userValues = clone(target.userValues || {});
       rel.chart = target.chart;
       rel.appVersion = target.appVersion;
+      if (target.chartRef) rel.chartRef = target.chartRef;
       rel.status = 'deployed';
       rel.updated = stamp();
-      rel.history.push({ revision: rel.revision, updated: rel.updated, status: 'deployed',
-        chart: target.chart, appVersion: target.appVersion,
+      pushHist(rel, { revision: rel.revision, updated: rel.updated, status: 'deployed',
+        chart: target.chart, appVersion: target.appVersion, chartRef: target.chartRef,
         description: 'Rollback to ' + target.revision,
         values: clone(target.values), userValues: clone(target.userValues || {}) });
       const chart = findChart(sim, rel.chartRef);
@@ -382,12 +519,21 @@ KG.helm = (function () {
     /* ---------------- uninstall ---------------- */
     if (verb === 'uninstall' || verb === 'delete' || verb === 'del') {
       const rel = findRelease(sim, a[0]);
-      if (!rel) { print('err', `Error: uninstall: Release not loaded: ${a[0] || ''}`); return true; }
-      sim.cluster.releases = sim.cluster.releases.filter(r => r !== rel);
+      if (!rel || rel.status === 'uninstalled') { print('err', `Error: uninstall: Release not loaded: ${a[0] || ''}: release: not found`); return true; }
+      const keep = f.flags.has('keep-history');
+      if (keep) {
+        // release record bacha rehta hai (status uninstalled) — "helm history" + "helm rollback" kaam karte hain
+        rel.status = 'uninstalled';
+        const last = rel.history[rel.history.length - 1];
+        if (last) { last.status = 'uninstalled'; last.description = 'Uninstallation complete'; }
+      } else {
+        sim.cluster.releases = sim.cluster.releases.filter(r => r !== rel);
+      }
       const chart = findChart(sim, rel.chartRef);
       if (chart && chart.onUninstall) chart.onUninstall(sim, rel);
       print('ok', `release "${rel.name}" uninstalled` +
-        (f.flags.has('keep-history') ? '' : '\n(history bhi gayi — "--keep-history" se bachti hai)'));
+        (keep ? '\n(--keep-history: release ki history bachi hai — "helm list --uninstalled" se dikhegi, "helm rollback" se wapas la sakte ho)'
+              : '\n(history bhi gayi — "--keep-history" se bachti hai)'));
       return true;
     }
 
@@ -422,16 +568,28 @@ KG.helm = (function () {
 
     /* ---------------- template / lint / show ---------------- */
     if (verb === 'template') {
-      const chart = findChart(sim, a[0] || a[1]);
-      if (!chart) { print('err', `Error: failed to download "${a[0] || ''}"`); return true; }
+      // asli syntax: helm template [NAME] [CHART] — ek arg = chart, do args = naam + chart
+      if (!a.length) { print('err', 'Error: "helm template" requires at least 1 argument\n\nUsage:  helm template [NAME] [CHART] [flags]'); return true; }
+      const relName = a.length >= 2 ? a[0] : 'release-name';
+      const chartRef = a.length >= 2 ? a[1] : a[0];
+      const chart = findChart(sim, chartRef);
+      if (!chart) { print('err', `Error: failed to download "${chartRef}"` + (Object.keys(sim.cluster.charts || {}).length ? `\n(is mission ke charts: ${Object.keys(sim.cluster.charts).join(', ')})` : '')); return true; }
+      if (chart.needsDeps && !chart._depsBuilt) {
+        print('err', 'Error: found in Chart.yaml, but missing in charts/ directory: ' + (chart.deps || []).map(d => d.name).join(', ') +
+          '\n("helm dependency update ' + chartRef + '" pehle chalao)');
+        return true;
+      }
       const vals = mergedValues(chart, f.values);
-      print('ok', chart.render ? chart.render(vals, { name: a[0] && a[1] ? a[0] : 'release-name', namespace: f.namespace })
+      print('ok', chart.render ? chart.render(vals, { name: relName, namespace: f.namespace })
         : '(is chart ka render is mission mein define nahi)');
       return true;
     }
     if (verb === 'lint') {
-      const chart = findChart(sim, a[0]);
-      if (!chart) { print('err', `Error: failed to download "${a[0] || ''}"`); return true; }
+      // "helm lint" bina path ke = current dir; mission mein ek hi local chart ho toh wahi
+      const locals = Object.keys(sim.cluster.charts || {}).filter(k => k.startsWith('./'));
+      const ref = a[0] || (locals.length === 1 ? locals[0] : null);
+      const chart = findChart(sim, ref);
+      if (!chart) { print('err', `Error: failed to download "${a[0] || '.'}"`); return true; }
       print(chart.lintFailed ? 'err' : 'ok', (chart.lint || ['==> Linting ' + a[0], '', '1 chart(s) linted, 0 chart(s) failed']).join('\n'));
       return true;
     }
@@ -451,6 +609,8 @@ KG.helm = (function () {
     /* ---------------- dependency ---------------- */
     if (verb === 'dependency' || verb === 'dep') {
       const sub = a[0];
+      const locals = Object.keys(sim.cluster.charts || {}).filter(k => k.startsWith('./'));
+      if (!a[1] && locals.length === 1) a[1] = locals[0];   // "helm dep update" = current dir
       const chart = findChart(sim, a[1]);
       if (!chart) { print('err', `Error: chart "${a[1] || ''}" nahi mila`); return true; }
       if (sub === 'list' || sub === 'ls') {
@@ -483,10 +643,13 @@ KG.helm = (function () {
 
     /* ---------------- diff (plugin) ---------------- */
     if (verb === 'diff') {
-      const rel = findRelease(sim, a[1]);
-      if (!rel) { print('err', 'Error: release: not found'); return true; }
-      const chart = findChart(sim, a[2]) || findChart(sim, rel.chartRef);
-      const next = deepMerge(chart ? (chart.defaults || {}) : {}, f.values);
+      // helm diff upgrade <rel> <chart>   (purana alias: helm diff <rel> <chart>)
+      const da = a[0] === 'upgrade' ? a.slice(1) : a;
+      const rel = findRelease(sim, da[0]);
+      if (!rel) { print('err', 'Error: release: not found' + (da[0] ? '' : '\n(usage: helm diff upgrade <release> <chart> [-f values.yaml])')); return true; }
+      const chart = da[1] ? findChart(sim, da[1]) : findChart(sim, rel.chartRef);
+      if (!chart) { print('err', `Error: failed to download "${da[1]}"`); return true; }
+      const next = deepMerge(f.flags.has('reuse-values') ? rel.values : (chart.defaults || {}), f.values);
       const before = toYaml(rel.values).split('\n');
       const after = toYaml(next).split('\n');
       const out = ['default, ' + rel.name + ', Deployment (apps) has changed:'];
@@ -507,7 +670,8 @@ KG.helm = (function () {
       return true;
     }
     if (verb === 'push') {
-      const [tgz, dest] = a;
+      const dest = a[1];
+      const tgz = (a[0] || '').split('/').pop();
       if (!(sim.cluster.packages || []).includes(tgz)) {
         print('err', `Error: open ${tgz || '<file>'}: no such file or directory\n(pehle "helm package <chart>" karo)`);
         return true;

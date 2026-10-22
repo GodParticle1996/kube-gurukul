@@ -49,6 +49,23 @@ function showHome() {
     <p>Docker aata hai? Perfect. Ab cluster ki duniya — level by level, hands-on, Hinglish mein.</p>`);
   appEl.appendChild(hero);
 
+  // ▶ beech mein chhoda level — sabse upar, ek click mein wahin se
+  const res = KG.getResume();
+  if (res) {
+    const total = allStages(res.level).length;
+    const at = Math.min(res.stageIdx, total);
+    const card = el('section', 'resume-card clickable', `
+      <div class="rs-icon">▶</div>
+      <div class="rs-body">
+        <div class="rs-title">Wahin se continue karo: ${res.level.icon} ${res.level.title}</div>
+        <div class="rs-sub">${at >= total ? 'Saare challenges ho gaye — bas level khatam karna baaki hai 🏁' : `Challenge ${at + 1} / ${total} · ${res.firstTry}/${res.total} first-try sahi ab tak`}</div>
+        <div class="rs-bar"><div class="rs-fill" style="width:${Math.round((at / Math.max(1, total)) * 100)}%"></div></div>
+      </div>
+      <div class="rs-go">Chalo →</div>`);
+    card.onclick = () => resumeLevel(res);
+    appEl.appendChild(card);
+  }
+
   // dojo + streak strip
   const due = KG.dueCards();
   const deckSize = Object.keys(KG.state.dojo).length;
@@ -135,17 +152,20 @@ function showTrack(track) {
   appEl.appendChild(head);
 
   const levels = KG.levelsOf(track);
+  const res = KG.getResume();
   const map = el('section', 'levelmap');
   levels.forEach((lvl, i) => {
     const done = KG.state.completed.includes(lvl.id);
-    const unlocked = i === 0 || KG.state.completed.includes(levels[i - 1].id);
+    // complete kiya hua level hamesha khula (beech mein naya level judne par bhi replay ho sake)
+    const unlocked = i === 0 || done || KG.state.completed.includes(levels[i - 1].id);
     const stars = KG.state.stars[lvl.id] || 0;
-    const card = el('div', 'levelcard' + (done ? ' done' : '') + (unlocked ? '' : ' locked'));
+    const resumeHere = res && res.levelId === lvl.id;
+    const card = el('div', 'levelcard' + (done ? ' done' : '') + (unlocked ? '' : ' locked') + (resumeHere ? ' resuming' : ''));
     card.innerHTML = `
       <div class="lv-num">${unlocked ? `LEVEL ${i + 1}` : '🔒 LOCKED'}</div>
       <div class="lv-icon">${lvl.icon}</div>
       <div class="lv-title">${lvl.title}</div>
-      <div class="lv-stars">${done ? '★'.repeat(stars) + '☆'.repeat(3 - stars) : unlocked ? '▶ Khelo' : 'Pichla level pehle'}</div>
+      <div class="lv-stars">${resumeHere ? `▶ Challenge ${Math.min(res.stageIdx, allStages(lvl).length - 1) + 1} se continue` : done ? '★'.repeat(stars) + '☆'.repeat(3 - stars) : unlocked ? '▶ Khelo' : 'Pichla level pehle'}</div>
       ${done ? `<div class="lv-badge">🏅 ${lvl.badge}</div>` : ''}`;
     if (unlocked) card.onclick = () => showIntro(lvl);
     map.appendChild(card);
@@ -196,7 +216,10 @@ function showIntro(level) {
   const row = el('div', 'btnrow');
   const back = el('button', 'btn ghost', '← Level map');
   back.onclick = () => showTrack(track);
-  const start = el('button', 'btn big', `🎮 Shuru karo (${totalStages} challenges)`);
+  const res = KG.getResume();
+  const resumeHere = res && res.levelId === level.id && res.stageIdx > 0;
+  const start = el('button', resumeHere ? 'btn ghost' : 'btn big',
+    resumeHere ? '↺ Shuru se karo' : `🎮 Shuru karo (${totalStages} challenges)`);
   start.onclick = () => {
     KG.state.levelStarts++;
     KG.saveState();
@@ -211,9 +234,24 @@ function showIntro(level) {
     else begin();
   };
   row.append(back, start);
+  if (resumeHere) {
+    const cont = el('button', 'btn big', `▶ Challenge ${Math.min(res.stageIdx, totalStages - 1) + 1}/${totalStages} se continue karo`);
+    cont.onclick = () => resumeLevel(res);
+    row.appendChild(cont);
+  }
   wrap.appendChild(row);
   appEl.appendChild(wrap);
   window.scrollTo(0, 0);
+}
+
+/* ▶ resume — checkpoint se session wapas banao (stage list badal gayi ho toh clamp) */
+function resumeLevel(res) {
+  const stages = allStages(res.level);
+  KG.session = { level: res.level, stageIdx: Math.max(0, Math.min(res.stageIdx, stages.length)),
+                 firstTry: res.firstTry || 0, total: res.total || 0,
+                 replay: res.replay || KG.state.completed.includes(res.level.id) };
+  if (KG.session.stageIdx >= stages.length) levelComplete();
+  else runStage();
 }
 
 /* ============================================================
@@ -284,6 +322,7 @@ function runStage() {
   const stage = stages[stageIdx];
   appEl.innerHTML = '';
   window.scrollTo(0, 0);
+  KG.saveResume(KG.session, stageIdx);   // beech mein chhoda toh agli baar isi challenge se
 
   const isIv = stage.type === 'interview';
   const wrap = el('section', 'panel' + (stage.bonus ? ' bonus-panel' : '') + (isIv ? ' iv-panel' : ''));
@@ -326,6 +365,7 @@ function stageDone(stats, wrap) {
   KG.session.firstTry += stats.firstTry;
   KG.session.total += stats.total;
   const stages = allStages(KG.session.level);
+  KG.saveResume(KG.session, KG.session.stageIdx + 1);   // yeh challenge ho gaya — agli baar agle se
   const perfect = stats.total > 0 && stats.firstTry === stats.total;
   if (perfect) KG.addXP(KG.PERFECT_BONUS);
 
@@ -437,6 +477,7 @@ function levelComplete() {
     KG.state.completed.push(level.id);
     KG.enrollLevelCards(level);
   }
+  if (KG.state.resume && KG.state.resume.levelId === level.id) KG.state.resume = null;
   KG.state.stars[level.id] = Math.max(KG.state.stars[level.id] || 0, stars);
   KG.touchStreak();
   KG.saveState();

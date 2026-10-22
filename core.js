@@ -71,6 +71,7 @@ KG.defaultState = function () {
     dojo: {},             // cardId -> { box, due (ms), front, back, tag }
     streak: { last: null, count: 0, best: 0 },
     levelStarts: 0,       // for pop-quiz cadence
+    resume: null,         // { levelId, stageIdx, firstTry, total, replay, at } — beech mein chhoda level
   };
 };
 
@@ -84,7 +85,10 @@ KG.loadState = function () {
   } catch (e) { /* corrupted store — start fresh */ }
   return KG.defaultState();
 };
-KG.saveState = function () { localStorage.setItem(KG.STORE_KEY, JSON.stringify(KG.state)); };
+KG.saveState = function () {
+  try { localStorage.setItem(KG.STORE_KEY, JSON.stringify(KG.state)); }
+  catch (e) { /* storage full / private mode / blocked — app chalta rahe, bas save nahi hoga */ }
+};
 KG.state = KG.loadState();
 
 /* ---------------- DOM helpers ---------------- */
@@ -224,6 +228,36 @@ KG.harvestQuestions = function () {
   return qs;
 };
 
+/* ---------------- resume-anywhere (ADHD-friendly) ----------------
+   Level beech mein chhoda? Har challenge ke shuru aur khatam par checkpoint
+   save hota hai — agli baar wahin se. { levelId, stageIdx, firstTry, total, replay, at } */
+KG.saveResume = function (sess, stageIdx) {
+  if (!sess || !sess.level) return;
+  KG.state.resume = { levelId: sess.level.id, stageIdx, firstTry: sess.firstTry, total: sess.total,
+                      replay: !!sess.replay, at: Date.now() };
+  KG.saveState();
+};
+KG.clearResume = function () {
+  if (!KG.state.resume) return;
+  KG.state.resume = null;
+  KG.saveState();
+};
+KG.findLevel = function (id) {
+  for (const t of KG.tracks) {
+    const l = (KG.levelSets[t.id] || []).find(x => x.id === id);
+    if (l) return l;
+  }
+  return null;
+};
+/* resume valid hai? (level abhi bhi maujood ho) → { level, ...resume } ya null */
+KG.getResume = function () {
+  const r = KG.state.resume;
+  if (!r || !r.levelId) return null;
+  const level = KG.findLevel(r.levelId);
+  if (!level) return null;
+  return Object.assign({ level }, r);
+};
+
 /* ---------------- track helpers ---------------- */
 KG.trackOf = function (level) {
   return KG.tracks.find(t => (KG.levelSets[t.id] || []).includes(level));
@@ -236,6 +270,9 @@ KG.trackProgress = function (track) {
 };
 KG.trackUnlocked = function (track) {
   if (track.alwaysUnlocked) return true;          // side-track (jaise Helm) — kabhi bhi khelo
+  // is track mein pehle se kuch complete hai? toh khula rehna chahiye — pichle track mein
+  // baad mein naya level judne se learner ka chal raha track band nahi hona chahiye
+  if (KG.levelsOf(track).some(l => KG.state.completed.includes(l.id))) return true;
   const idx = KG.tracks.indexOf(track);
   // pichla SEQUENTIAL track dhundo (always-unlocked wale beech mein aayein toh unhe chhod do)
   for (let i = idx - 1; i >= 0; i--) {

@@ -592,7 +592,8 @@ t('helm: history STATUS asli jaisa — superseded / failed / rollback', () => {
   run(sim, 'helm rollback a');               // bina revision = current-1 (asli helm)
   const rel = sim.cluster.releases[0];
   h = rel.history.map(x => x.status).join(',');
-  assert(rel.revision === 4 && rel.values.r === 2 && h === 'superseded,superseded,superseded,deployed', 'rollback: ' + h);
+  // asli helm v3.16 (kind par chala ke dekha): failed revision rollback ke baad bhi 'failed' rehta hai
+  assert(rel.revision === 4 && rel.values.r === 2 && h === 'superseded,superseded,failed,deployed', 'rollback: ' + h);
   assert(/Rollback to 2/.test(rel.history[3].description), 'description');
 });
 t('helm: --set typing asli helm (strvals) jaisa — float string rehta hai', () => {

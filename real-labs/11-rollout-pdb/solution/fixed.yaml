@@ -1,0 +1,13 @@
+# Lab 11 — SOLUTION (Part A): replicas 3 + PDB maxUnavailable: 1
+# minAvailable = replicas  →  disruptionsAllowed = 0  →  drain HAMESHA atkega
+# maxUnavailable: 1        →  replicas kitne bhi hon, ek-ek karke maintenance ho sakti hai
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: checkout-pdb
+  namespace: lab11
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: checkout

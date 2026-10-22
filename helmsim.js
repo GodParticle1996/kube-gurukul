@@ -429,7 +429,7 @@ KG.helm = (function () {
       if (failed) {
         // asli helm: naya revision 'failed', purana 'deployed' waisa hi rehta hai
         entry.status = 'failed';
-        entry.description = 'Upgrade "' + name + '" failed: timed out waiting for the condition';
+        entry.description = 'Upgrade "' + name + '" failed: context deadline exceeded';
         rel.history.push(entry);
         rel.status = 'failed';
         if (f.flags.has('atomic')) {
@@ -439,7 +439,7 @@ KG.helm = (function () {
             print('err', 'Error: UPGRADE FAILED: unable to find a previously successful release when attempting to rollback');
             return true;
           }
-          rel.history.forEach(h => { if (h.revision === rel.revision) h.status = 'superseded'; });
+          // (failed revision 'failed' hi rehta hai — asli helm sirf purane 'deployed' ko superseded karta hai)
           rel.revision += 1;
           rel.values = clone(target.values);
           rel.userValues = clone(target.userValues || {});
@@ -453,11 +453,11 @@ KG.helm = (function () {
             description: 'Rollback to ' + target.revision,
             values: clone(target.values), userValues: clone(target.userValues || {}) });
           if (chart.onRollback) chart.onRollback(sim, rel, target);
-          print('err', `Error: UPGRADE FAILED: timed out waiting for the condition\n` +
-            `(--atomic laga tha → automatic rollback ho gaya, revision ${rel.revision} = purana state ✓)`);
+          print('err', `Error: UPGRADE FAILED: release ${name} failed, and has been rolled back due to atomic being set: context deadline exceeded\n` +
+            `(--atomic laga tha → automatic rollback ho gaya, revision ${rel.revision} = revision ${target.revision} ki copy ✓)`);
           return true;
         }
-        print('err', `Error: UPGRADE FAILED: timed out waiting for the condition\n` +
+        print('err', `Error: UPGRADE FAILED: context deadline exceeded\n` +
           `(release ab "failed" hai — "helm rollback ${name}" se wapas jao. --atomic hota toh yeh khud ho jaata!)`);
         return true;
       }
@@ -478,8 +478,8 @@ KG.helm = (function () {
         print('err', `Error: release has no ${want} version` + (want < 1 ? '  (sirf ek hi revision hai — rollback ke liye pichla revision chahiye)' : `\n("helm history ${name}" se revisions dekho)`));
         return true;
       }
-      // jo abhi current hai (failed/pending bhi ho) woh 'superseded'
-      rel.history.forEach(h => { if (h.revision === rel.revision) h.status = 'superseded'; });
+      // asli helm (kind cluster par test kiya): successful rollback sirf purane 'deployed' revisions ko
+      // 'superseded' karta hai — 'failed' / 'pending-upgrade' wala revision history mein waisa hi rehta hai
       rel.revision += 1;
       rel.values = clone(target.values);
       rel.userValues = clone(target.userValues || {});

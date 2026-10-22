@@ -1,0 +1,14 @@
+# Lab 12 — SOLUTION: headless Service (clusterIP: None)
+# Normal Service = ek virtual IP (load-balanced). Headless = koi VIP nahi — DNS seedha pod IPs deta hai,
+# aur StatefulSet ke har pod ko apna naam milta hai: kv-0.kv-headless.lab12.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: kv-headless
+  namespace: lab12
+spec:
+  clusterIP: None
+  selector:
+    app: kv
+  ports:
+    - port: 8080

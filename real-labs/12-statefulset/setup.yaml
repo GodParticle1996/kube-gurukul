@@ -1,0 +1,77 @@
+# =====================================================================
+#  Lab 12 — StatefulSet: stable naam + apni disk (headless Service · PVC)
+#  Shuru:  kubectl apply -f setup.yaml
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab12
+---
+# "Normal" Service — load-balanced (koi bhi replica)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kv
+  namespace: lab12
+spec:
+  selector:
+    app: kv
+  ports:
+    - port: 8080
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kv
+  namespace: lab12
+spec:
+  serviceName: kv-headless            # ⚠️ is naam ki headless Service honi chahiye (per-pod DNS isi se banta hai)
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kv
+  template:
+    metadata:
+      labels:
+        app: kv
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: kv
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "$(date +%T) — $(hostname) start hua" >> /data/boot.log
+              exec httpd -f -h /data -p 8080
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 10m, memory: 8Mi }
+            limits: { memory: 16Mi }
+  volumeClaimTemplates:               # har pod ki APNI PVC: data-kv-0, data-kv-1
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 100Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  namespace: lab12
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: c
+      image: busybox:1.36
+      command: ["sleep", "86400"]
+      resources:
+        requests: { cpu: 10m, memory: 8Mi }
+        limits: { memory: 16Mi }

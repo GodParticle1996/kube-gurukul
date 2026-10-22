@@ -1,0 +1,62 @@
+# =====================================================================
+#  Lab 11 — Safe changes: rollout · rollback · PDB · node drain
+#  Shuru:  kubectl apply -f setup.yaml
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab11
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout
+  namespace: lab11
+spec:
+  replicas: 2
+  progressDeadlineSeconds: 60          # demo: 1 min mein rollout aage na badhe toh "fail" maana jaaye
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0                # ek bhi purana pod tab tak nahi hatega jab tak naya READY na ho
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: checkout
+  template:
+    metadata:
+      labels:
+        app: checkout
+    spec:
+      terminationGracePeriodSeconds: 2
+      topologySpreadConstraints:       # replicas alag nodes par (ek node gire toh sab na girein)
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: checkout
+      containers:
+        - name: web
+          image: busybox:1.36
+          command: ["sh", "-c", "mkdir -p /w && echo checkout-v1 > /w/index.html && exec httpd -f -h /w -p 8080"]
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 3
+          resources:
+            requests: { cpu: 20m, memory: 16Mi }
+            limits: { memory: 32Mi }
+---
+# "Hamesha 2 pods chahiye" — sunne mein safe lagta hai...
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: checkout-pdb
+  namespace: lab11
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: checkout

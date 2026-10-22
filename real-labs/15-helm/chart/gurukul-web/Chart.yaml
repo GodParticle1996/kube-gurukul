@@ -1,0 +1,6 @@
+apiVersion: v2
+name: gurukul-web
+description: KubeGurukul Lab 15 — ek chhota web app chart (busybox httpd)
+type: application
+version: 0.1.0          # CHART ka version — chart badlo toh yeh badhao
+appVersion: "1.36"      # APP (image) ka version — default image tag yahi

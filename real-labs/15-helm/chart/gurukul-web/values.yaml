@@ -1,0 +1,19 @@
+# gurukul-web — default values (sabse KAMZOR level: -f files aur --set inhe override karte hain)
+replicaCount: 1
+
+image:
+  repository: busybox
+  tag: ""               # khaali → Chart.yaml ka appVersion use hoga
+  pullPolicy: IfNotPresent
+
+message: "namaste from helm"
+
+service:
+  port: 80
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 8Mi
+  limits:
+    memory: 16Mi

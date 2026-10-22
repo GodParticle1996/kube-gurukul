@@ -1,0 +1,42 @@
+# =====================================================================
+#  Lab 14 — "Terminating" mein atka hai! (finalizers)
+#  Shuru:  kubectl apply -f setup.yaml
+#  Kahani: ek purana "cache-controller" uninstall ho chuka hai — par uske finalizers objects par reh gaye.
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab14
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orders-cache
+  namespace: lab14
+  finalizers:
+    - gurukul.dev/flush-cache        # "delete se pehle cache flush karna" — yeh kaam ab koi nahi karega
+data:
+  entries: "1200"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keep-me
+  namespace: lab14
+data:
+  note: "isse mat chhedna 🙂"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab14-legacy
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: legacy-cache
+  namespace: lab14-legacy
+  finalizers:
+    - gurukul.dev/flush-cache
+data:
+  entries: "77"

@@ -1,0 +1,9 @@
+# Production overrides — git mein rakho, PR review ke saath badlo
+replicaCount: 3
+message: "prod: namaste 🙏"
+resources:
+  requests:
+    cpu: 20m
+    memory: 16Mi
+  limits:
+    memory: 32Mi

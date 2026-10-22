@@ -1,0 +1,7 @@
+🎉 {{ .Release.Name }} deploy ho gaya (revision {{ .Release.Revision }})!
+
+Andar se check:
+  kubectl -n {{ .Release.Namespace }} run curl --rm -it --image=busybox:1.36 --restart=Never -- wget -qO- http://{{ include "gurukul-web.fullname" . }}
+
+Values dekho:   helm get values {{ .Release.Name }} -n {{ .Release.Namespace }}
+History:        helm history {{ .Release.Name }} -n {{ .Release.Namespace }}

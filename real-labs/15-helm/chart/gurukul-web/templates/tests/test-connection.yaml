@@ -1,0 +1,19 @@
+# helm test <release> — yeh pod Service ko hit karta hai; exit 0 = test pass
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "gurukul-web.fullname" . }}-test"
+  labels:
+    {{- include "gurukul-web.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: wget
+      image: busybox:1.36
+      command: ["sh", "-c"]
+      args:
+        - |
+          wget -qO- -T 5 http://{{ include "gurukul-web.fullname" . }}:{{ .Values.service.port }} | grep -qF {{ .Values.message | squote }}

@@ -1,0 +1,67 @@
+# Lab 13 — SOLUTION
+# db-migrate: config theek + Job DOBARA banao (fail hua Job khud dobara nahi chalta; template immutable hai)
+#   kubectl -n lab13 delete job db-migrate && kubectl apply -f solution/fixed.yaml
+# report: overlap band (Forbid) + har run ki time-limit (activeDeadlineSeconds)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-config
+  namespace: lab13
+data:
+  TARGET: "v42"                         # ✅
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  namespace: lab13
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              if [ -z "$TARGET" ]; then echo "ERROR: TARGET schema version nahi diya — migration ruk gayi"; exit 1; fi
+              echo "migrating schema → $TARGET ..."; sleep 3; echo "✅ migration done ($TARGET)"
+          env:
+            - name: TARGET
+              valueFrom:
+                configMapKeyRef:
+                  name: migrate-config
+                  key: TARGET
+          resources:
+            requests: { cpu: 10m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: report
+  namespace: lab13
+spec:
+  schedule: "*/1 * * * *"
+  concurrencyPolicy: Forbid             # ✅ pichla chal raha hai toh naya SKIP
+  startingDeadlineSeconds: 30           # schedule miss hua toh 30s ke andar hi start, warna skip
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 120        # ✅ koi bhi run 2 min se zyada nahi (atki hui report hamesha ke liye na chale)
+      template:
+        spec:
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 1
+          containers:
+            - name: report
+              image: busybox:1.36
+              command: ["sh", "-c", "echo \"$(date +%T) report shuru\"; sleep 90; echo \"$(date +%T) report done\""]
+              resources:
+                requests: { cpu: 10m, memory: 8Mi }
+                limits: { memory: 16Mi }

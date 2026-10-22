@@ -461,6 +461,7 @@ kubectl logs &lt;pod-name&gt;        # container ke logs (stdout)</pre>`,
           'Pods kaunse node par? kubectl get pods -o wide',
           'Kundli kholo: kubectl describe pod web-7d4f8b9c6d-x2k4p (naam ka shuru bhi kaafi hai: describe pod web)',
         ],
+        solution: ['kubectl get nodes', 'kubectl get pods -o wide', 'kubectl describe pod web-7d4f8b9c6d-x2k4p'],
       },
       {
         type: 'quiz',
@@ -538,6 +539,7 @@ kubectl logs &lt;pod-name&gt;        # container ke logs (stdout)</pre>`,
             success: s => s.history.some(h => /^(kubectl|k) logs payments/.test(h)),
             successText: 'Mila! <b>payments</b> pod ne 3 baar restart kiya tha — shuruaat mein DB ready nahi tha, isliye crash hota raha; ab "recovered" hai. Pro-tip jo tumne use kiya: current logs OK dikhe toh <code>kubectl logs --previous</code> se PICHHLI crash ke logs milte hain. Interviewer: "Hired." 😎',
             hints: ['kubectl get pods — RESTARTS column par nazar', 'kubectl logs payments-def456-bbb (ya bas: logs payments)', 'Crash ki wajah dekhni ho toh: kubectl logs payments --previous'],
+            solution: ['kubectl get pods', 'kubectl logs payments-def456-bbb'],
           },
         },
       ],
@@ -675,6 +677,7 @@ kubectl get pods -A -o wide           # -A = saare namespaces
           'kubectl logs web-6f9c5b7d8e-p4tj2 (ya: logs web) → error message padho',
           '"DB_HOST env var not set" = config missing. ls karke dekho — kaunsi file env var ADD karti hai? kubectl apply -f fix-env.yaml',
         ],
+        solution: ['kubectl get pods', 'kubectl logs web-6f9c5b7d8e-p4tj2', 'ls', 'kubectl apply -f fix-env.yaml'],
       },
       {
         type: 'fill',
@@ -869,6 +872,7 @@ Control knobs:
           'kubectl describe pod web-9x8y7z6w5v-ccc33 → Events mein image ka naam dhyan se padho (v21? 🤔)',
           'Fix: kubectl rollout undo deployment/web',
         ],
+        solution: ['kubectl get pods', 'kubectl describe pod web-9x8y7z6w5v-ccc33', 'kubectl rollout undo deployment/web'],
       },
       {
         type: 'quiz',
@@ -1070,6 +1074,7 @@ kubectl delete deployment web              # safai</pre>
           'kubectl describe svc web-svc → Selector padho. Phir kubectl describe pod web → Labels padho. Farak dikha?',
           'Selector galat hai (webb ≠ web) → kubectl apply -f fix-selector.yaml',
         ],
+        solution: ['kubectl get pods', 'kubectl get svc', 'kubectl get endpoints', 'kubectl describe svc web-svc', 'kubectl describe pod web-7d4f8b9c6d-aaa', 'ls', 'kubectl apply -f fix-selector.yaml'],
       },
       {
         type: 'order',
@@ -1406,6 +1411,7 @@ kubectl run test --rm -it --image=busybox --env-from=configMapRef:app-config? </
           'CrashLoopBackOff? kubectl logs shop-abc123-p1 → CURRENCY missing → fix-currency.yaml apply karo',
           'Phir: apply -f service.yaml → get endpoints → dono pod IPs dikhni chahiye',
         ],
+        solution: ['ls', 'kubectl apply -f deployment.yaml', 'kubectl get pods', 'kubectl logs shop-abc123-p1', 'kubectl apply -f fix-currency.yaml', 'kubectl apply -f service.yaml', 'kubectl get endpoints'],
       },
       {
         type: 'incident',

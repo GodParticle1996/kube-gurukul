@@ -1084,6 +1084,33 @@ t('terminal: throw karta callback app ko nahi todta + checklist live hai', () =>
   T.run('on'); T.run('off');
   assert(true, 'no throw');
 });
+t('har terminal mission apne solution: [...] se poora hota hai (asli renderer, headless)', () => {
+  const missing = []; let n = 0;
+  KG.tracks.forEach(tr => KG.levelsOf(tr).forEach(l => {
+    const ms = [...l.stages.filter(x => x.type === 'terminal').map((m, i) => [l.id + ' terminal#' + i, m]),
+                ...(l.interview.questions || []).filter(q => q.terminal).map((q, i) => [l.id + ' interview-terminal#' + i, q.terminal])];
+    ms.forEach(([where, m]) => {
+      if (!Array.isArray(m.solution) || !m.solution.length) { missing.push(where); return; }
+      const arena = document.createElement('div');
+      KG.renderers.terminal(m, arena, () => {});
+      const termEl = arena.children[1];
+      const input = termEl.querySelector('input'), outEl = termEl.querySelector('.term-out');
+      const won = () => arena.children.some(c => c.classList && c.classList.contains('stage-summary'));
+      m.solution.forEach((cmd, i) => {
+        assert(!won(), where + ': mission "' + cmd + '" se PEHLE hi poora ho gaya — solution mein faltu command, ya success() bahut dheela');
+        const before = outEl.children.length;
+        input.value = cmd; input.fire('keydown', { key: 'Enter' });
+        const out = outEl.children.slice(before).map(c => c.textContent).join('\n');
+        assert(!/Simulator error/.test(out), where + ': "' + cmd + '" → ' + out);
+      });
+      assert(won(), where + ': poora solution chalane ke baad bhi mission complete nahi hua');
+      n++;
+    });
+  }));
+  // TODO (HANDOFF.md): jab saare missions ko solution mil jaaye, yeh warning assert ban jaani chahiye
+  if (missing.length) console.log('  ⚠️  ' + missing.length + ' terminal mission(s) abhi bina solution: ' + missing.join(', '));
+  assert(n > 0, 'koi mission replay nahi hua');
+});
 `;
 eval(src + checks + TESTS + EXTRA_TESTS);
 

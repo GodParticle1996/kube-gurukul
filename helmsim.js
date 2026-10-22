@@ -15,6 +15,7 @@
          defaults: { ... },                 // chart ke default values (merge base)
          render: (vals, rel) => 'rendered yaml',
          lint:   [ '==> Linting ./shop', ... ],
+         renderError: 'text',               // chart toota hai → template/install/upgrade yahi error dete hain
          notes:  'NOTES.txt text',
          deps:   [ { name, version, repository, condition } ],
          onInstall: (sim, rel) => {},       // pods waghairah banao
@@ -244,7 +245,10 @@ KG.helm = (function () {
                   chart: chart.name + '-' + chart.version, appVersion: chart.appVersion || '1.0.0',
                   chartRef: chart._ref, description: 'Install complete',
                   values: clone(coalesced) || {}, userValues: clone(userVals) || {} }],
-      notes: chart.notes || '',
+      // NOTES.txt bhi ek template hai — release ka naam/namespace bhar ke dikhta hai
+      notes: (chart.notes || '').replace(/\{\{-?\s*\.Release\.Name\s*-?\}\}/g, name)
+        .replace(/\{\{-?\s*\.Release\.Namespace\s*-?\}\}/g, ns || 'default')
+        .replace(/\{\{-?\s*\.Chart\.Name\s*-?\}\}/g, chart.name),
     };
     (sim.cluster.releases = sim.cluster.releases || []).push(rel);
     return rel;
@@ -351,6 +355,7 @@ KG.helm = (function () {
           (chart.deps || []).map(d => d.name).join(', '));
         return true;
       }
+      if (chart.renderError) { print('err', 'Error: INSTALLATION FAILED: ' + chart.renderError); return true; }
       const vals = mergedValues(chart, f.values);
       if (f.flags.has('dry-run')) {
         print('ok', `NAME: ${name}\nLAST DEPLOYED: ${stamp()}\nSTATUS: pending-install\nREVISION: 1\nHOOKS:\nMANIFEST:\n` +
@@ -385,6 +390,7 @@ KG.helm = (function () {
               (chart.deps || []).map(d => d.name).join(', '));
             return true;
           }
+          if (chart.renderError) { print('err', 'Error: INSTALLATION FAILED: ' + chart.renderError); return true; }
           if (rel) sim.cluster.releases = sim.cluster.releases.filter(x => x !== rel);
           const r = newRelease(sim, chart, name, f.values, mergedValues(chart, f.values), f.namespace);
           r.lastFiles = f.files.slice();
@@ -412,6 +418,7 @@ KG.helm = (function () {
           (chart.deps || []).map(d => d.name).join(', '));
         return true;
       }
+      if (chart.renderError) { print('err', 'Error: UPGRADE FAILED: ' + chart.renderError); return true; }
       if (f.flags.has('dry-run')) {
         const reuseDry = f.flags.has('reuse-values');
         const valsDry = deepMerge(reuseDry ? rel.values : (chart.defaults || {}), f.values);
@@ -595,6 +602,7 @@ KG.helm = (function () {
           '\n("helm dependency update ' + chartRef + '" pehle chalao)');
         return true;
       }
+      if (chart.renderError) { print('err', 'Error: ' + chart.renderError); return true; }
       const vals = mergedValues(chart, f.values);
       print('ok', chart.render ? chart.render(vals, { name: relName, namespace: f.namespace })
         : '(is chart ka render is mission mein define nahi)');

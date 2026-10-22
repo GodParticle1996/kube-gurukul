@@ -134,6 +134,7 @@ KG.registerLevels('intermediate', [
           'kubectl describe pod batch → Events: "Insufficient cpu, Insufficient memory" — requests hi pagal hain (16 CPU, 64Gi!)',
           'api ko badi limit chahiye (fix-api-memory.yaml), batch ko chhoti requests (fix-batch-requests.yaml)',
         ],
+        solution: ['kubectl get pods', 'kubectl describe pod api-7b8c9d-qq1', 'kubectl describe pod batch-5x6y7z-ww2', 'ls', 'kubectl apply -f fix-api-memory.yaml', 'kubectl apply -f fix-batch-requests.yaml'],
       },
       {
         type: 'quiz',
@@ -1618,6 +1619,7 @@ kubectl delete deploy php-apache load --ignore-not-found; kubectl delete svc php
           'checkout: describe → OOMKilled/137 → memory fix. search: describe → readiness window 15s par boot 3 min → probe fix',
           'HPA: kubectl get hpa → unknown → web ka describe → Requests: <none> → requests fix. (Restart-everything mat karna 😄)',
         ],
+        solution: ['kubectl get pods', 'kubectl describe pod checkout-8a9b0c-x1', 'kubectl describe pod search-1d2e3f-y2', 'kubectl get hpa', 'kubectl describe pod web-4g5h6i-z3', 'ls', 'kubectl apply -f fix-checkout-memory.yaml', 'kubectl apply -f fix-search-probe.yaml', 'kubectl apply -f fix-web-requests.yaml'],
       },
       {
         type: 'incident',

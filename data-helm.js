@@ -4,6 +4,36 @@
    Ek chart ("shop") poore track mein step-by-step banta jaata hai.
    ===================================================================== */
 
+/* Chart Doctor mission ke helpers — asli Helm 4.0.4 ka output (do bugs: missing version + template typo).
+   Chart.yaml load hi na ho to lint templates tak pahunchta hi nahi — isliye typo fix ke BAAD dikhta hai. */
+KG.helmMission = (function () {
+  const NO_VERSION = ['==> Linting ./shop',
+    '[ERROR] Chart.yaml: version is required',
+    '[INFO] Chart.yaml: icon is recommended',
+    "[WARNING] Chart.yaml: version '' is not a valid SemVerV2",
+    '[ERROR] templates/: validation: chart.metadata.version is required',
+    '[ERROR] : unable to load chart',
+    '\tvalidation: chart.metadata.version is required',
+    '',
+    'Error: 1 chart(s) linted, 1 chart(s) failed'];
+  const TYPO_ERR = 'shop/templates/deployment.yaml:13:57\n  executing "shop/templates/deployment.yaml" at <.Values.imgae.tag>:\n    nil pointer evaluating interface {}.tag';
+  const TYPO = ['==> Linting ./shop', '[INFO] Chart.yaml: icon is recommended', '[ERROR] templates/: ' + TYPO_ERR, '', 'Error: 1 chart(s) linted, 1 chart(s) failed'];
+  const OK = ['==> Linting ./shop', '[INFO] Chart.yaml: icon is recommended', '', '1 chart(s) linted, 0 chart(s) failed'];
+  function fix(s, which) {
+    const c = s.cluster.charts['./shop'];
+    const key = which === 'version' ? 'versionOk' : 'typoOk';
+    if (c[key]) return 'Kuch nahi badla — yeh fix pehle hi lag chuka hai. helm lint ./shop chalao.';
+    c[key] = true;
+    if (!c.versionOk) { c.lint = NO_VERSION; c.lintFailed = true; c.renderError = 'validation: chart.metadata.version is required'; }
+    else if (!c.typoOk) { c.lint = TYPO; c.lintFailed = true; c.renderError = TYPO_ERR; }
+    else { c.lint = OK; c.lintFailed = false; c.renderError = null; c.fixed = true; c.fixedAt = s.history.length; }
+    return which === 'version'
+      ? "Chart.yaml mein 'version: 0.1.0' juda ✓\n(ab dobara: helm lint ./shop)"
+      : 'templates/deployment.yaml: .Values.imgae → .Values.image ✓\n(ab dobara: helm lint ./shop)';
+  }
+  return { NO_VERSION, fix };
+})();
+
 KG.registerLevels('helm', [
 
   /* ================= LEVEL H1: Pehla Release ================= */
@@ -125,6 +155,7 @@ helm install shop ./shop -f values-prod.yaml --set image.tag=2.5
           'helm search repo nginx → phir helm show values bitnami/nginx (key ka naam dhyan se padho!)',
           'helm install web bitnami/nginx --set replicaCount=3 → phir helm list',
         ],
+        solution: ['helm repo add bitnami https://charts.bitnami.com/bitnami', 'helm repo update', 'helm search repo nginx', 'helm show values bitnami/nginx', 'helm install web bitnami/nginx --set replicaCount=3', 'helm list'],
       },
       {
         type: 'quiz',
@@ -210,6 +241,7 @@ helm install shop ./shop -f values-prod.yaml --set image.tag=2.5
             success: s => s.history.some(h => /^helm (list|ls)/.test(h)) && s.history.some(h => /helm get values cache/.test(h)),
             successText: 'Bilkul sahi! Release <b>cache</b> revision <b>3</b> par hai, aur user-supplied values thi: standalone architecture, auth on, 20Gi persistence. Do commands jo har Helm debugging shuru karte hain: <code>helm list</code> (kya chal raha hai) + <code>helm get values</code> (kis config par). Bonus: <code>helm history cache</code> se poori kahani dikhti hai — 3 revisions.',
             hints: ['helm list se releases aur unke revisions dikhte hain', 'helm get values cache — "USER-SUPPLIED VALUES" section padho', 'Aur detail chahiye? helm history cache'],
+            solution: ['helm list', 'helm get values cache'],
           },
         },
       ],
@@ -328,11 +360,11 @@ helm install shop ./shop                     # 4. asli install</pre>
         type: 'terminal',
         title: '🖥️ Mission: Chart Doctor',
         instructions: 'Ek naya chart likha gaya hai par install se pehle usme galtiyan hain. Dev loop se pakdo!',
-        goal: 'Chart <code>./shop</code> mein kuch galat hai. <b>(1)</b> <code>helm lint ./shop</code> chalao, <b>(2)</b> galti samjho, <b>(3)</b> <code>ls</code> se fix file dekho aur apply karo, <b>(4)</b> phir se lint + <code>helm template ./shop</code> se rendered YAML verify karo, <b>(5)</b> install karo.',
+        goal: 'Chart <code>./shop</code> mein galtiyan hain. <b>(1)</b> <code>helm lint ./shop</code> chalao, <b>(2)</b> error padho aur <code>ls</code> se sahi fix script chalao (<code>bash &lt;file&gt;.sh</code>), <b>(3)</b> <b>dobara</b> lint — pehli galti hatne par hi agli dikhti hai!, <b>(4)</b> <code>helm template ./shop</code> se render verify karo, <b>(5)</b> install karo.',
         tasks: [
           { text: 'helm lint se galti pakdo', check: s => s.history.some(h => /helm lint/.test(h)) },
-          { text: 'Chart fix karo', check: s => s.cluster.charts['./shop'].fixed === true },
-          { text: 'helm template se render verify karo', check: s => s.history.some(h => /helm template/.test(h)) },
+          { text: 'Dono galtiyan theek karo (lint har baar dobara chalao)', check: s => s.cluster.charts['./shop'].fixed === true },
+          { text: 'Fix ke BAAD helm template se render verify karo', check: s => s.cluster.charts['./shop'].fixed === true && s.history.slice(s.cluster.charts['./shop'].fixedAt).some(h => /helm template/.test(h)) },
           { text: 'Install karo (release: shop)', check: s => (s.cluster.releases || []).some(r => r.name === 'shop') },
         ],
         cluster: {
@@ -340,49 +372,56 @@ helm install shop ./shop                     # 4. asli install</pre>
           pods: [], deployments: [], services: [], releases: [], repos: [],
           charts: {
             './shop': {
-              name: 'shop', version: '0.1.0', appVersion: '2.4.0', fixed: false,
+              name: 'shop', version: '0.1.0', appVersion: '2.4.0', fixed: false, versionOk: false, typoOk: false,
               defaults: { replicaCount: 2, image: { repository: 'shop/web', tag: '2.4.0' } },
               valuesYaml: 'replicaCount: 2\nimage:\n  repository: shop/web\n  tag: 2.4.0',
-              lint: ['==> Linting ./shop',
-                '[ERROR] Chart.yaml: version is required',
-                '[WARNING] templates/: file extension \'.tpl\' should be \'_helpers.tpl\' — helpers.tpl RENDER ho jayegi!',
-                '',
-                'Error: 1 chart(s) linted, 1 chart(s) failed'],
+              // asli Helm 4.0.4 output — Chart.yaml load hi na ho to templates jaanche hi nahi jaate
+              lint: KG.helmMission.NO_VERSION,
               lintFailed: true,
-              render: (v, rel) => `# Source: shop/templates/deployment.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: ${rel.name}-shop\nspec:\n  replicas: ${v.replicaCount}\n  template:\n    spec:\n      containers:\n      - name: shop\n        image: ${v.image.repository}:${v.image.tag}`,
+              renderError: 'validation: chart.metadata.version is required',
+              render: (v, rel) => `# Source: shop/templates/deployment.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: ${rel.name}-shop\nspec:\n  replicas: ${v.replicaCount}\n  template:\n    spec:\n      containers:\n      - name: shop\n        image: "${v.image.repository}:${v.image.tag}"`,
               notes: 'Shop chal raha hai! URL: kubectl port-forward svc/{{ .Release.Name }}-shop 8080:80',
               onInstall: (sim, rel) => {
                 const n = rel.values.replicaCount || 1;
                 sim.cluster.deployments.push({ name: rel.name + '-shop', ready: n + '/' + n, upToDate: n, available: n, age: '3s' });
                 for (let i = 0; i < n; i++)
-                  sim.cluster.pods.push({ name: `${rel.name}-shop-6f7a8b-p${i}`, ready: '1/1', status: 'Running', restarts: 0, age: '3s', node: 'node-1', ip: '10.244.1.' + (30 + i), logs: '[shop] listening on :8080' });
+                  sim.cluster.pods.push({ name: `${rel.name}-shop-6f7a8b9c5d-${['k2x9p', 'm4q7z'][i] || 'p' + i}`, ready: '1/1', status: 'Running', restarts: 0, age: '3s', node: 'node-1', ip: '10.244.1.' + (30 + i), logs: '[shop] listening on :8080' });
               },
             },
           },
         },
         files: {
-          'fix-chart.yaml': {
-            desc: 'Chart.yaml mein version add karta hai + helpers.tpl ko _helpers.tpl rename',
-            apply: s => {
-              const c = s.cluster.charts['./shop'];
-              c.fixed = true; c.lintFailed = false;
-              c.lint = ['==> Linting ./shop', '[INFO] Chart.yaml: icon is recommended', '', '1 chart(s) linted, 0 chart(s) failed'];
-              return 'Chart.yaml patched (version: 0.1.0 added) + helpers.tpl → _helpers.tpl renamed ✓\n(ab dobara "helm lint ./shop" chalao)';
-            },
+          'fix-version.sh': {
+            desc: 'Chart.yaml mein chhoota hua version: 0.1.0 jodti hai',
+            content: '#!/bin/bash\n# Chart.yaml mein version zaroori hai (SemVer 2) — appVersion se pehle jodo\nsed -i \'/^appVersion:/i version: 0.1.0\' shop/Chart.yaml',
+            apply: s => KG.helmMission.fix(s, 'version'),
           },
-          'skip-lint-install.yaml': {
-            desc: 'Lint skip karke seedha install karne ki koshish',
-            apply: () => 'Error: INSTALLATION FAILED: chart metadata (Chart.yaml) is missing "version"\n\n(Lint ne yeh 1 second mein bata diya tha — install ne 20 second baad. Isliye dev loop ka order: lint → template → install!)',
+          'fix-typo.sh': {
+            desc: 'templates/deployment.yaml mein .Values.imgae → .Values.image theek karti hai',
+            content: '#!/bin/bash\n# typo: .Values.imgae.tag → .Values.image.tag\nsed -i \'s/\\.Values\\.imgae\\./.Values.image./g\' shop/templates/deployment.yaml',
+            apply: s => KG.helmMission.fix(s, 'typo'),
           },
         },
         success: s => s.cluster.charts['./shop'].fixed === true &&
           (s.cluster.releases || []).some(r => r.name === 'shop') &&
-          s.history.some(h => /helm template/.test(h)),
-        successText: 'Chart theek aur deployed! 🩺 Dev loop ka fayda dekha: <b>lint</b> ne 1 second mein do problems batayi (missing <code>version</code>, aur <code>helpers.tpl</code> jo galti se render ho jaati), <b>template</b> ne render dekhne diya, phir install. Agar seedha install karte toh cryptic error milta. Yaad rakho: <b>lint → template → dry-run → install</b>.',
+          s.history.slice(s.cluster.charts['./shop'].fixedAt).some(h => /helm template/.test(h)),
+        successText: 'Chart theek aur deployed! 🩺 Dev loop ka asli sabak: <b>lint pehli bhaari galti par ruk jaata hai.</b> Chart.yaml load hi na ho (missing <code>version</code>) to templates jaanche hi nahi jaate — isliye <code>.Values.imgae.tag</code> wala typo pehli lint mein dikha hi nahi, fix ke baad dikha. <code>nil pointer evaluating interface {}.tag</code> ka matlab: beech wala key (<code>imgae</code>) values mein hai hi nahi. Isliye har fix ke baad <b>dobara lint</b>. Kram yaad rakho: <b>lint → template → dry-run → install</b>.',
         hints: [
-          'helm lint ./shop — output mein [ERROR] aur [WARNING] dono padho',
-          'ls karo — fix-chart.yaml Chart.yaml ki version aur helpers file dono theek karta hai',
-          'Fix ke baad: helm lint ./shop (ab pass), helm template ./shop (render dekho), helm install shop ./shop',
+          'helm lint ./shop — [ERROR] wali lines padho: Chart.yaml mein kya chhoot gaya?',
+          'ls → bash fix-version.sh → phir DOBARA helm lint ./shop (ab doosri galti dikhegi)',
+          'nil pointer at <.Values.imgae.tag> = template mein typo. bash fix-typo.sh → helm lint ./shop (pass) → helm template ./shop → helm install shop ./shop',
+        ],
+        solution: [
+          'helm lint ./shop',
+          'helm install shop ./shop',
+          'ls',
+          'cat fix-version.sh',
+          'bash fix-version.sh',
+          'helm lint ./shop',
+          'bash fix-typo.sh',
+          'helm lint ./shop',
+          'helm template ./shop',
+          'helm install shop ./shop',
         ],
       },
       {
@@ -901,6 +940,7 @@ helm upgrade shop ./shop -f values-prod.yaml      # rev 2: replicaCount wapas
           'helm history shop → har revision ka description padho — rev 4 mein galat file lagi thi',
           'Fix: helm upgrade shop ./shop -f values-prod.yaml  (file se, --set se nahi!)',
         ],
+        solution: ['helm list', 'helm get values shop', 'helm history shop', 'helm upgrade shop ./shop -f values-prod.yaml'],
       },
       {
         type: 'quiz',
@@ -1203,6 +1243,7 @@ metadata:
           'Seedha install karke dekho — error batayega ki charts/ mein subcharts nahi hain. Phir: helm dependency update ./shop',
           'helm install shop ./shop -f values-prod.yaml — phir helm template ./shop -f values-prod.yaml se dekho postgres skip hua ya nahi',
         ],
+        solution: ['helm dependency list ./shop', 'helm install shop ./shop -f values-prod.yaml', 'helm dependency update ./shop', 'helm install shop ./shop -f values-prod.yaml'],
       },
       {
         type: 'quiz',
@@ -1487,6 +1528,7 @@ helm rollback shop &lt;last-good-rev&gt;   # aksar isse hi nikal jaata hai
           'helm history shop → revision 8 "pending-upgrade" mein atka hai (CI raat ko mar gaya tha)',
           'helm rollback shop 7 → phir: helm upgrade shop ./shop -f values-prod.yaml --rollback-on-failure   (Helm 3: --atomic)',
         ],
+        solution: ['helm upgrade shop ./shop -f values-prod.yaml', 'helm history shop', 'helm rollback shop 7', 'helm upgrade shop ./shop -f values-prod.yaml --rollback-on-failure'],
       },
       {
         type: 'incident',
@@ -1754,6 +1796,7 @@ env:
           'helm package ./shop → shop-0.5.0.tgz banega (naam version se aata hai!)',
           'helm push shop-0.5.0.tgz oci://registry.company.com/charts → phir: helm install shop oci://registry.company.com/charts/shop → helm list',
         ],
+        solution: ['helm lint ./shop', 'helm template ./shop -f values-prod.yaml', 'helm package ./shop', 'helm push shop-0.5.0.tgz oci://registry.company.com/charts', 'helm install shop oci://registry.company.com/charts/shop', 'helm list'],
       },
       {
         type: 'bins',

@@ -3,6 +3,11 @@
    GitOps ka poora shastra — har level mein asli `argocd` terminal.
    ===================================================================== */
 
+/* "Wave Atak Gaya" mission ka asli postgres error (ek jagah — onSync aur delete dono yahi lagate hain) */
+KG.argoMission = {
+  DB_DENIED: 'The files belonging to this database system will be owned by user "postgres".\ninitdb: error: could not create directory "/var/lib/postgresql/data/pgdata": Permission denied',
+};
+
 KG.registerLevels('argocd', [
 
   /* ================= LEVEL A1: Pehla Application ================= */
@@ -88,12 +93,13 @@ argocd app sync shop            # git wala state apply karo</pre>
         type: 'terminal',
         title: '🖥️ Mission: Pehla Sync',
         instructions: 'Asli argocd terminal! `argocd help` se commands dekh sakte ho.',
-        goal: 'Ek nayi Application deploy karo: <b>(1)</b> <code>argocd app list</code> se dekho kya hai, <b>(2)</b> <code>argocd app get shop</code> se status samjho, <b>(3)</b> <code>argocd app diff shop</code> se dekho kya apply hoga, <b>(4)</b> <code>argocd app sync shop</code> — app Synced + Healthy hona chahiye.',
+        goal: 'Ek nayi Application deploy karo: <b>(1)</b> <code>argocd app list</code> se dekho kya hai, <b>(2)</b> <code>argocd app get shop</code> se status samjho, <b>(3)</b> <code>argocd app diff shop</code> se dekho kya apply hoga, <b>(4)</b> <code>argocd app sync shop</code> — app Synced + Healthy, <b>(5)</b> <code>kubectl get pods</code> se pakka karo ki pods sach mein bane.',
         tasks: [
           { text: 'app list — sab apps dekho', check: s => s.history.some(h => /^argocd app list/.test(h)) },
           { text: 'app get shop — status padho', check: s => s.history.some(h => /^argocd app get shop/.test(h)) },
           { text: 'app diff shop — kya change hoga?', check: s => s.history.some(h => /^argocd app diff shop/.test(h)) },
           { text: 'sync karo → Synced + Healthy', check: s => { const a = (s.cluster.apps || []).find(x => x.name === 'shop'); return a && a.sync === 'Synced' && a.health === 'Healthy'; } },
+          { text: 'kubectl get pods se verify — pods ArgoCD ne banaye', check: s => s.cluster.syncedAt != null && s.history.slice(s.cluster.syncedAt).some(h => /^(kubectl|k) get (pods|po|all)\b/.test(h)) },
         ],
         cluster: {
           nodes: [{ name: 'node-1', status: 'Ready', roles: '<none>', age: '40d', version: 'v1.30.2' }],
@@ -129,6 +135,7 @@ argocd app sync shop            # git wala state apply karo</pre>
                   sim.cluster.pods.push({ name: `shop-web-7d9f-${i}`, ready: '1/1', status: 'Running', restarts: 0, age: '5s', node: 'node-1', ip: '10.244.1.' + (30 + i), logs: '[shop 2.4.0] serving on :8080' });
                 sim.cluster.services.push({ name: 'shop-web', type: 'ClusterIP', clusterIP: '10.96.0.55', ports: '80/TCP', age: '5s' });
                 app.resources.forEach(r => { r.health = r.kind === 'Deployment' ? 'Healthy' : r.health; });
+                sim.cluster.syncedAt = sim.history.length;
                 return true;
               },
             },
@@ -138,14 +145,16 @@ argocd app sync shop            # git wala state apply karo</pre>
           const a = (s.cluster.apps || []).find(x => x.name === 'shop');
           return a && a.sync === 'Synced' && a.health === 'Healthy' &&
             s.history.some(h => /^argocd app diff shop/.test(h)) &&
-            s.history.some(h => /^argocd app get shop/.test(h));
+            s.history.some(h => /^argocd app get shop/.test(h)) &&
+            s.cluster.syncedAt != null && s.history.slice(s.cluster.syncedAt).some(h => /^(kubectl|k) get (pods|po|all)\b/.test(h));
         },
-        successText: 'Pehla GitOps deploy! 🔄 Dekha kya hua: shuru mein <b>OutOfSync + Missing</b> tha (git mein manifests hain, cluster mein kuch nahi), <code>diff</code> ne saara "+" dikhaya (sab naya banega), aur <code>sync</code> ke baad <b>Synced + Healthy</b>. Ab <code>kubectl get pods</code> karo — ArgoCD ne pods bana diye. Aur dhyan do: tumne <code>kubectl apply</code> ek baar bhi nahi kiya!',
+        successText: 'Pehla GitOps deploy! 🔄 Dekha kya hua: shuru mein <b>OutOfSync + Missing</b> tha (git mein manifests hain, cluster mein kuch nahi), <code>diff</code> ne saara "+" dikhaya (sab naya banega), <code>sync</code> ke baad <b>Synced + Healthy</b>, aur <code>kubectl get pods</code> mein teen naye pods — ArgoCD ne banaye. Dhyan do: tumne <code>kubectl apply</code> ek baar bhi nahi kiya!',
         hints: [
           'argocd app list — shop OutOfSync/Missing dikhega',
           'argocd app get shop → resource-wise status. Phir argocd app diff shop',
           'argocd app sync shop — phir kubectl get pods se verify karo',
         ],
+        solution: ['argocd app list', 'argocd app get shop', 'argocd app diff shop', 'argocd app sync shop', 'kubectl get pods'],
       },
       {
         type: 'quiz',
@@ -367,6 +376,7 @@ kubectl get pods                # ArgoCD ne banaye!</pre>
           'argocd app diff shop → do problems dikhengi: replicas ka farak, aur ek poora resource jo git se hat gaya',
           'argocd app sync shop --prune  (bina --prune ke shop-debug nahi hatega!)',
         ],
+        solution: ['argocd app get shop', 'argocd app diff shop', 'argocd app sync shop --prune'],
       },
       {
         type: 'render',
@@ -605,18 +615,19 @@ wave  2  →  Ingress, HPA</pre>
         type: 'terminal',
         title: '🖥️ Mission: Wave Atak Gaya',
         instructions: 'Sync beech mein atak gaya hai. Wave ka concept use karke pata karo kahan.',
-        goal: 'App <b>shop</b> ka sync fail ho gaya. <b>(1)</b> <code>argocd app get shop</code> se resource-wise status dekho — kaunsa wave atka?, <b>(2)</b> jo resource Degraded hai uske pods ke <code>logs</code> dekho, <b>(3)</b> <code>ls</code> se fix file dekho aur <code>kubectl apply</code> karo, <b>(4)</b> phir se <code>argocd app sync shop</code> — poora Synced + Healthy.',
+        goal: 'App <b>shop</b> ka sync fail ho gaya. <b>(1)</b> <code>argocd app get shop</code> se resource-wise status dekho — kaunsa wave atka?, <b>(2)</b> jo resource Degraded hai uske pod ke <code>logs</code> dekho, <b>(3)</b> fix <b>git mein</b> karo — <code>ls</code> se script dekho aur <code>bash</code> se chalao (commit + push), <b>(4)</b> <code>argocd app sync shop</code> — poora Synced + Healthy. (Beech mein kuch atke to pod ki halat dekho!)',
         tasks: [
           { text: 'app get se atka hua resource dhundo', check: s => s.history.some(h => /^argocd app get shop/.test(h)) },
           { text: 'logs se root cause', check: s => s.history.some(h => /kubectl logs (shop-db|shop-web)/.test(h)) },
-          { text: 'Fix + sync → Synced + Healthy', check: s => { const a = (s.cluster.apps || []).find(x => x.name === 'shop'); return a && a.sync === 'Synced' && a.health === 'Healthy'; } },
+          { text: 'Fix GIT mein karo (commit + push) — kubectl se nahi', check: s => s.cluster.gitFsGroup === true },
+          { text: 'Sync → Synced + Healthy', check: s => { const a = (s.cluster.apps || []).find(x => x.name === 'shop'); return a && a.sync === 'Synced' && a.health === 'Healthy'; } },
         ],
         cluster: {
           nodes: [{ name: 'node-1', status: 'Ready', roles: '<none>', age: '15d', version: 'v1.30.2' }],
           pods: [
             { name: 'shop-db-0', ready: '0/1', status: 'CrashLoopBackOff', restarts: 6, age: '4m', node: 'node-1', ip: '10.244.1.40',
-              logs: '[postgres] FATAL: could not create directory "/var/lib/postgresql/data": Permission denied\n[postgres] initdb failed — fsGroup set nahi hai!',
-              prevLogs: '[postgres] FATAL: could not create directory: Permission denied' },
+              logs: 'The files belonging to this database system will be owned by user "postgres".\ninitdb: error: could not create directory "/var/lib/postgresql/data/pgdata": Permission denied',
+              prevLogs: 'The files belonging to this database system will be owned by user "postgres".\ninitdb: error: could not create directory "/var/lib/postgresql/data/pgdata": Permission denied' },
           ],
           deployments: [], statefulsets: [{ name: 'shop-db', ready: '0/1', age: '4m' }],
           services: [{ name: 'shop-db', type: 'ClusterIP', clusterIP: 'None', ports: '5432/TCP', age: '4m' }],
@@ -633,7 +644,12 @@ wave  2  →  Ingress, HPA</pre>
                 { group: 'apps', kind: 'Deployment', name: 'shop-web', status: 'OutOfSync', health: 'Missing', wave: 2 },
                 { group: 'networking.k8s.io', kind: 'Ingress', name: 'shop', status: 'OutOfSync', health: 'Missing', wave: 3 },
               ],
-              diff: `===== apps/Deployment shop/shop-web ======
+              // git ka fix aa gaya par sync abhi baaki → StatefulSet ka diff bhi dikhe
+              diff: sim => (sim.cluster.gitFsGroup && !sim.cluster.stsTemplateFixed
+                ? '===== apps/StatefulSet shop/shop-db ======\n   spec:\n     template:\n       spec:\n+        securityContext:\n+          fsGroup: 999\n\n'
+                : sim.cluster.manualFix
+                  ? '===== apps/StatefulSet shop/shop-db ======\n   spec:\n     template:\n       spec:\n-        securityContext:\n-          fsGroup: 999\n(cluster mein haath se juda — git mein nahi: DRIFT. Sync ise hata dega!)\n\n'
+                  : '') + `===== apps/Deployment shop/shop-web ======
 + (poora resource — abhi apply hua hi nahi!)
 
 ⚠️  wave 2 aur 3 ke resources abhi apply NAHI hue —
@@ -641,15 +657,33 @@ wave  2  →  Ingress, HPA</pre>
     ArgoCD agla wave tabhi chalata hai jab pichla wave HEALTHY ho.`,
               history: [],
               onSync: (sim, app) => {
-                const db = sim.cluster.pods.find(p => p.name.startsWith('shop-db'));
-                if (!db || db.status !== 'Running') {
+                const c = sim.cluster;
+                const db = c.pods.find(p => p.name === 'shop-db-0');
+                const r = app.resources.find(x => x.name === 'shop-db');
+                if (!c.gitFsGroup) {
+                  if (c.manualFix) {
+                    // git ka spec (bina fsGroup) wapas laga → haath ka fix mit gaya
+                    c.manualFix = false; c.stsTemplateFixed = false;
+                    if (db.status === 'Running') {   // template badla → StatefulSet ne healthy pod ko purane spec se dobara banaya
+                      db.status = 'CrashLoopBackOff'; db.ready = '0/1'; db.restarts = 1; db.age = '20s'; db.logs = KG.argoMission.DB_DENIED;
+                      if (r) r.health = 'Degraded';
+                      c.statefulsets[0].ready = '0/1';
+                    }
+                    app.syncError = 'shop-db: git ka spec (bina fsGroup) wapas apply hua — kubectl wala hotfix mit gaya, wave 1 phir Degraded';
+                    return false;
+                  }
                   app.syncError = 'wave 1 resource "shop-db" is Degraded — waiting for healthy state (timed out)';
-                  return false;              // wave 1 healthy nahi → sync fail
+                  return false;
+                }
+                c.stsTemplateFixed = true; c.manualFix = false;
+                if (db.status !== 'Running') {
+                  app.syncError = 'wave 1 resource "shop-db" is Degraded — StatefulSet ka naya template (fsGroup: 999) lag gaya, par purana pod shop-db-0 abhi bhi CrashLoopBackOff mein hai (kubectl get pods)';
+                  return false;
                 }
                 sim.cluster.deployments.push({ name: 'shop-web', ready: '2/2', upToDate: 2, available: 2, age: '3s' });
-                sim.cluster.pods.push({ name: 'shop-web-8a7b-x', ready: '1/1', status: 'Running', restarts: 0, age: '3s', node: 'node-1', ip: '10.244.1.45', logs: '[shop] connected to shop-db ✓' });
+                sim.cluster.pods.push({ name: 'shop-web-8a7b9c6d5-k2x9p', ready: '1/1', status: 'Running', restarts: 0, age: '3s', node: 'node-1', ip: '10.244.1.45', logs: '[shop] connected to shop-db ✓' });
                 sim.cluster.ingresses = [{ name: 'shop', class: 'nginx', hosts: 'shop.com', address: '10.0.0.9', ports: '80,443', age: '2s' }];
-                app.resources.forEach(r => { r.health = r.kind === 'Service' ? '' : 'Healthy'; });
+                app.resources.forEach(x => { x.health = ['Service', 'ConfigMap', 'Namespace'].includes(x.kind) ? '' : 'Healthy'; });
                 app.degradedReason = null;
                 app.health = 'Healthy';
                 return true;
@@ -657,32 +691,75 @@ wave  2  →  Ingress, HPA</pre>
             },
           ],
         },
-        files: {
-          'fix-db-fsgroup.yaml': {
-            desc: 'shop-db StatefulSet mein securityContext.fsGroup: 999 add karta hai',
-            apply: s => {
-              const db = s.cluster.pods.find(p => p.name.startsWith('shop-db'));
-              db.status = 'Running'; db.ready = '1/1';
+        responses: [
+          {
+            // StatefulSet pod delete → wahi naam (shop-db-0), cluster ke ABHI ke template se
+            re: /^(kubectl|k) delete (pods?|po) shop-db-0\b|^(kubectl|k) delete (pods?|po)\/shop-db-0\b/,
+            out: s => {
+              const c = s.cluster;
+              const db = c.pods.find(p => p.name === 'shop-db-0');
+              db.age = '5s';
+              if (!c.stsTemplateFixed) {
+                db.status = 'CrashLoopBackOff'; db.ready = '0/1'; db.restarts = 1;
+                return 'pod "shop-db-0" deleted\n\n⚠️ StatefulSet ne shop-db-0 dobara banaya — par cluster ka template abhi bhi PURANA hai (bina fsGroup). Wahi "Permission denied" → CrashLoopBackOff. Pehle template theek karo: git mein fix → argocd app sync.';
+              }
+              db.status = 'Running'; db.ready = '1/1'; db.restarts = 0;
               db.logs = '[postgres] database system is ready to accept connections ✓';
-              const sts = s.cluster.statefulsets.find(x => x.name === 'shop-db');
-              if (sts) sts.ready = '1/1';
-              const app = s.cluster.apps[0];
-              const r = app.resources.find(x => x.name === 'shop-db');
+              c.statefulsets[0].ready = '1/1';
+              const r = c.apps[0].resources.find(x => x.name === 'shop-db');
               if (r) r.health = 'Healthy';
-              return 'statefulset.apps/shop-db configured (fsGroup: 999)\n(pod restart hua... postgres ab data dir likh paa raha hai... Running ✓)\n\n⚠️  Yaad rakho: asli GitOps mein yeh fix GIT mein jaana chahiye — warna agla sync ise mita dega!';
+              return 'pod "shop-db-0" deleted\n\n✅ StatefulSet ne shop-db-0 NAYE template (fsGroup: 999) se banaya → postgres Running.' +
+                (c.manualFix ? '\n⚠️ Par yeh template sirf CLUSTER mein hai, git mein nahi — agla sync ise wapas palat dega.' : '\nAb dobara: argocd app sync shop (wave 2 aur 3 ab chalenge)');
             },
           },
-          'skip-waves.yaml': {
-            desc: 'Saare sync-wave annotations hata deta hai (jugaad)',
-            apply: () => 'annotations removed...\n\n(Ab sab ek saath apply hoga — shop-web bhi aa jayega. Par woh DB se connect nahi kar payega (DB abhi bhi CrashLoop mein hai) → CrashLoopBackOff.\nWaves problem NAHI thi — waves ne to tumhe BACHAYA: unhone aadhi-adhuri app deploy hone se roka! Asli problem DB ka fsGroup hai.)',
+        ],
+        files: {
+          'fix-fsgroup-in-git.sh': {
+            desc: 'GitOps repo mein shop-db StatefulSet par fsGroup: 999 jodti hai, commit + push',
+            content: '#!/bin/bash\n# GitOps: fix hamesha GIT mein — cluster mein haath se nahi\ncd manifests\nyq -i \'.spec.template.spec.securityContext.fsGroup = 999\' apps/shop/prod/statefulset.yaml\ngit commit -am "shop-db: fsGroup 999 (postgres data dir likh sake)"\ngit push origin main',
+            apply: s => {
+              if (s.cluster.gitFsGroup) return 'Kuch commit karne ko nahi — fix pehle hi git mein hai. argocd app sync shop chalao.';
+              s.cluster.gitFsGroup = true;
+              const app = s.cluster.apps[0];
+              app.targetRevisionSha = '3f9c2a1';
+              app.sync = 'OutOfSync';
+              return '[main 3f9c2a1] shop-db: fsGroup 999 (postgres data dir likh sake)\n 1 file changed, 2 insertions(+)\nTo https://github.com/company/manifests\n   e5f6a7b..3f9c2a1  main -> main\n\n✅ Fix git mein pahunch gaya. ArgoCD ko naya commit dikhega — ab: argocd app sync shop';
+            },
+          },
+          'hotfix-kubectl.yaml': {
+            desc: 'shop-db StatefulSet par seedha cluster mein fsGroup: 999 lagata hai (git ko chhuye bina)',
+            apply: s => {
+              if (s.cluster.gitFsGroup) return 'statefulset.apps/shop-db unchanged\n(git ka fix pehle hi hai — haath se lagane ki zaroorat nahi)';
+              s.cluster.manualFix = true; s.cluster.stsTemplateFixed = true;
+              return 'statefulset.apps/shop-db configured (fsGroup: 999 — sirf CLUSTER mein)\n\n⚠️ Ab cluster aur git alag hain: DRIFT. Git kehta hai fsGroup nahi, cluster kehta hai 999. Agla argocd app sync (ya selfHeal) git ka spec wapas lagayega — aur yeh fix mit jayega.';
+            },
+          },
+          'skip-waves.sh': {
+            desc: 'GitOps repo se saare sync-wave annotations hata deti hai (jugaad)',
+            content: '#!/bin/bash\ncd manifests\nsed -i \'/argocd.argoproj.io\\/sync-wave/d\' apps/shop/prod/*.yaml\ngit commit -am "remove waves" && git push',
+            apply: () => 'Script nahi chalayi gayi — ⚠️ socho pehle: waves hata di to sab ek saath apply hoga, shop-web bhi aa jayega — par DB abhi bhi CrashLoop mein hai, isliye shop-web DB se connect nahi kar payega → users ko 500. Waves problem NAHI thi — waves ne to tumhe BACHAYA: unhone aadhi-adhuri app deploy hone se roka! Asli problem DB ka fsGroup hai.',
           },
         },
-        success: s => { const a = (s.cluster.apps || []).find(x => x.name === 'shop'); return a && a.sync === 'Synced' && a.health === 'Healthy' && s.history.some(h => /^argocd app get shop/.test(h)); },
-        successText: 'Wave chal padi! 🌊 Sabse bada sabak: <b>waves ne tumhe bachaya</b> — DB (wave 1) Healthy nahi tha, isliye ArgoCD ne app (wave 2) aur Ingress (wave 3) apply hi nahi kiye. Bina waves ke: app deploy ho jaati, DB se connect na kar paati, aur users ko 500 milte. <code>app get</code> ka resource-wise view hi batata hai kaunsa wave atka hai — yahi GitOps debugging ka pehla step hai.',
+        success: s => { const a = (s.cluster.apps || []).find(x => x.name === 'shop'); return a && a.sync === 'Synced' && a.health === 'Healthy' && s.cluster.gitFsGroup === true && s.history.some(h => /^argocd app get shop/.test(h)); },
+        successText: 'Wave chal padi! 🌊 Teen sabak ek mission mein. <b>1. Waves ne tumhe bachaya</b> — DB (wave 1) Healthy nahi tha, isliye ArgoCD ne app (wave 2) aur Ingress (wave 3) apply hi nahi kiye; bina waves ke app DB ke bina deploy hoti aur users ko 500 milte. <b>2. GitOps mein fix git mein hota hai</b> — <code>kubectl apply</code> wala hotfix drift hai, agla sync (ya selfHeal) use mita deta hai. <b>3. StatefulSet ka chhupa jaal</b> — <code>OrderedReady</code> StatefulSet ka pod toota ho (CrashLoopBackOff) to naya template lagne ke baad bhi controller us pod ko khud replace nahi karta; <code>kubectl delete pod shop-db-0</code> karna padta hai (docs isse "forced rollback" kehte hain). Deployment mein aisa nahi hota — wahan naya ReplicaSet seedha naye pods banata hai.',
         hints: [
-          'argocd app get shop → StatefulSet shop-db "Degraded" hai, aur uske baad wale resources "Missing"',
-          'kubectl logs shop-db-0 → "Permission denied" — postgres data dir nahi likh paa raha (fsGroup missing)',
-          'ls → kubectl apply -f fix-db-fsgroup.yaml → phir argocd app sync shop',
+          'argocd app get shop → StatefulSet shop-db "Degraded", aur wave 2-3 ke resources "Missing"',
+          'kubectl logs shop-db-0 → "Permission denied": postgres ko volume par likhne ki ijaazat nahi — pod ko fsGroup chahiye',
+          'GitOps mein fix GIT mein: ls → bash fix-fsgroup-in-git.sh → argocd app sync shop',
+          'Sync phir bhi atka? kubectl get pods — shop-db-0 purana hi hai. StatefulSet toote pod ko khud nahi badalta: kubectl delete pod shop-db-0 → argocd app sync shop',
+        ],
+        solution: [
+          'argocd app get shop',
+          'kubectl logs shop-db-0',
+          'ls',
+          'kubectl apply -f hotfix-kubectl.yaml',
+          'argocd app sync shop',
+          'bash fix-fsgroup-in-git.sh',
+          'argocd app diff shop',
+          'argocd app sync shop',
+          'kubectl get pods',
+          'kubectl delete pod shop-db-0',
+          'argocd app sync shop',
         ],
       },
     ],
@@ -941,6 +1018,7 @@ spec:
           'argocd appset list, phir argocd appset get shop-envs → dekho kaunsi 3 apps auto-generated hain',
           'argocd proj list (aur proj get team-shop) → phir: argocd app sync shop-prod',
         ],
+        solution: ['argocd app list', 'argocd appset list', 'argocd appset get shop-envs', 'argocd proj list', 'argocd proj get team-shop', 'argocd app sync shop-prod'],
       },
       {
         type: 'quiz',
@@ -1190,6 +1268,7 @@ kubectl argo rollouts abort shop-web                # turant stable par wapas</p
           'kubectl logs shop-web-canary-x → error rate compare karo stable pods se',
           'Metrics kharab hain → kubectl argo rollouts abort shop-web (promote MAT karna!)',
         ],
+        solution: ['kubectl argo rollouts get rollout shop-web', 'kubectl logs shop-web-stable-a', 'kubectl logs shop-web-canary-x', 'kubectl argo rollouts abort shop-web'],
       },
       {
         type: 'order',
@@ -1340,7 +1419,7 @@ kubectl delete ns argo-rollouts</pre>
         type: 'terminal',
         title: '🖥️ Round 1: GitOps Triage',
         instructions: 'Teen apps, teen alag problems. Har ek ko sahi tarike se diagnose karo.',
-        goal: 'Cluster mein 3 apps hain, teeno alag tarah se bimaar. <b>(1)</b> <code>argocd app list</code> se teeno ka status padho, <b>(2)</b> har ek ko diagnose karo (<code>app get</code> / <code>app diff</code> / <code>kubectl logs</code>), <b>(3)</b> teeno ko theek karo — <code>shop</code> ko sync, <code>payments</code> ka manifest fix (<code>ls</code>), aur <code>legacy</code> ka extra resource prune.',
+        goal: 'Cluster mein 3 apps hain, teeno alag tarah se bimaar. <b>(1)</b> <code>argocd app list</code> se teeno ka status padho, <b>(2)</b> har ek ko diagnose karo (<code>app get</code> / <code>app diff</code> / <code>kubectl logs</code>), <b>(3)</b> teeno ko theek karo — <code>shop</code> ko sync, <code>payments</code> ka manifest <b>git mein</b> fix (<code>ls</code> → <code>bash</code>) phir sync, aur <code>legacy</code> ka extra resource prune.',
         tasks: [
           { text: 'Teeno apps ka status padho', check: s => s.history.some(h => /^argocd app list/.test(h)) },
           { text: 'payments Degraded kyun — logs dekho', check: s => s.history.some(h => /kubectl logs payments/.test(h)) },
@@ -1379,9 +1458,17 @@ kubectl delete ns argo-rollouts</pre>
               resources: [{ group: 'apps', kind: 'Deployment', name: 'payments-web', status: 'Synced', health: 'Degraded' }],
               diff: '(koi diff nahi — git aur cluster match karte hain ✓)',
               history: [{ id: 1, revision: 'bb2', deployedAt: '2026-09-01T21:40:00Z', note: 'Sync' }],
+              diffFixed: '===== apps/Deployment default/payments-web ======\n         env:\n+        - name: STRIPE_KEY\n+          valueFrom:\n+            secretKeyRef:\n+              name: payments-stripe\n+              key: api-key\n\n(git aage hai — naya commit 7c8d9e0)',
               onSync: (sim, app) => {
+                // git mein fix nahi → sync wahi toota hua manifest dobara lagata hai: operation chal jaata hai, app Synced + Degraded hi rehta hai
+                if (!sim.cluster.paymentsGitFixed) return true;
                 const p = sim.cluster.pods.find(x => x.name.startsWith('payments'));
-                if (p && p.status !== 'Running') { app.syncError = 'Deployment payments-web is Degraded'; return false; }
+                p.name = 'payments-web-7c8d9e0f1-q4w2z'; p.status = 'Running'; p.ready = '1/1'; p.restarts = 0; p.age = '6s';
+                p.logs = '[payments 3.1.0] STRIPE_KEY loaded from secret ✓\n[payments 3.1.0] serving on :8080';
+                const d = sim.cluster.deployments.find(x => x.name === 'payments-web');
+                if (d) { d.ready = '1/1'; d.available = 1; }
+                app.health = 'Healthy'; app.degradedReason = null;
+                app.resources.forEach(r => { r.health = 'Healthy'; });
                 return true;
               },
             },
@@ -1404,32 +1491,44 @@ kubectl delete ns argo-rollouts</pre>
           ],
         },
         files: {
-          'fix-payments-secret.yaml': {
-            desc: 'payments Deployment mein STRIPE_KEY ka secretKeyRef add karta hai (ExternalSecret se aata hai)',
+          'fix-payments-in-git.sh': {
+            desc: 'GitOps repo mein payments Deployment par STRIPE_KEY ka secretKeyRef jodti hai, commit + push',
+            content: '#!/bin/bash\n# Secret ki VALUE git mein kabhi nahi — sirf reference. Value ExternalSecret (Vault) se aati hai.\ncd manifests\nyq -i \'.spec.template.spec.containers[0].env += [{"name": "STRIPE_KEY", "valueFrom": {"secretKeyRef": {"name": "payments-stripe", "key": "api-key"}}}]\' apps/payments/deployment.yaml\ngit commit -am "payments: STRIPE_KEY secretKeyRef"\ngit push origin main',
             apply: s => {
-              const p = s.cluster.pods.find(x => x.name.startsWith('payments'));
-              p.status = 'Running'; p.ready = '1/1';
-              p.logs = '[payments 3.1.0] STRIPE_KEY loaded from secret ✓\n[payments 3.1.0] serving on :8080';
-              const d = s.cluster.deployments.find(x => x.name === 'payments-web');
-              if (d) { d.ready = '1/1'; d.available = 1; }
+              if (s.cluster.paymentsGitFixed) return 'Kuch commit karne ko nahi — fix pehle hi git mein hai. argocd app sync payments chalao.';
+              s.cluster.paymentsGitFixed = true;
               const app = s.cluster.apps.find(a => a.name === 'payments');
-              app.health = 'Healthy'; app.degradedReason = null;
-              app.resources.forEach(r => { r.health = 'Healthy'; });
-              return 'deployment.apps/payments-web configured\n(STRIPE_KEY ab secretKeyRef se aa raha hai — value ExternalSecret/Vault se, git mein sirf reference ✓)\n\n⚠️  Asli GitOps mein: yeh fix GIT mein commit karo, warna selfHeal/agla sync ise mita dega!';
+              app.sync = 'OutOfSync'; app.targetRevisionSha = '7c8d9e0'; app.diff = app.diffFixed;
+              app.resources.forEach(r => { r.status = 'OutOfSync'; });
+              return '[main 7c8d9e0] payments: STRIPE_KEY secretKeyRef\n 1 file changed, 5 insertions(+)\nTo https://github.com/company/manifests\n   bb2f1a3..7c8d9e0  main -> main\n\n✅ Git mein fix (sirf reference — value Vault/ExternalSecret se). payments ab OutOfSync dikhega — ab: argocd app sync payments';
             },
           },
           'restart-payments.yaml': {
-            desc: 'payments pods ko restart karta hai',
+            desc: 'payments pods ko restart karta hai (kubectl rollout restart)',
             apply: () => 'deployment restarted...\n(phir wahi: "FATAL: env STRIPE_KEY not set". Restart config nahi badalta — Track 1 ka sabak yahan bhi lagu hai!)',
           },
         },
         success: s => (s.cluster.apps || []).every(a => a.sync === 'Synced' && a.health === 'Healthy') &&
           s.history.some(h => /kubectl logs payments/.test(h)),
-        successText: 'Teeno theek! 🧯 Teen bilkul alag problems, teen alag ilaaj: <b>(1) shop</b> — OutOfSync+Healthy = git aage tha, bas <code>sync</code>. <b>(2) payments</b> — <b>Synced+Degraded</b> = ArgoCD ne apna kaam sahi kiya, manifest hi galat tha (missing secret ref) → yeh ArgoCD ka nahi, tumhare YAML ka bug tha. <b>(3) legacy</b> — OutOfSync+Healthy par diff mein purana resource: prune OFF hone se woh kabhi hatta hi nahi tha → <code>sync --prune</code>. <b>Status padhna aa gaya toh aadha kaam ho gaya.</b>',
+        successText: 'Teeno theek! 🧯 Teen bilkul alag problems, teen alag ilaaj: <b>(1) shop</b> — OutOfSync+Healthy = git aage tha, bas <code>sync</code>. <b>(2) payments</b> — <b>Synced+Degraded</b> = ArgoCD ne apna kaam sahi kiya, manifest hi galat tha (missing secret ref) → yeh ArgoCD ka nahi, tumhare YAML ka bug tha — isliye fix bhi YAML mein, yaani <b>git mein</b> (kubectl se lagaya fix drift banta, aur agla sync use mita deta). <b>(3) legacy</b> — OutOfSync+Healthy par diff mein purana resource: prune OFF hone se woh kabhi hatta hi nahi tha → <code>sync --prune</code>. <b>Status padhna aa gaya toh aadha kaam ho gaya.</b>',
         hints: [
           'argocd app list → shop (OutOfSync+Healthy), payments (Synced+Degraded), legacy (OutOfSync+Healthy)',
           'payments Synced hai matlab manifest sahi apply hua — problem manifest MEIN hai: kubectl logs payments-web-9f8e',
-          'shop: argocd app sync shop · payments: apply -f fix-payments-secret.yaml · legacy: argocd app sync legacy --prune',
+          'shop: argocd app sync shop · payments: bash fix-payments-in-git.sh → argocd app sync payments · legacy: argocd app sync legacy --prune',
+        ],
+        solution: [
+          'argocd app list',
+          'argocd app diff shop',
+          'argocd app sync shop',
+          'argocd app get payments',
+          'kubectl logs payments-web-9f8e',
+          'argocd app sync payments',
+          'ls',
+          'bash fix-payments-in-git.sh',
+          'argocd app sync payments',
+          'argocd app diff legacy',
+          'argocd app sync legacy',
+          'argocd app sync legacy --prune',
         ],
       },
       {

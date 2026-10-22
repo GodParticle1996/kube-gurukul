@@ -137,6 +137,7 @@ kubectl auth can-i list pods --as=system:serviceaccount:default:app-sa
           'kubectl auth can-i list pods --as=system:serviceaccount:default:reporter-sa → "no". Ab: get roles AUR get rolebindings dono dekho',
           'Role hai, binding NAHI — fix-rolebinding.yaml (cluster-admin wala jugaad mat karna!)',
         ],
+        solution: ['kubectl logs reporter-6c7d8e-r1', 'kubectl auth can-i list pods --as=system:serviceaccount:default:reporter-sa', 'kubectl get roles', 'kubectl get rolebindings', 'ls', 'kubectl apply -f fix-rolebinding.yaml'],
       },
       {
         type: 'quiz',
@@ -1531,9 +1532,9 @@ minikube delete -p mesh</pre>
         type: 'terminal',
         title: '🖥️ Round 1: Platform Meltdown',
         instructions: 'Subah 9 baje. Teen alag layers par teen problems — senior ka kaam: sahi ORDER mein solve karna (dependencies hain!).',
-        goal: 'payments app down hai. Chain: <b>(1)</b> payments pod kyun crash ho raha hai? (logs → secret missing!) <b>(2)</b> Secret kyun nahi hai? (ExternalSecret dekho → ESO operator ka RBAC toota!) <b>(3)</b> RBAC kisne toda? (ArgoCD drift!) — teeno layers fix karo, root se.',
+        goal: 'payments app down hai. Chain: <b>(1)</b> payments pod start kyun nahi ho raha? (status CreateContainerConfigError → describe ke Events: secret missing! — logs khaali honge, container bana hi nahi) <b>(2)</b> Secret kyun nahi hai? (ExternalSecret dekho → ESO operator ka RBAC toota!) <b>(3)</b> RBAC kisne toda? (ArgoCD drift!) — teeno layers fix karo, root se.',
         tasks: [
-          { text: 'payments crash ki wajah (logs)', check: s => s.history.some(h => /^(kubectl|k) logs payments/.test(h)) },
+          { text: 'payments start kyun nahi ho raha (describe → Events)', check: s => s.history.some(h => /^(kubectl|k) describe (pod|pods|po) payments/.test(h)) },
           { text: 'ExternalSecret ka status check (describe)', check: s => s.history.some(h => /describe externalsecret/.test(h)) },
           { text: 'Root fix: RBAC git se restore → chain heal', check: s => s.cluster.pods.every(p => p.status === 'Running') },
         ],
@@ -1606,13 +1607,14 @@ minikube delete -p mesh</pre>
             apply: () => 'secret/payments-db-creds created...\npayments TEMPORARILY Running... par:\n⚠️ ESO ab bhi broken hai (RBAC missing) — rotation kabhi sync nahi hogi, aur yeh manual Secret DRIFT hai jo agla cleanup kha jayega. SYMPTOM patch kiya, ROOT nahi. Root: RBAC → ArgoCD se restore karo.\n(Pod abhi bhi effectively at-risk — mission incomplete!)',
           },
         },
-        success: s => s.cluster.pods.every(p => p.status === 'Running') && s.history.some(h => /describe externalsecret/.test(h)) && s.history.some(h => /^(kubectl|k) logs payments|describe (pod|pods|po) payments/.test(h)),
+        success: s => s.cluster.pods.every(p => p.status === 'Running') && s.history.some(h => /describe externalsecret/.test(h)) && s.history.some(h => /^(kubectl|k) describe (pod|pods|po) payments/.test(h)),
         successText: 'MAHAGURU-LEVEL DEBUGGING! 👑 Dekho kya kiya tumne: <b>symptom</b> (pod ConfigError) → <b>layer 1</b> (Secret missing) → <b>layer 2</b> (ESO ka RBAC Forbidden) → <b>root</b> (drift — kisi ne binding delete ki, git ka sach alag tha) → <b>fix at root</b> (ArgoCD sync). Junior symptom patch karta (manual Secret — try kiya ho toh dekha uska anjaam!), senior chain TRACE karta hai. Yehi poore course ka nichod hai.',
         hints: [
           'kubectl describe pod payments → "secret not found". Woh secret ESO banata hai → kubectl get externalsecrets',
           'kubectl describe externalsecret payments-db-creds → ESO ka RBAC Forbidden! ESO operator ke logs bhi dekho. Phir: argocd app list (drift?)',
           'argocd app diff platform-rbac → binding git mein hai, cluster mein nahi (drift!) → argocd app sync platform-rbac (root fix — manual secret mat banana!)',
         ],
+        solution: ['kubectl get pods', 'kubectl describe pod payments-9d8e7f-p1', 'kubectl get externalsecrets', 'kubectl describe externalsecret payments-db-creds', 'kubectl logs eso-operator-5a4b3c-e1', 'argocd app list', 'argocd app diff platform-rbac', 'argocd app sync platform-rbac'],
       },
       {
         type: 'incident',

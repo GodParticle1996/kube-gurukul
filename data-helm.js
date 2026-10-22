@@ -135,9 +135,9 @@ helm install shop ./shop -f values-prod.yaml --set image.tag=2.5
             q: 'Ek hi chart se same cluster mein 3 releases (shop-dev, shop-staging, shop-prod) — possible?',
             choices: [
               'Haan — chart blueprint hai, release uska instance; har release ka apna naam, apni values, apni revision history',
-              'Nahi — ek chart ka ek hi release ho sakta hai',
-              'Haan par sabki values same hongi',
-              'Sirf alag clusters mein possible hai',
+              'Nahi — ek chart ka ek hi release ho sakta hai; doosra install karoge toh Helm pehle wala overwrite kar dega',
+              'Haan par teeno ki values same hongi — values chart ki property hain, release ki nahi; alag config ke liye alag chart chahiye',
+              'Sirf alag namespaces ya clusters mein possible hai — ek namespace mein ek chart ka sirf ek hi release ban sakta hai',
             ],
             answer: 0,
             explain: 'Yehi chart-vs-release ka farak hai (class vs object jaisa). Isliye release ka naam resources ke naam mein aata hai — <code>{{ .Release.Name }}</code> — taaki 3 releases takraayein nahi.',
@@ -146,12 +146,12 @@ helm install shop ./shop -f values-prod.yaml --set image.tag=2.5
             q: 'helm uninstall karne par by default release ki history ka kya hota hai?',
             choices: [
               'History bhi delete ho jaati hai — rollback ab possible nahi (bachane ke liye: --keep-history)',
-              'History hamesha rehti hai',
-              'History 30 din tak rehti hai',
-              'History etcd mein permanent save rehti hai',
+              'History hamesha rehti hai — uninstall sirf pods hataata hai, release ke Secrets kabhi delete nahi hote',
+              'History 30 din tak rehti hai, phir Helm ka garbage collector use saaf karta hai — tab tak rollback chalta hai',
+              'History etcd mein permanent save rehti hai — helm rollback uninstall ke baad bhi kaam karta hai',
             ],
             answer: 0,
-            explain: 'Helm 3 mein release ka data namespace ke Secrets mein rehta hai (sh.helm.release.v1.*). Uninstall = woh bhi gaya. --keep-history rakhe toh release "uninstalled" status mein dikhta hai aur rollback ho sakta hai.',
+            explain: 'Helm 3/4 mein release ka data namespace ke Secrets mein rehta hai (sh.helm.release.v1.*). Uninstall = woh bhi gaya. --keep-history rakhe toh release "uninstalled" status mein dikhta hai aur rollback ho sakta hai.',
           },
         ],
       },
@@ -163,10 +163,10 @@ helm install shop ./shop -f values-prod.yaml --set image.tag=2.5
         {
           q: '"Helm kya hai aur kyun use karte ho?" — sabse complete jawab?',
           choices: [
-            'Do cheezein: (1) K8s ka package manager — 3rd-party stacks ek command mein install/upgrade, (2) templating + release management — apni app ka ek chart, har env ki alag values, aur revision history se rollback',
-            'Helm YAML files ko chhota karne ka tool hai',
-            'Helm Kubernetes ka alternative hai',
-            'Helm sirf Kubernetes install karne ke liye hota hai',
+            'Do kaam: (1) K8s ka package manager — 3rd-party stacks ek command mein install/upgrade; (2) templating + release management — ek chart, har env ki values, revisions se rollback',
+            'Helm YAML files ko chhota aur readable banane ka formatter hai — templates sirf copy-paste bachate hain, cluster mein jo jaata hai woh plain kubectl apply jaisa hi hai',
+            'Helm Kubernetes ka alternative orchestrator hai — chhoti teams kubectl/Deployments ki jagah Helm releases se apps chalati hain',
+            'Helm Kubernetes cluster install karne ka tool hai (kubeadm jaisa) — control plane aur nodes setup karta hai, apps ke liye nahi',
           ],
           answer: 0,
           explain: 'Dono roles bolo — bahut log sirf "templating" bolte hain aur package-manager wala hissa bhool jaate hain. Release management (revisions + rollback) ka mention extra points deta hai.',
@@ -174,10 +174,10 @@ helm install shop ./shop -f values-prod.yaml --set image.tag=2.5
         {
           q: 'Chart, Release aur Revision mein farak?',
           choices: [
-            'Chart = blueprint/package (templates + defaults); Release = cluster mein us chart ka ek named instance; Revision = us release ka version number (har upgrade/rollback par +1)',
-            'Teeno same cheez ke naam hain',
-            'Chart = installed app, Release = YAML file, Revision = git commit',
-            'Release chart ka naya version hota hai',
+            'Chart = blueprint/package (templates + defaults); Release = cluster mein us chart ka named instance; Revision = release ka version number (har upgrade/rollback par +1)',
+            'Chart = cluster mein installed app; Release = us app ki YAML file; Revision = git commit jisse woh YAML aayi — Helm git se versions padhta hai, isliye repo zaroori',
+            'Teeno same cheez ke naam hain — chart Helm 2 ka shabd tha, release Helm 3 ka aur revision Helm 4 ka; matlab sab ek hi hai',
+            'Release = chart ka naya version (0.1.0 → 0.2.0), Revision = us version ka build number, aur Chart = repo ka naam jahan se aaya',
           ],
           answer: 0,
           explain: 'Class → object → version. Ek line mein bolo: "Ek chart se kai releases; har release ki apni revision history."',
@@ -296,10 +296,10 @@ vim shop/templates/...  # badlo
 
 helm lint shop          # 1. syntax/best-practice check (sabse sasta)
 helm template shop      # 2. rendered YAML AANKHON se dekho
-helm install shop ./shop --dry-run --debug   # 3. server-side validation bhi
+helm install shop ./shop --dry-run=server   # 3. API server se validate (plain --dry-run sirf client-side!)
 helm install shop ./shop                     # 4. asli install</pre>
        <p><b>Kyun yeh order?</b> Har step pichle se mehenga hai. lint 1 second mein
-       typo pakad leta hai; dry-run cluster tak jaata hai. <b>Kabhi bhi seedha install
+       typo pakad leta hai; <code>--dry-run=server</code> cluster tak jaata hai. <b>Kabhi bhi seedha install
        mat karo</b> — pehle render dekho, warna "ye 40 lines ka YAML kahan se aaya?"
        wala confusion.</p>`,
     ],
@@ -393,9 +393,9 @@ helm install shop ./shop                     # 4. asli install</pre>
             q: 'Tumne sirf image tag 2.4.0 → 2.5.0 badla (koi template change nahi). Chart.yaml mein kya update karoge?',
             choices: [
               'Dono: appVersion "2.5.0" (app badli) aur version 0.1.1 (chart ka content badla, isliye naya package version)',
-              'Sirf appVersion — chart toh waisa hi hai',
-              'Sirf version',
-              'Kuch nahi — image tag values.yaml mein hai',
+              'Sirf appVersion — chart ke templates toh waise hi hain, isliye chart ka version badalne ki zaroorat nahi',
+              'Sirf version — appVersion sirf documentation hai, use image tag se koi lena-dena nahi, badlo na badlo',
+              'Kuch nahi — image tag values.yaml mein hai, aur values badalna chart ka content badalna nahi maana jaata',
             ],
             answer: 0,
             explain: 'War-story yaad karo: chart ka content (default tag bhi content hai!) badla toh version BADHAO, warna cached/duplicate package ka khatra. appVersion app ke liye, version chart ke liye — dono.',
@@ -403,21 +403,21 @@ helm install shop ./shop                     # 4. asli install</pre>
           {
             q: 'appVersion: 2.10 (bina quotes) likha. Problem?',
             choices: [
-              'YAML isse NUMBER samjhega → 2.1 ban jayega (trailing zero gayab)! Isliye appVersion hamesha quotes mein: "2.10"',
-              'Koi problem nahi',
-              'Helm reject kar dega',
-              'Version 210 ban jayega',
+              'YAML ise NUMBER samjhega → 2.1 (zero gayab)! helm lint ERROR deta hai, par install/template chupchaap 2.1 chala dete hain — isliye quotes: "2.10"',
+              'Koi problem nahi — Helm Chart.yaml ko hamesha string ki tarah padhta hai, isliye 2.10 waisa hi rahega aur image tag bhi sahi banega',
+              'helm install turant reject kar dega ki appVersion string nahi hai — release banegi hi nahi, isliye production mein koi nuksaan nahi hoga',
+              'Version 210 ban jaayega — YAML decimal point ko ignore karta hai, isliye registry mein image tag 210 dhoondha jaayega',
             ],
             answer: 0,
-            explain: 'Classic YAML trap. 2.10 float hai → 2.1. Image tag "2.10" chahiye tha, mila "2.1" → wrong image ya ImagePullBackOff. Quotes = free insurance.',
+            explain: 'Classic YAML trap (Helm 3.16 aur 4.0.4 dono par chala ke dekha): 2.10 float hai → 2.1. <code>helm lint</code> pakadta hai (<i>appVersion should be of type string</i>), par lint skip kiya toh install chupchaap 2.1 use karta hai → image tag "2.1" → wrong image ya ImagePullBackOff. Quotes = free insurance.',
           },
           {
             q: 'templates/ mein file ka naam "_helpers.tpl" — underscore kyun?',
             choices: [
               'Underscore se shuru hone wali files render/apply NAHI hoti — sirf define/include ke liye partials hoti hain',
-              'Sirf convention hai, koi technical matlab nahi',
-              'Underscore se file sabse pehle load hoti hai',
-              'Helm 2 ki purani zaroorat thi',
+              'Sirf naming convention hai — underscore wali files bhi baaki templates ki tarah render aur apply hoti hain',
+              'Underscore wali file sabse pehle load hoti hai, isliye usme likhe resources baaki sabse pehle apply hote hain',
+              'Helm 2 ki purani zaroorat thi — Helm 3/4 mein underscore ka koi asar nahi, sab files manifest hain',
             ],
             answer: 0,
             explain: 'Technical rule hai! Bina underscore ke Helm usse manifest samajhkar apply karega → "error validating data: kind not set" jaisa error. Partials = underscore.',
@@ -432,10 +432,10 @@ helm install shop ./shop                     # 4. asli install</pre>
         {
           q: '"Chart.yaml mein version aur appVersion ka farak?" (Bahut poocha jaata hai!)',
           choices: [
-            'version = CHART ka apna SemVer (templates/values badle toh badhao, package ka naam isi se banta hai); appVersion = andar chal rahi APP ka version (informational, aksar default image tag) — hamesha quotes mein rakho',
-            'Dono same hote hain, alias hain',
-            'version app ka, appVersion chart ka',
-            'appVersion sirf display ke liye hai, koi farak nahi padta',
+            'version = CHART ka SemVer (templates/values badle toh badhao, package naam isi se); appVersion = andar ki APP ka version (informational, aksar default image tag) — quotes mein',
+            'Dono same hain, alias hain — Helm dono mein se jo bhi bada ho use package version maanta hai, isliye kisi ek ko badhana kaafi hai, doosra optional',
+            'version = app ka version (image tag isi se banta hai), appVersion = chart ka SemVer jo package ke naam mein jaata hai',
+            'appVersion sirf display ke liye hai aur version sirf Helm repo ke liye — runtime par dono ka koi asar nahi, isliye inhe kabhi badalne ki zaroorat nahi padti',
           ],
           answer: 0,
           explain: 'Farak + "kab badhta hai" + quotes wala gotcha — teeno bolo. Bonus: "chart content badla par version nahi badha toh repo mein duplicate/cached package ka risk hota hai" — real experience ka signal.',
@@ -443,10 +443,10 @@ helm install shop ./shop                     # 4. asli install</pre>
         {
           q: 'Naya chart likha hai, install se pehle tumhara verification flow?',
           choices: [
-            'helm lint (sasta syntax/best-practice check) → helm template (rendered YAML aankhon se padho) → helm install --dry-run --debug (server-side validation) → tab install',
-            'Seedha install karo, error aaye toh dekhenge',
-            'Sirf helm install --dry-run kaafi hai',
-            'YAML file manually padh lo, tools ki zaroorat nahi',
+            'helm lint (sasta check) → helm template (rendered YAML padho) → helm install --dry-run=server (API validation) → tab asli install',
+            'Seedha helm install karo — error aaye toh helm uninstall karke fix karo; dry-run aur lint cluster ke real errors nahi pakadte',
+            'Sirf helm install --dry-run kaafi hai — woh lint, template aur server validation teeno ek saath kar deta hai, alag steps time waste',
+            'templates/ ki YAML files manually padh lo — Go template syntax dekh ke hi output samajh aa jaata hai, tools ki zaroorat nahi',
           ],
           answer: 0,
           explain: 'Escalating cost ka principle: har step pichle se mehenga par zyada thorough. Bolna mat bhoolo ki template se ACTUAL rendered output dikhta hai — "template + values dono sahi lag rahe the par render kuch aur nikla" bahut common hai.',
@@ -454,10 +454,10 @@ helm install shop ./shop                     # 4. asli install</pre>
         {
           q: 'Team ka shared chart hai — usme kaunsi cheez kabhi commit nahi karni chahiye?',
           choices: [
-            'Real secrets (DB passwords, API keys) values.yaml ya templates mein — woh git mein chale jaayenge; secrets ESO/Vault/helm-secrets se aane chahiye',
-            'values.yaml — woh har user apna banata hai',
-            'NOTES.txt — woh auto-generate hota hai',
-            'Chart.yaml ka appVersion',
+            'Real secrets (DB passwords, API keys) values.yaml ya templates mein — git mein chale jaayenge; secrets ESO/Vault se aane chahiye',
+            'values.yaml — har developer apni local values khud banata hai, isliye shared chart mein values.yaml commit karna conflict laata hai',
+            'NOTES.txt — woh har install par auto-generate hota hai, commit karne se purane notes stale ho jaate hain',
+            'Chart.yaml ka appVersion — CI pipeline har build par khud likhta hai, commit karne se version conflict hote hain',
           ],
           answer: 0,
           explain: 'Track 3 (Secrets) ka gyaan yahan lagta hai. Chart mein secret ka PLACEHOLDER/reference ho (existingSecret: my-secret), value nahi. Yeh awareness security-minded engineer ka signal hai.',
@@ -478,13 +478,13 @@ cat shop/templates/_helpers.tpl # naming helpers — abhi samajh na aaye toh the
 helm lint shop
 helm template shop | head -60   # rendered YAML — {{ }} gayab, asli values aa gayi!
 helm template shop | grep -c "kind:"   # kitne manifests bane?
-helm install shop ./shop --dry-run --debug | head -30
+helm install shop ./shop --dry-run=server | head -30   # cluster chahiye (kind/minikube)
 rm -rf shop</pre>
       <p>✅ Self-check: <code>helm template</code> ke output mein <code>{{ }}</code> bacha? Nahi na — sab render ho gaya. Yeh output hi cluster mein jaata hai.</p>`,
     cards: [
       { front: 'version vs appVersion (Chart.yaml)?', back: '<b>version</b> = CHART ka SemVer — templates/values badle toh badhao (package naam isi se). <b>appVersion</b> = andar ki APP ka version (aksar default image tag). Hamesha quotes: <code>appVersion: "2.10"</code> warna YAML 2.1 bana dega!' },
       { front: 'templates/ mein underscore file (_helpers.tpl) kyun?', back: 'Underscore se shuru hone wali files <b>render/apply nahi hoti</b> — woh sirf partials hain (define/include ke liye). Bina underscore ke Helm usse manifest samajhkar apply karega → error.' },
-      { front: 'Chart dev ka loop?', back: '<code>helm lint</code> (1 sec, syntax) → <code>helm template</code> (rendered YAML aankhon se dekho) → <code>helm install --dry-run --debug</code> (server validation) → <code>helm install</code>. Har step pichle se mehenga — sasta pehle.' },
+      { front: 'Chart dev ka loop?', back: '<code>helm lint</code> (1 sec, syntax) → <code>helm template</code> (rendered YAML aankhon se dekho) → <code>helm install --dry-run=server</code> (API server validation — plain <code>--dry-run</code> sirf client-side) → <code>helm install</code>. Har step pichle se mehenga — sasta pehle.' },
       { front: 'Chart ki 4 mukhya cheezein?', back: '<b>Chart.yaml</b> (passport: naam/version/appVersion/deps), <b>values.yaml</b> (defaults = menu card), <b>templates/</b> ({{ }} wale manifests + _helpers.tpl + NOTES.txt), <b>charts/</b> (subcharts).' },
     ],
   },
@@ -611,9 +611,9 @@ metadata:
             focus: '    resources:\n      {{- toYaml .Values.resources | nindent 6 }}',
             choices: [
               'resources:\n      limits:\n        memory: 512Mi',
-              'resources: {limits: {memory: 512Mi}}',
+              'resources:\n      limits: {memory: 512Mi}',
               'resources:\nlimits:\nmemory: 512Mi',
-              'resources: 512Mi',
+              'resources:\n        limits:\n        memory: 512Mi',
             ],
             answer: 0,
             explain: '<code>toYaml</code> object ko YAML text mein badalta hai, <code>nindent 6</code> newline + 6 spaces ka indent lagata hai har line par. Yeh jodi (toYaml+nindent) har production chart mein milegi — resources, nodeSelector, annotations sab ke liye.',
@@ -622,9 +622,9 @@ metadata:
             q: 'Agar <code>nindent 6</code> ki jagah <code>indent 6</code> likh dein toh?',
             choices: [
               'Newline nahi lagega — output "resources:      limits:" jaisa ek hi line par chipak jayega → YAML parse error',
-              'Bilkul same output',
-              'Indent 6 ki jagah 7 ho jayega',
-              'Helm error dega ki indent invalid hai',
+              'Bilkul same output — indent bhi pehle newline lagata hai, nindent bas uska purana naam hai',
+              'Indent 6 ki jagah 7 ho jaayega — nindent ek extra space jodta hai jo YAML ko valid banata hai',
+              'Helm render par hi error dega ki indent ke saath toYaml allowed nahi — sirf nindent chalta hai',
             ],
             answer: 0,
             explain: '<b>n</b>indent = <b>n</b>ewline + indent. Sirf indent karo toh content pichli line se juda rehta hai. Yeh #1 "did not find expected key" ka reason hai. Yaad rakho: block start kar rahe ho toh nindent.',
@@ -638,7 +638,7 @@ metadata:
         template: '{{- {0} "shop.fullname" -}}\n{{ .Release.Name }}-{{ .Chart.Name }}\n{{- end }}\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: {{ {1} "shop.fullname" . }}\nspec:\n  replicas: {{ .Values.replicaCount }}\n  template:\n    spec:\n      containers:\n      - name: shop\n        image: "{{ .Values.image.repo }}:{{ .Values.image.tag | {2} .Chart.AppVersion }}"\n        env:\n        - name: DB_HOST\n          value: {{ .Values.dbHost | {3} "dbHost values.yaml mein zaroori hai!" }}',
         blanks: [
           { answer: 'define', explain: '<code>define</code> se named template banta hai (_helpers.tpl mein). Naam hamesha chart ke naam se prefix karo — subcharts mein clash na ho.' },
-          { answer: 'include', explain: '<code>include</code> (na ki template) — kyunki iska output pipe kiya ja sakta hai. Aur "." zaroori hai: poora context pass karna padta hai warna .Release andar dikhega hi nahi!' },
+          { answer: 'include', explain: '<code>include</code> (na ki template) — kyunki iska output pipe kiya ja sakta hai. Aur "." zaroori hai: include ko naam + context dono chahiye — dot bhoole toh render hi fail (<i>wrong number of args for include</i>).' },
           { answer: 'default', explain: 'tag na ho toh appVersion — classic fallback. (Ulta likhna galti hai: <code>default .Values.image.tag .Chart.AppVersion</code> — pipeline mein value LEFT se aati hai.)' },
           { answer: 'required', explain: '<code>required</code> value missing hone par render hi FAIL kar deta hai, tumhare message ke saath — chup-chaap khaali value se hazaar guna behtar. Zaroori config par hamesha lagao.' },
         ],
@@ -653,9 +653,9 @@ metadata:
             q: '<code>{{ if }}</code> vs <code>{{- if }}</code> — farak?',
             choices: [
               '{{- }} left ka whitespace+newline kha jaata hai — bina iske render mein khaali lines rehti hain jo list items ke beech YAML tod sakti hain',
-              'Koi farak nahi, style choice hai',
-              '{{- }} tez chalta hai',
-              '{{- }} sirf comments ke liye hai',
+              'Koi farak nahi — dash sirf style choice hai jo templates ko padhne mein aasan banata hai, output bilkul same rehta hai',
+              '{{- }} template ko tez render karta hai kyunki Go engine whitespace parse karna skip karta hai — bade charts mein render time aadha',
+              '{{- }} sirf comments ke liye hota hai — iske andar likha code render nahi hota, debugging ke waqt lines band karne ke liye',
             ],
             answer: 0,
             explain: 'War-story wala 3-ghante-ka-dard. Control-flow lines ({{- if }}, {{- end }}, {{- range }}) par dash lagana habit bana lo — 99% cases mein wahi chahiye hota hai.',
@@ -663,21 +663,21 @@ metadata:
           {
             q: 'Named template mein <code>{{ include "shop.labels" }}</code> likha (bina "." ke). Kya hoga?',
             choices: [
-              'Andar .Values/.Release kuch nahi dikhega (context pass hi nahi hua) — khaali ya galat output',
-              'Automatic context mil jaata hai',
-              'Syntax error',
-              'Sirf .Chart dikhega',
+              'Render hi FAIL: "wrong number of args for include: want 2 got 1" — include ko naam + context dono chahiye: include "shop.labels" .',
+              'Chupchaap khaali output — .Values/.Release andar nil honge aur labels khaali aayenge; koi error ya warning nahi dikhegi',
+              'Helm apne aap root context (.) pass kar deta hai — dot likhna optional hai, sirf purane Helm 2 charts mein zaroori hota tha',
+              'Sirf .Chart dikhega — bina context ke include sirf Chart.yaml ki fields dekh sakta hai, .Values nahi',
             ],
             answer: 0,
-            explain: 'Bahut common galti! <code>include "name" .</code> — woh akela dot poora context (Values/Release/Chart) pass karta hai. Bhool gaye toh chup-chaap khaali output — sabse confusing bug.',
+            explain: 'Asli Helm (3.16 aur 4.0.4) par chala ke dekha: <code>include</code> function ko 2 arguments chahiye — dot bhoole toh render error. ⚠️ Chupchaap-khaali-output wala bug <code>{{ template "x" }}</code> (template ACTION) mein hota hai — wahan dot bhoole toh .Release/.Values nil, koi error nahi. Isliye: hamesha include, hamesha dot.',
           },
           {
             q: '<code>{{ .Values.podAnnotations }}</code> khaali object hai. Best practice kya hai?',
             choices: [
               '{{- with .Values.podAnnotations }} block use karo — khaali ho toh poora annotations: section skip ho jaayega',
-              'Seedha toYaml kar do, khaali chalega',
-              'if-else se manually check karo har jagah',
-              'Khaali values allow mat karo',
+              'Chart mein podAnnotations ka default koi dummy value rakho (jaise team: x) taaki map kabhi khaali hi na ho',
+              'Har jagah if-else se manually check karo — with sirf strings ke liye kaam karta hai, maps ke liye nahi',
+              'Khaali values allow hi mat karo — values.schema.json mein minProperties: 1 lagao, khaali map par install fail ho',
             ],
             answer: 0,
             explain: '<code>with</code> do kaam karta hai: (1) null/khaali par block skip, (2) andar "." ko us value par set kar deta hai. Isse "annotations:" likh ke neeche kuch na hone wala invalid YAML nahi banta.',
@@ -692,10 +692,10 @@ metadata:
         {
           q: '"Helm chart render ho gaya par kubectl apply par YAML error aa raha hai — kaise debug karoge?"',
           choices: [
-            'helm template se rendered output nikaalo aur AANKHON se padho — 90% cases indentation/whitespace ka hota hai (nindent bhool gaye, ya {{- }} na hone se khaali lines); phir --debug se aur detail',
-            'Chart delete karke naya banao',
-            'Values file se saari optional values hata do',
-            'Kubernetes version upgrade karo',
+            'helm template se rendered output nikaalo aur AANKHON se padho — aksar indentation/whitespace hota hai (nindent bhoole, {{- }} nahi); phir --debug se detail',
+            'Chart delete karke helm create se naya chart banao — purane chart ka whitespace corrupt ho jaata hai, naya clean hota hai',
+            'Values file se saari optional values hata do — jab tak sirf required values rahengi, YAML errors apne aap gayab ho jaate hain, phir ek-ek wapas jodo',
+            'Kubernetes version upgrade karo — purane API servers naye YAML features (anchors, multi-docs) parse nahi kar paate',
           ],
           answer: 0,
           explain: 'Core insight bolo: <b>Helm YAML nahi samajhta, text banata hai</b> — isliye indentation bug template ka bug hai. helm template + padhna hi asli debugging hai. "did not find expected key" ≈ whitespace problem.',
@@ -703,10 +703,10 @@ metadata:
         {
           q: '<code>include</code> aur <code>template</code> mein farak — aur tum kaunsa use karte ho?',
           choices: [
-            'include ka output pipe ho sakta hai (include "x" . | nindent 4), template ka nahi — isliye hamesha include, khaaskar jab indentation chahiye',
-            'template naya hai, include purana',
-            'Dono bilkul same hain',
-            'template sirf subcharts mein chalta hai',
+            'include ka output pipe ho sakta hai (include "x" . | nindent 4), template ka nahi — isliye hamesha include',
+            'template naya hai aur include purana — Helm 3 mein include deprecated hai, isliye template use karo',
+            'Dono bilkul same hain — include bas template ka alias hai jo padhne mein zyada saaf lagta hai, output same',
+            'template sirf subcharts ke andar chalta hai aur include parent chart mein — scope ke hisaab se chunna padta hai',
           ],
           answer: 0,
           explain: 'Chhota par pakka signal ki tumne asli charts likhe hain. Yaad rakhne ka trick: "include = pipe-able".',
@@ -715,9 +715,9 @@ metadata:
           q: 'Zaroori value (jaise dbHost) miss ho jaye toh chart ko kya karna chahiye?',
           choices: [
             'required "dbHost is required" se render FAIL karo — early aur clear error, chup-chaap khaali value se pod baad mein CrashLoop karega',
-            'Khaali chhod do, K8s handle kar lega',
-            'default "" laga do',
-            'Docs mein likh do ki yeh zaroori hai',
+            'Khaali chhod do — Kubernetes khaali env value par container start hi nahi karta, toh problem deploy ke turant baad dikh jaayegi',
+            'default "" laga do — khaali string se template fail nahi hoga aur app apna default host use kar legi',
+            'Chart ke README mein likh do ki dbHost zaroori hai — users padh lenge, template mein check karna over-engineering hai',
           ],
           answer: 0,
           explain: 'Fail fast! Track 1 ka CrashLoop war-story yaad hai (missing DB_HOST)? <code>required</code> usi class ke bugs ko deploy se PEHLE pakad leta hai. Interviewer ko yeh connection batao — pura system dikhai deta hai.',
@@ -916,9 +916,9 @@ helm upgrade shop ./shop -f values-prod.yaml      # rev 2: replicaCount wapas
             q: 'Pichle upgrade mein <code>--set debug=true</code> diya tha. Aaj sirf <code>-f values-prod.yaml</code> se upgrade kiya. debug ab?',
             choices: [
               'Gayab — false/default ho gaya; Helm har upgrade par values naye sire se banata hai',
-              'true hi rahega — Helm purani values yaad rakhta hai',
-              'Error aayega ki debug missing hai',
-              'true rahega par warning aayegi',
+              'true hi rahega — Helm pichli release ki saari values yaad rakhta hai aur sirf naye diye keys badalta hai',
+              'Upgrade error dega ki debug missing hai — pehle diye --set keys har agle upgrade mein dene zaroori hain',
+              'true rahega par Helm warning dega ki --set value purani hai, --reset-values se hatao',
             ],
             answer: 0,
             explain: 'THE gotcha (war-story wala 3 AM incident). Har upgrade = fresh computation. --reuse-values isse "fix" karta hai par woh apni problem laata hai (naye chart defaults nahi aate). Sahi tarika: sab kuch values file mein.',
@@ -926,10 +926,10 @@ helm upgrade shop ./shop -f values-prod.yaml      # rev 2: replicaCount wapas
           {
             q: 'values.schema.json ka sabse bada fayda?',
             choices: [
-              'Galat config (replicaCount: 0, typo wala service.type) install/upgrade se PEHLE fail karti hai, clear message ke saath — team ke liye guard-rail',
-              'Chart ko fast banata hai',
-              'Values file automatically bana deta hai',
-              'Secrets ko encrypt karta hai',
+              'Galat config (replicaCount: 0, typo wala service.type) install/upgrade se PEHLE clear error ke saath fail — team ke liye guard-rail',
+              'Chart render tez ho jaata hai — schema se Helm templates ko pehle se compile karke cache kar leta hai',
+              'Values file apne aap generate ho jaati hai — helm schema-gen schema se poora values.yaml bana deta hai',
+              'Secrets encrypt ho jaate hain — schema mein format: password likhne se Helm value encrypt karke release secret mein rakhta hai',
             ],
             answer: 0,
             explain: 'Shift-left validation: broken YAML cluster tak pahunchne se pehle ruk jaati hai. Shared/platform charts mein yeh must hai — warna har team apne tarike se galti karegi.',
@@ -949,9 +949,9 @@ helm upgrade shop ./shop -f values-prod.yaml      # rev 2: replicaCount wapas
             q: 'Final <code>image</code> object kya banega?',
             choices: [
               'repository: shop/web, tag: 2.5.0, pullPolicy: IfNotPresent — maps DEEP merge hote hain',
-              'sirf tag: 2.5.0 — poora image object replace ho jata hai',
-              'Error — repository missing hai',
-              'tag: "2.4.0" — default jeetta hai',
+              'Sirf tag: 2.5.0 — tumhari file ka image object poore default image object ko replace kar deta hai',
+              'Error — repository missing hai, Helm partial objects allow nahi karta jab tak --reuse-values na do',
+              'tag: "2.4.0" hi rahega — chart ke defaults user values se zyada strong hote hain jab key same ho',
             ],
             answer: 0,
             explain: 'Maps (objects) <b>deep merge</b> hote hain — tumne sirf tag diya, baaki keys defaults se aa gayi. Isliye chhoti values file likhna kaafi hota hai.',
@@ -977,10 +977,10 @@ helm upgrade shop ./shop -f values-prod.yaml      # rev 2: replicaCount wapas
         {
           q: '"Values ki precedence order batao" — poora chain?',
           choices: [
-            'chart values.yaml (defaults) < parent chart ki values (subcharts ke liye) < -f files (left→right) < --set / --set-string — neeche wala hamesha jeetta hai',
-            '--set sabse kamzor, values.yaml sabse strong',
-            'Sab merge hoke average nikalta hai',
-            'Jo alphabetically baad mein aaye woh jeetta hai',
+            'chart values.yaml < parent ki values (subcharts) < -f files (left→right) < --set / --set-string — neeche wala jeetta hai',
+            '--set sabse kamzor hai aur chart ka values.yaml sabse strong — chart author ka default hi final hota hai',
+            'Saari values merge hoke, conflict par alphabetically pehli file jeetti hai — -f ka order matter nahi karta',
+            '-f files right→left padhi jaati hain (pehli file jeetti hai), aur --set sirf naye keys add karta hai, purane override nahi',
           ],
           answer: 0,
           explain: 'Poora chain bolo (subchart wala step bhi!). Aur practical line jodo: "debug karne ke liye <code>helm get values</code> chalata hoon — usse pata chalta hai asli mein kya laga."',
@@ -988,10 +988,10 @@ helm upgrade shop ./shop -f values-prod.yaml      # rev 2: replicaCount wapas
         {
           q: 'Team ka rule kya hona chahiye — --set ya values files?',
           choices: [
-            'Config values FILES mein (git mein, PR review, reproducible); --set sirf CI se aane wali dynamic cheez (image tag/git SHA) ke liye — kyunki --set agle upgrade par gayab ho jaata hai',
-            '--set hi use karo, files bekar hain',
-            'Dono barabar hain, jo aasan lage',
-            'Sirf --set production mein, files dev mein',
+            'Config values FILES mein (git, PR review, reproducible); --set sirf CI ki dynamic cheez (image tag/SHA) ke liye — --set agle upgrade par gayab ho jaata hai',
+            '--set hi use karo — files commit karna bhool jaate hain, jabki --set command CI logs mein hamesha record rehti hai, wahi audit trail hai',
+            'Dono barabar hain — Helm dono ko same tarah store karta hai aur agla upgrade dono ko yaad rakhta hai, jo aasan lage',
+            'Production mein sirf --set (kyunki values files leak ho sakti hain) aur dev mein files — prod config kabhi git mein nahi',
           ],
           answer: 0,
           explain: 'Yeh sawal reproducibility ka hai. War-story sunao (3 AM --set → agle deploy par gayab → outage). Aur GitOps se jodo: "config git mein honi chahiye, command history mein nahi".',
@@ -1000,9 +1000,9 @@ helm upgrade shop ./shop -f values-prod.yaml      # rev 2: replicaCount wapas
           q: 'User ne <code>-f my.yaml</code> mein sirf <code>image.tag</code> diya. Baaki image fields (repository, pullPolicy) ka kya hoga?',
           choices: [
             'Defaults se aa jayenge — maps DEEP merge hote hain (par arrays/lists REPLACE hoti hain, woh gotcha yaad rakhna)',
-            'Sab gayab ho jayenge — poora object replace hota hai',
-            'Error aayega',
-            'pullPolicy default "Always" ho jayegi',
+            'Sab gayab ho jaayenge — tumhari file ka image object default ko poora replace karta hai, isliye repository bhi dena padega',
+            'Error aayega — partial object dene par Helm validation fail karta hai, poora image block likhna zaroori hai',
+            'pullPolicy Always ho jaayegi — tag badalne par Helm safety ke liye pullPolicy apne aap Always kar deta hai',
           ],
           answer: 0,
           explain: 'Deep-merge for maps, replace for arrays — yeh ek line poore Helm values model ko cover karti hai. Array wala exception bolna hi seniority dikhata hai.',
@@ -1213,9 +1213,9 @@ metadata:
             q: 'Parent values mein <code>image: {tag: "2.5"}</code> likha, chahte the ki web subchart ko mile. Kya hoga?',
             choices: [
               'Subchart ko NAHI milega — woh parent ki apni value ban gayi; subchart ke liye "web:" ke neeche nest karna padta hai',
-              'Subchart ko mil jayega automatically',
-              'Error aayega',
-              'Dono ko mil jayega',
+              'Subchart ko apne aap mil jaayega — Helm parent ki saari values subcharts mein bhi bhejta hai, naam se match karke',
+              'Render error aayega — parent values mein subchart ke naam ke bina image key allowed hi nahi hai',
+              'Dono ko mil jaayega — parent aur web subchart dono image.tag 2.5 use karenge, kyunki key same hai',
             ],
             answer: 0,
             explain: 'War-story wali galti. Har subchart apne naam ke scope mein rehta hai. Verify karne ka tarika: <code>helm template ./parent | grep image:</code> — aankhon se dekho.',
@@ -1223,10 +1223,10 @@ metadata:
           {
             q: 'Do subcharts ko same registry chahiye. Sabse saaf tarika?',
             choices: [
-              'global.imageRegistry — global values parent aur SAB subcharts ko dikhti hain',
-              'Har subchart mein alag-alag likho',
-              'Environment variable se',
-              'Subcharts ke beech values share ho hi nahi sakti',
+              'global.imageRegistry — global values parent aur SAB subcharts ko dikhti hain (Bitnami charts yahi karte hain)',
+              'Har subchart ke section mein alag-alag same registry likho — duplication hi sabse saaf hai',
+              'Environment variable REGISTRY set karo — Helm templates env vars padh ke registry bhar dete hain',
+              'Subcharts ke beech values share ho hi nahi sakti — har subchart ka alag values file banana padta hai',
             ],
             answer: 0,
             explain: '<code>global</code> hi cross-chart sharing ka official raasta hai. Bitnami charts isse heavily use karte hain (global.imageRegistry, global.storageClass). Baaki har subchart isolated hai.',
@@ -1234,10 +1234,10 @@ metadata:
           {
             q: 'Chart.lock file ka kaam?',
             choices: [
-              'Dependencies ke EXACT versions pin karti hai (package-lock.json jaisa) — sabke paas same subchart versions aayein; isse git mein commit karo',
-              'Chart ko read-only bana deti hai',
-              'Concurrent installs rokti hai',
-              'Values ko lock karti hai',
+              'Dependencies ke EXACT versions pin karti hai (package-lock.json jaisa) — sabko same subchart versions; git mein commit karo',
+              'Chart ko read-only bana deti hai — Chart.lock hone par koi values ya templates badal nahi sakta jab tak lock na hataao',
+              'Concurrent installs rokti hai — do log ek saath helm install karein toh lock file doosre ko wait karwati hai',
+              'Values ko lock karti hai — install ke waqt jo values thi woh freeze ho jaati hain aur --set unhe badal nahi sakta',
             ],
             answer: 0,
             explain: '<code>version: "0.3.x"</code> range likhi hai toh alag-alag time par alag versions aa sakte hain — lock file wahi problem rokti hai. "Mere laptop par chal raha tha" ka ilaaj.',
@@ -1252,10 +1252,10 @@ metadata:
         {
           q: '"5 microservices hain — ek umbrella chart ya har service ka apna chart?" Kya bologe?',
           choices: [
-            'Depends: umbrella tab jab sab ek saath deploy/version hote hain (tightly coupled, ek release train); alag charts tab jab teams independently deploy karti hain — aksar best: har service ka apna chart + shared LIBRARY chart standards ke liye',
-            'Hamesha umbrella — ek command better hai',
-            'Hamesha alag charts',
-            'Helm microservices ke liye bana hi nahi hai',
+            'Depends: umbrella jab sab ek saath deploy/version hote hain (ek release train); alag charts jab teams independently deploy karein — aksar best: per-service chart + shared library chart',
+            'Hamesha ek umbrella chart — ek command se poora stack deploy, ek version, ek rollback; alag charts rakhna sirf complexity aur version drift badhata hai, teams bhi confuse hoti hain',
+            'Hamesha alag charts, kabhi umbrella nahi — umbrella Helm 3 mein deprecated hai aur subcharts ki values share nahi ho sakti',
+            'Helm microservices ke liye bana hi nahi — 5+ services par Kustomize ya plain YAML hi use karo, Helm sirf 3rd-party installs ke liye',
           ],
           answer: 0,
           explain: 'Trade-off dikhao: umbrella = atomic release + ek jagah config, par ek service ka chhota change poore stack ko re-deploy karta hai aur teams block hoti hain. Library chart wala jawab senior-level hai.',
@@ -1264,9 +1264,9 @@ metadata:
           q: 'Subchart (postgresql) ko dev mein chahiye, prod mein managed RDS use karna hai. Kaise?',
           choices: [
             'Chart.yaml mein condition: postgresql.enabled, aur values-prod.yaml mein postgresql.enabled: false — poora subchart render hi nahi hoga',
-            'Prod ke liye alag umbrella chart banao',
-            'Prod mein install ke baad manually delete kar do',
-            'Possible nahi hai',
+            'Prod ke liye alag umbrella chart banao jisme postgresql dependency hi na ho — environments ke charts alag rakhna saaf hai',
+            'Prod mein install ke baad postgresql StatefulSet manually delete kar do — chart ke baaki hisse par asar nahi padega',
+            'Possible nahi — dependency ek baar Chart.yaml mein aa gayi toh har environment mein render hogi; values se band nahi hoti, condition sirf Helm 2 mein tha',
           ],
           answer: 0,
           explain: 'condition/tags exactly isi liye hain. Ek chart, dono environments — 12-factor ka wahi principle (Track 1 Level 7). Bonus: "tags se ek saath multiple subcharts on/off kar sakte hain".',
@@ -1274,10 +1274,10 @@ metadata:
         {
           q: 'helm dependency update kab chalana padta hai aur kya banta hai?',
           choices: [
-            'Jab Chart.yaml ki dependencies badlein (ya pehli baar) — subcharts .tgz banke charts/ mein aate hain aur Chart.lock (exact versions) banti/update hoti hai; bina iske install "missing in charts/ directory" se fail hota hai',
-            'Har install se pehle zaroori hai',
-            'Sirf tab jab subchart ka code badle',
-            'Woh cluster se subcharts download karta hai',
+            'Jab Chart.yaml dependencies badlein (ya pehli baar) — subcharts .tgz banke charts/ mein aate hain aur Chart.lock update hoti hai; bina iske install "missing in charts/" se fail',
+            'Har helm install/upgrade se pehle zaroori hai — dependencies har baar fresh download honi chahiye, warna purane subcharts local cache se aate hain aur Chart.lock bhi ignore hoti hai',
+            'Sirf tab jab kisi subchart ka source code badle — Chart.yaml ki dependency list badalne par Helm khud apne aap update kar leta hai',
+            'Woh cluster mein already installed releases se subcharts download karke charts/ mein daalta hai — internet ki zaroorat nahi',
           ],
           answer: 0,
           explain: 'Practical detail: CI mein yeh step aksar bhoola jaata hai → pipeline fail. Lock file commit karne ki baat bhi karo — reproducibility.',
@@ -1537,35 +1537,35 @@ helm rollback shop &lt;last-good-rev&gt;   # aksar isse hi nikal jaata hai
         {
           q: '"Error: another operation (install/upgrade/rollback) is in progress" — kya karoge?',
           choices: [
-            'Release pending-* status mein atki hai (pichla operation beech mein mara). helm history se pending revision dekho → helm rollback &lt;last-good&gt; se unstick karo (ya kabhi deploy hi na hua ho toh helm uninstall) → phir --atomic ke saath dobara',
-            'Cluster restart karo',
-            'Helm reinstall karo',
-            'Kuch der wait karo, apne aap theek ho jayega',
+            'Release pending-* mein atki hai: helm history se pending revision dekho → helm rollback &lt;last-good&gt; (pehla install ho toh uninstall) → phir --rollback-on-failure ke saath dobara',
+            'Cluster restart karo — Helm ka lock API server ki memory mein hota hai; restart hote hi lock hat jaata hai aur pending upgrade apne aap poora ho jaata hai, kuch aur nahi',
+            'Helm CLI reinstall karo — lock local ~/.helm cache mein hota hai, purana Helm binary hatane se saaf ho jaata hai',
+            'Kuch der wait karo — Helm 15 minute baad pending operation ko khud timeout karke release ko wapas deployed mark kar deta hai, kuch karna nahi',
           ],
           answer: 0,
           explain: 'Bahut common real-world situation (CI timeout se hota hai). Diagnosis + fix + prevention (--atomic --timeout) teeno bolo — tab pata chalta hai ki tumne yeh sach mein bhugta hai.',
         },
         {
-          q: '"Helm 3 CRDs ko kaise handle karta hai?" (Favourite gotcha question!)',
+          q: '"Helm (3 aur 4) CRDs ko kaise handle karta hai?" (Favourite gotcha question!)',
           choices: [
-            'crds/ folder ki CRDs sirf INSTALL par banti hain — upgrade/rollback par Helm unhe chhoota nahi (kyunki CRD delete = saare custom resources delete). Isliye CRD upgrades manually (kubectl apply -f crds/) ya operator ke docs ke hisaab se karne padte hain',
-            'Helm CRDs ko baaki manifests ki tarah manage karta hai',
-            'Helm CRDs support hi nahi karta',
-            'CRDs har upgrade par automatically replace hoti hain',
+            'crds/ folder ki CRDs sirf INSTALL par banti hain — upgrade/rollback par Helm unhe chhoota nahi (CRD delete = saare custom resources delete); CRD upgrades manually ya operator docs se',
+            'Helm CRDs ko baaki manifests ki tarah manage karta hai — har upgrade par crds/ folder ki CRDs bhi apply hoti hain aur rollback par purani wapas',
+            'Helm CRDs support hi nahi karta — chart mein CRD ho toh install fail hota hai, isliye CRDs hamesha alag chart ya kubectl apply se dene padte hain; crds/ folder ignore hota hai',
+            'CRDs har upgrade par automatically replace hoti hain aur uninstall par delete — isliye CRD wale charts uninstall karna khatarnaak hai',
           ],
           answer: 0,
-          explain: 'Design ka REASON bolna important hai (safety — CRD delete cascading hai). War-story bhi sunao: purani CRD → naye fields reject → "unknown field" errors.',
+          explain: 'Design ka REASON bolna important hai (safety — CRD delete cascading hai). Helm 4.0.4 par bhi chala ke dekha: crds/ ki CRD upgrade par nahi badli, uninstall par bhi rahi. War-story bhi sunao: purani CRD → naye fields reject → "unknown field" errors.',
         },
         {
           q: 'Production upgrade mein tum kaunse flags lagate ho aur kyun?',
           choices: [
-            '--atomic (fail par khud rollback — aadha-adhoora state nahi bachta) + --timeout (kitna intezaar) ; aur deploy ke baad helm test se smoke test',
-            '--force --no-hooks — jaldi ho jaata hai',
-            'Koi flag nahi, default theek hai',
-            '--dry-run production mein',
+            '--rollback-on-failure (Helm 3: --atomic) — fail par khud rollback, aadha state nahi bachta; + --timeout; aur deploy ke baad helm test se smoke test',
+            '--force-replace --no-hooks — resources seedha replace hote hain aur hooks ka wait nahi, isliye upgrade jaldi aur predictable hota hai',
+            'Koi extra flag nahi — Helm ka default behaviour fail hone par apne aap pichli revision par rollback kar deta hai',
+            '--reuse-values hamesha — pichli release ki saari values apne aap carry hoti hain, isliye prod config kabhi gayab nahi hota',
           ],
           answer: 0,
-          explain: '--atomic = insurance. Ulta bhi bolo: <code>--force</code> se bacho (woh resources delete/recreate kar sakta hai = downtime), aur <code>--no-hooks</code> se migrations skip ho jaayengi. Kya NAHI karna, yeh bhi expertise hai.',
+          explain: '--rollback-on-failure (Helm 3: --atomic) = insurance. Ulta bhi bolo: --force-replace (Helm 3: --force) se bacho (resources delete/recreate = downtime), --no-hooks se migrations skip, aur --reuse-values naye chart defaults chhupa deta hai. Kya NAHI karna, yeh bhi expertise hai.',
         },
       ],
     },
@@ -1779,10 +1779,30 @@ env:
         instructions: 'Poore track ka rapid-fire. Ab yeh sab reflex hona chahiye!',
         questions: [
           { q: 'Values precedence mein sabse strong kaun?', choices: ['--set', 'chart ki values.yaml', 'pehli -f file', 'Chart.yaml'], answer: 0, explain: 'defaults < -f (left→right) < --set 👑. Aur --set agle upgrade par gayab ho jaata hai!' },
-          { q: 'toYaml ke saath indent ki jagah nindent kyun?', choices: ['nindent newline + indent dono karta hai — bina newline ke content pichli line se chipak jaata hai', 'nindent tez hai', 'indent deprecated hai', 'Koi farak nahi'], answer: 0, explain: '"did not find expected key" ka #1 reason. Block start kar rahe ho toh nindent.' },
-          { q: 'helm upgrade fail hone par cluster aadha-adhoora na rahe — kaunsa flag?', choices: ['--atomic', '--force', '--no-hooks', '--dry-run'], answer: 0, explain: '--atomic = fail par auto rollback. --force khatarnak hai (delete/recreate), --no-hooks migrations skip kar dega.' },
-          { q: 'ArgoCD wale cluster mein "helm list" khaali hai — kyun?', choices: ['ArgoCD chart RENDER karke apply karta hai — koi Helm release banti hi nahi; truth git/Application mein hai', 'Helm crash ho gaya', 'Galat namespace', 'Release delete ho gayi'], answer: 0, explain: 'GitOps mein Helm = template engine, ArgoCD = release manager. 30 minute bachao apne aap ka. 😄' },
-          { q: 'Chart ka content badla — Chart.yaml mein kya karna ZAROORI hai?', choices: ['version badhao (package ka naam usi se banta hai)', 'sirf appVersion badhao', 'kuch nahi', 'description update karo'], answer: 0, explain: 'Warna wahi package naam, purana cached chart, "deploy hua par kuch nahi badla" wala bhoot. 👻' },
+          { q: 'toYaml ke saath indent ki jagah nindent kyun?', choices: [
+            'nindent newline + indent dono karta hai — bina newline ke content pichli line se chipak jaata hai',
+            'nindent tez chalta hai — indent har line ko alag process karta hai, nindent poore block ko ek saath',
+            'indent Helm 3 mein deprecated hai — naye charts mein sirf nindent support hota hai',
+            'Koi farak nahi — dono same output dete hain, nindent bas naya naam hai jo docs mein use hota hai',
+          ], answer: 0, explain: '"did not find expected key" ka #1 reason. Block start kar rahe ho toh nindent.' },
+          { q: 'helm upgrade fail hone par cluster aadha-adhoora na rahe — kaunsa flag?', choices: [
+            '--rollback-on-failure (Helm 3: --atomic)',
+            '--force-replace (purane resources hata ke naye banao)',
+            '--no-hooks (hooks skip — upgrade jaldi)',
+            '--dry-run=server (pehle test, phir apply)',
+          ], answer: 0, explain: '--rollback-on-failure (Helm 3 mein --atomic) = fail par auto rollback. --force-replace khatarnak hai (delete/recreate), --no-hooks migrations skip kar dega, aur --dry-run kuch apply hi nahi karta.' },
+          { q: 'ArgoCD wale cluster mein "helm list" khaali hai — kyun?', choices: [
+            'ArgoCD chart RENDER karke apply karta hai — koi Helm release banti hi nahi; truth git/Application mein hai',
+            'Helm crash ho gaya hai — ArgoCD ke saath chalne par Helm ka release store corrupt ho jaata hai',
+            'Galat namespace — ArgoCD releases hamesha argocd namespace mein banata hai, helm list -n argocd se dikh jaayengi',
+            'Release delete ho gayi — ArgoCD har sync par Helm release uninstall karke dobara install karta hai',
+          ], answer: 0, explain: 'GitOps mein Helm = template engine, ArgoCD = release manager. 30 minute bachao apne aap ka. 😄' },
+          { q: 'Chart ka content badla — Chart.yaml mein kya karna ZAROORI hai?', choices: [
+            'version badhao (package ka naam usi se banta hai)',
+            'sirf appVersion badhao — chart ka version tabhi jab Chart.yaml badle',
+            'kuch nahi — Helm content hash se naya package banata hai',
+            'description update karo — Helm changelog wahan se banata hai',
+          ], answer: 0, explain: 'Warna wahi package naam, purana cached chart, "deploy hua par kuch nahi badla" wala bhoot. 👻' },
         ],
       },
     ],
@@ -1793,10 +1813,10 @@ env:
         {
           q: '"Apni company mein Helm kaise organize karoge?" — ek platform engineer ka jawab?',
           choices: [
-            'Har service ka apna chart + ek shared LIBRARY chart (labels/naming/security standards); values files per-env git mein; charts OCI registry mein versioned; deploy GitOps (ArgoCD) se; secrets sirf existingSecret + ESO; CI mein lint/template/schema validation',
-            'Ek bada umbrella chart jisme sab services hon',
-            'Har developer apna chart apne tarike se banaye',
-            'Charts ki zaroorat nahi, plain YAML kaafi hai',
+            'Per-service charts + shared LIBRARY chart (labels/naming/security standards); per-env values git mein; charts OCI registry mein versioned; deploy GitOps se; secrets ESO se; CI mein lint/schema',
+            'Ek bada umbrella chart jisme company ki saari services hon — ek version, ek release, ek rollback; har team PR se apna hissa badle, isse drift khatam aur deploy ek pipeline se',
+            'Har developer apna chart apne tarike se banaye — standards innovation rokte hain, aur Helm khud best practices enforce kar deta hai',
+            'Charts ki zaroorat nahi — plain YAML + kubectl apply sabse simple hai; Helm sirf vendors ke liye hai, internal apps ke liye overkill',
           ],
           answer: 0,
           explain: 'Yeh poore track ka synthesis hai: independence (per-service charts) + standards (library chart) + reproducibility (versioned OCI + git values) + security (ESO) + guard-rails (CI validation). Har hissa ek level tha.',
@@ -1804,10 +1824,10 @@ env:
         {
           q: '"Deploy successful dikha par cluster mein purana version chal raha hai" — Helm-specific top suspects?',
           choices: [
-            '(1) Chart version nahi badhaya → purana cached chart use hua, (2) values precedence — --set/file ne image.tag override kar diya (helm get values se check), (3) GitOps setup hai toh ArgoCD ne abhi sync hi nahi kiya',
-            'Kubernetes ka bug hai',
-            'Image registry down hai',
-            'Helm hamesha 5 minute late deploy karta hai',
+            '(1) chart version nahi badhaya → purana cached chart; (2) kisi --set/values file ne image.tag override kiya (helm get values); (3) ArgoCD ne abhi sync hi nahi kiya',
+            'Kubernetes ka bug hai — Deployment controller kabhi-kabhi naya ReplicaSet bana ke bhi purane pods ko scale down karna bhool jaata hai',
+            'Image registry down hai — kubelet naya image na mile toh chupchaap purana cached image chala deta hai, bina koi error ya event diye',
+            'Helm hamesha 5 minute late deploy karta hai — release ka status pehle success dikhta hai, asli rollout background mein baad mein hota hai, thoda ruko',
           ],
           answer: 0,
           explain: 'Teeno suspects alag levels se aaye (version discipline, precedence, GitOps). Debug command bhi bolo: <code>helm get values</code> + <code>helm get manifest</code> — asli mein cluster mein KYA gaya, woh yahin dikhta hai.',
@@ -1815,10 +1835,10 @@ env:
         {
           q: 'Junior poochta hai: "Helm ki jagah sirf Kustomize use kar lein?" Tumhara balanced jawab?',
           choices: [
-            'Dono ka apna kaam: Helm = packaging + distribution + release lifecycle (3rd-party stacks, versioned charts, rollback); Kustomize = template-free env patching, kubectl built-in. Aksar dono saath — Helm chart render karke Kustomize se patch, ya ArgoCD dono support karta hai',
-            'Haan, Kustomize har jagah better hai',
-            'Nahi, Kustomize bekaar hai',
-            'Dono ek hi cheez hain',
+            'Dono ka apna kaam: Helm = packaging + distribution + release lifecycle (3rd-party stacks, rollback); Kustomize = template-free env patching, kubectl built-in — aksar dono saath',
+            'Haan — Kustomize har jagah better hai kyunki kubectl mein built-in hai; Helm ke templates bas debugging ka dard hain aur release state ek bekaar complexity',
+            'Nahi — Kustomize bekaar hai kyunki usme loops aur conditions nahi; asli production charts ke liye sirf Helm hi chal sakta hai, Kustomize toy hai',
+            'Dono ek hi cheez hain — Kustomize Helm ka hi naya version hai jo Kubernetes ne adopt kiya; farak sirf command ke naam ka hai',
           ],
           answer: 0,
           explain: 'Track 3 Level 22 ka jawab, ab Helm ki gehri samajh ke saath. Key line: "Kustomize se tum Prometheus stack distribute nahi kar sakte; Helm se ek-line patch karna over-engineering hai." Right tool, right job.',
@@ -1826,10 +1846,10 @@ env:
         {
           q: 'Aakhri sawal: Helm ka mental model ek line mein?',
           choices: [
-            'Chart (templates + default values) + tumhari Values = rendered manifests → ek named Release, jiski har change ek naya Revision hai (isliye rollback possible) — packaging, configuration aur lifecycle teeno ek jagah',
-            'Helm YAML ko chhota karne ka tool hai',
-            'Helm Kubernetes ka package installer hai, bas',
-            'Helm sirf templating hai',
+            'Chart (templates + defaults) + tumhari Values = rendered manifests → ek named Release, jiska har change ek naya Revision (isliye rollback) — packaging, config, lifecycle ek jagah',
+            'Helm YAML ko chhota karne ka tool hai — templates se copy-paste bachta hai, aur cluster mein jo jaata hai woh bilkul plain kubectl apply jaisa hai, Helm ka koi state nahi',
+            'Helm Kubernetes ka package installer hai, bas — apt/yum jaisa; apni apps ke liye uska koi kaam nahi, sirf 3rd-party software ke liye',
+            'Helm sirf templating engine hai — Go templates ko YAML mein badalta hai; release aur revision ArgoCD jaise tools ka concept hai, Helm ka nahi',
           ],
           answer: 0,
           explain: '🏆 Perfect. Chart + Values → Release (revisions ke saath). Yeh ek line poora track hai — aur ab tumhare paas iske peeche ka pura gyaan bhi hai: templating, precedence, dependencies, hooks, publishing. <b>Helm Hakim ban gaye ho!</b> ⛵',

@@ -820,7 +820,7 @@ const VISUALS = {
           <span class="dg-pill acc">limits: cpu 1000</span>
         </div>
         <div class="dg-box is-gold"><span class="bx-label">🔧 EC2NodeClass — AWS ki detail</span>
-          <span class="dg-pill gold">amiFamily: AL2023</span>
+          <span class="dg-pill gold">amiSelectorTerms: al2023@…</span>
           <span class="dg-pill gold">subnetSelector / sgSelector</span>
           <span class="dg-pill gold">IAM role</span>
         </div>

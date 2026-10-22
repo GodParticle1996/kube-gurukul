@@ -757,7 +757,7 @@ spec:
       containers: [{ name: c, image: busybox, command: ["sh","-c","echo PRE-SYNC chal raha hai; sleep 10"] }]
 EOF
 # in files ko apne git repo mein push karo, phir:
-argocd app sync <app> && kubectl get jobs -w    # PreSync Job pehle chalte dekho!</pre>
+argocd app sync &lt;app&gt; && kubectl get jobs -w    # PreSync Job pehle chalte dekho!</pre>
       <p>✅ Self-check: UI ke resource tree mein hook alag section mein dikha? Job manifests se PEHLE chala?</p>`,
     cards: [
       { front: 'sync-wave ka sabse important rule?', back: 'Chhota number pehle (negative bhi) — <b>par asli baat</b>: agla wave tabhi shuru hota hai jab pichle wave ke resources <b>Healthy</b> ho jaayein. Readiness-gated order, sirf apply-order nahi.' },
@@ -1482,7 +1482,7 @@ kubectl delete ns argo-rollouts</pre>
           { q: 'Auto-sync ON hai — rollback kaise?', choices: ['git revert + push', 'argocd app rollback', 'kubectl rollout undo', 'ArgoCD restart'], answer: 0, explain: 'Auto-sync mein git boss hai — cluster ko peeche kheencho toh agla sync usse wapas kar dega.' },
           { q: 'App hamesha OutOfSync, diff mein ek extra Service — fix?', choices: ['sync --prune (ya prune: true)', 'App delete karke banao', 'Service ko manually delete karo', 'ignoreDifferences'], answer: 0, explain: 'Git se hata resource cluster mein zinda hai. Manual delete bhi chalega par prune enable karna asli fix hai.' },
           { q: 'ApplicationSet se bani app ko manually edit kiya — kya hoga?', choices: ['Controller usse wapas template jaisa bana dega', 'Change permanent rahega', 'ApplicationSet delete ho jayega', 'Error aayega'], answer: 0, explain: 'ApplicationSet bhi reconciliation loop hai — generator/template badlo, generated app nahi.' },
-          { q: 'Canary ke beech mein metrics kharab — command?', choices: ['kubectl argo rollouts abort <name>', 'promote --full', 'kubectl delete rollout', 'argocd app sync'], answer: 0, explain: 'Abort = traffic 100% stable par turant wapas. Promote --full toh ulta khatra badha dega!' },
+          { q: 'Canary ke beech mein metrics kharab — command?', choices: ['kubectl argo rollouts abort &lt;name&gt;', 'promote --full', 'kubectl delete rollout', 'argocd app sync'], answer: 0, explain: 'Abort = traffic 100% stable par turant wapas. Promote --full toh ulta khatra badha dega!' },
         ],
       },
     ],

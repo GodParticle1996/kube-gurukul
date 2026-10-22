@@ -775,12 +775,19 @@ rm -rf lab</pre>
 3. -f values-a.yaml
 4. -f values-b.yaml                      ← baad wali file jeetti hai
 5. --set key=value                       ← 👑 SABSE STRONG</pre>
-       <pre># Real production pattern — layering:
+       <pre># Real production pattern — layering (neeche wali upar wali ko override karti hai):
+#   values-common.yaml   → base (sab env ke liye common)
+#   values-prod.yaml     → prod ke overrides
+#   values-prod-eu.yaml  → region ke overrides
+#   --set image.tag      → CI se aata hai (sabse upar)
 helm upgrade shop ./shop \\
-  -f values.yaml \\           # base (sab env ke liye common)
-  -f values-prod.yaml \\      # prod ke overrides
-  -f values-prod-eu.yaml \\   # region ke overrides
-  --set image.tag=$GIT_SHA   # CI se aata hai (sabse upar)</pre>
+  -f values-common.yaml \\
+  -f values-prod.yaml \\
+  -f values-prod-eu.yaml \\
+  --set image.tag=$GIT_SHA</pre>
+       <p>⚠️ <b>Bash gotcha:</b> <code>\\</code> ke baad usi line par <code># comment</code> mat likho —
+       backslash phir newline ko nahi, space ko escape karta hai aur command wahin toot jaati hai.
+       Isliye comments upar alag lines mein.</p>
        <p><b>Debugging ka pehla command:</b> <code>helm get values &lt;release&gt;</code> —
        isse dikhta hai ki ASLI mein kya laga (sirf user-supplied). Chart defaults bhi
        chahiye toh <code>--all</code>. "Maine toh prod values di thi!" wale confusion ka
@@ -1363,13 +1370,31 @@ helm test shop        # pod chalta hai; exit 0 = PASS</pre>
        <p>Deploy ke baad "sach mein kaam kar raha hai?" ka automated jawab — CI mein
        <code>helm upgrade --wait && helm test</code> ek acchi gate hai.</p>
        <h3>🛡️ Production upgrade ka safety kit</h3>
-       <pre>helm upgrade shop ./shop -f values-prod.yaml \\
-  --atomic \\        # fail hua toh KHUD rollback (--wait bhi implied)
-  --timeout 5m \\    # kitna intezaar (default 5m)
-  --wait             # sab resources ready hone tak ruko</pre>
-       <p><code>--atomic</code> = insurance. Iske bina fail hone par release
+       <pre># Helm 4:
+helm upgrade shop ./shop -f values-prod.yaml \\
+  --rollback-on-failure \\
+  --timeout 5m
+
+# Helm 3 (wahi cheez, purana naam):
+helm upgrade shop ./shop -f values-prod.yaml --atomic --timeout 5m</pre>
+       <ul>
+         <li><code>--rollback-on-failure</code> (Helm 3 mein <code>--atomic</code>) — fail hua toh <b>khud rollback</b>; <code>--wait</code> apne-aap lag jaata hai</li>
+         <li><code>--timeout 5m</code> — kitna intezaar (default 5m), uske baad "fail" maana jaayega</li>
+         <li>Helm 4 mein <code>--atomic</code> ab bhi chalta hai par warning deta hai:
+           <code>Flag --atomic has been deprecated, use --rollback-on-failure instead</code></li>
+       </ul>
+       <p>Yeh flag = insurance. Iske bina fail hone par release
        <code>failed</code> status mein latka rehta hai aur aadha-adhoora state cluster
-       mein reh jaata hai.</p>`,
+       mein reh jaata hai.</p>
+       <div class="war-story"><b>🆕 Helm 4 (Nov 2025 se GA) — kya badla?</b> Helm 3 ab sirf security
+       fixes le raha hai (10 Feb 2027 tak). Roz ke commands wahi hain; farak yeh hain:
+       <ul>
+         <li><code>--atomic</code> → <code>--rollback-on-failure</code>, <code>--force</code> → <code>--force-replace</code> (purane naam warning ke saath chalte hain); <code>--recreate-pods</code> hat gaya</li>
+         <li>Naye install <b>server-side apply</b> se hote hain (<code>--server-side</code> default); purane Helm 3 releases upgrade par apna purana tareeka hi rakhte hain (<code>auto</code>)</li>
+         <li><code>--wait</code> ab kstatus "watcher" use karta hai — chart ke resources par <code>list</code> + <code>watch</code> RBAC chahiye</li>
+         <li><code>--post-renderer</code> ab sirf plugin ka naam leta hai (seedha script path nahi)</li>
+       </ul>
+       CRDs wala jaal (neeche) Helm 4 mein bhi waisa hi hai. (KubeGurukul ne yeh sab Helm 4.0.4 par chala ke check kiya.)</div>`,
       `<h3>🚑 Jab cheezein atak jaati hain (asli dukh)</h3>
        <pre>Error: UPGRADE FAILED: another operation (install/upgrade/rollback)
        is in progress</pre>
@@ -1382,7 +1407,7 @@ helm rollback shop &lt;last-good-rev&gt;   # aksar isse hi nikal jaata hai
 # ya (agar kabhi deploy hi na hua ho): helm uninstall shop</pre>
        <div class="war-story"><b>⚡ Real incident (CRD wala, sabse mehenga):</b> Team ne
        cert-manager chart upgrade kiya. Chart ke <code>crds/</code> folder mein CRDs the.
-       <b>Helm 3 CRDs ko install par banata hai par upgrade par CHHOOTA NAHI</b> — naye
+       <b>Helm (3 aur 4 dono) CRDs ko install par banata hai par upgrade par CHHOOTA NAHI</b> — naye
        fields wali CRD kabhi apply hi nahi hui. Naye Certificate resources "unknown field"
        se reject hone lage. Ghanton confusion. <b>Rule: CRD upgrades manually karo
        (<code>kubectl apply -f crds/</code>) — Helm par bharosa mat karo.</b> Yeh
@@ -1409,11 +1434,11 @@ helm rollback shop &lt;last-good-rev&gt;   # aksar isse hi nikal jaata hai
         type: 'terminal',
         title: '🖥️ Mission: Stuck Release Rescue',
         instructions: 'Raat ka CI job beech mein mar gaya. Ab koi upgrade nahi ho raha. On-call tum ho.',
-        goal: 'Release <b>shop</b> par upgrade chalana hai par error aa raha hai. <b>(1)</b> Upgrade try karo aur error padho, <b>(2)</b> <code>helm history shop</code> se samjho kaunsa revision atka hai, <b>(3)</b> <code>helm rollback</code> se release ko unstick karo, <b>(4)</b> ab sahi tarike se upgrade karo — <b>--atomic ke saath</b> (image tag 2.6.0).',
+        goal: 'Release <b>shop</b> par upgrade chalana hai par error aa raha hai. <b>(1)</b> Upgrade try karo aur error padho, <b>(2)</b> <code>helm history shop</code> se samjho kaunsa revision atka hai, <b>(3)</b> <code>helm rollback</code> se release ko unstick karo, <b>(4)</b> ab sahi tarike se upgrade karo — <b>--rollback-on-failure ke saath</b> (Helm 3 mein: <code>--atomic</code>; image tag 2.6.0).',
         tasks: [
           { text: 'history se pending revision dhundo', check: s => s.history.some(h => /helm history shop/.test(h)) },
           { text: 'rollback se release unstick karo', check: s => { const r = (s.cluster.releases || []).find(x => x.name === 'shop'); return r && r.status === 'deployed'; } },
-          { text: '--atomic ke saath upgrade (tag 2.6.0)', check: s => { const r = (s.cluster.releases || []).find(x => x.name === 'shop'); return r && r.values.image && r.values.image.tag === '2.6.0' && r.status === 'deployed'; } },
+          { text: '--rollback-on-failure (ya --atomic) ke saath upgrade (tag 2.6.0)', check: s => { const r = (s.cluster.releases || []).find(x => x.name === 'shop'); return r && r.values.image && r.values.image.tag === '2.6.0' && r.status === 'deployed'; } },
         ],
         cluster: {
           nodes: [{ name: 'node-1', status: 'Ready', roles: '<none>', age: '90d', version: 'v1.30.2' }],
@@ -1454,13 +1479,13 @@ helm rollback shop &lt;last-good-rev&gt;   # aksar isse hi nikal jaata hai
           return r && r.status === 'deployed' && r.values.image && r.values.image.tag === '2.6.0' &&
             s.history.some(h => /helm history shop/.test(h)) &&
             s.history.some(h => /helm rollback shop/.test(h)) &&
-            s.history.some(h => /helm upgrade shop.*--atomic/.test(h));
+            s.history.some(h => /helm upgrade shop.*(--atomic|--rollback-on-failure)/.test(h));
         },
-        successText: 'Release rescued! 🚑 Yeh sequence har Helm engineer ko aana chahiye: <b>"another operation in progress"</b> → <code>helm history</code> (kaunsa revision <b>pending-upgrade</b> mein atka hai) → <code>helm rollback</code> (lock hatao, last-good par jao) → phir <b>--atomic</b> ke saath dobara upgrade. Aur dhyan do: rollback ne bhi <b>naya revision</b> banaya — Helm history kabhi peeche nahi jaati, hamesha aage badhti hai.',
+        successText: 'Release rescued! 🚑 Yeh sequence har Helm engineer ko aana chahiye: <b>"another operation in progress"</b> → <code>helm history</code> (kaunsa revision <b>pending-upgrade</b> mein atka hai) → <code>helm rollback</code> (lock hatao, last-good par jao) → phir <b>--rollback-on-failure</b> (Helm 3: <code>--atomic</code>) ke saath dobara upgrade. Aur dhyan do: rollback ne bhi <b>naya revision</b> banaya — Helm history kabhi peeche nahi jaati, hamesha aage badhti hai.',
         hints: [
           'Pehle upgrade try karo: helm upgrade shop ./shop -f values-prod.yaml → error padho',
           'helm history shop → revision 8 "pending-upgrade" mein atka hai (CI raat ko mar gaya tha)',
-          'helm rollback shop 7 → phir: helm upgrade shop ./shop -f values-prod.yaml --atomic',
+          'helm rollback shop 7 → phir: helm upgrade shop ./shop -f values-prod.yaml --rollback-on-failure   (Helm 3: --atomic)',
         ],
       },
       {
@@ -1512,7 +1537,7 @@ helm rollback shop &lt;last-good-rev&gt;   # aksar isse hi nikal jaata hai
         {
           q: '"Error: another operation (install/upgrade/rollback) is in progress" — kya karoge?',
           choices: [
-            'Release pending-* status mein atki hai (pichla operation beech mein mara). helm history se pending revision dekho → helm rollback <last-good> se unstick karo (ya kabhi deploy hi na hua ho toh helm uninstall) → phir --atomic ke saath dobara',
+            'Release pending-* status mein atki hai (pichla operation beech mein mara). helm history se pending revision dekho → helm rollback &lt;last-good&gt; se unstick karo (ya kabhi deploy hi na hua ho toh helm uninstall) → phir --atomic ke saath dobara',
             'Cluster restart karo',
             'Helm reinstall karo',
             'Kuch der wait karo, apne aap theek ho jayega',

@@ -223,7 +223,8 @@ KG.karpenter = (function () {
         if (!sim.cluster.nodes.includes(n)) return;          // is loop mein pehle hi hat chuka
         const pool = poolOf(sim, n) || (sim.cluster.nodepools || [])[0];
         const cpol = pool && pool.disruption && pool.disruption.consolidationPolicy;
-        if (!cpol) return;
+        // asli Karpenter v1: consolidation band karne ka tarika = consolidateAfter: Never
+        if (!cpol || pool.disruption.consolidateAfter === 'Never') return;
         const podsOn = sim.cluster.pods.filter(p => p.node === n.name);
         const blocked = podsOn.some(p => p.doNotDisrupt);
         const empty = podsOn.length === 0;
@@ -268,27 +269,92 @@ KG.karpenter = (function () {
   /* ---------------------------------------------------------------
      Tables — kubectl get nodepools / nodeclaims / ec2nodeclasses
      --------------------------------------------------------------- */
-  function tables(sim) {
+  function tables(sim, wide) {
+    // columns = asli Karpenter v1 CRDs ke additionalPrinterColumns (wide = priority 1 wale bhi)
+    const nodesOf = np => (sim.cluster.nodes || []).filter(n => n.karpenter && (n.nodepool || 'default') === np.name);
     return {
       nodepools: {
-        cols: ['NAME', 'NODECLASS', 'WEIGHT', 'CPU-LIMIT', 'CPU-USED', 'CONSOLIDATION'],
-        rows: (sim.cluster.nodepools || []).map(np => [
-          np.name, np.nodeClassRef || 'default', np.weight != null ? np.weight : '-',
-          (np.limits && np.limits.cpu) || '-', (np.used && np.used.cpu) || 0,
-          (np.disruption && np.disruption.consolidationPolicy) || '-']),
+        cols: ['NAME', 'NODECLASS', 'NODES', 'READY', 'AGE'].concat(wide ? ['WEIGHT', 'CPU', 'MEMORY'] : []),
+        rows: (sim.cluster.nodepools || []).map(np => {
+          const ns = nodesOf(np);
+          const r = [np.name, np.nodeClassRef || 'default', ns.length, np.ready || 'True', np.age || '30d'];
+          if (wide) r.push(np.weight != null ? np.weight : '', ns.reduce((a, n) => a + (n.cpu || 0), 0),
+            ns.reduce((a, n) => a + (n.mem || 0), 0) + 'Gi');
+          return r;
+        }),
       },
       nodeclaims: {
-        cols: ['NAME', 'TYPE', 'CAPACITY', 'ZONE', 'NODE', 'READY', 'AGE'],
-        rows: (sim.cluster.nodeclaims || []).map(nc => [
-          nc.name, nc.type, nc.capacity, nc.zone,
-          (nc.nodeName || '').split('.')[0], nc.ready, nc.age || '0s']),
+        cols: ['NAME', 'TYPE', 'CAPACITY', 'ZONE', 'NODE', 'READY', 'AGE'].concat(wide ? ['NODEPOOL', 'NODECLASS'] : []),
+        rows: (sim.cluster.nodeclaims || []).map(nc => {
+          const r = [nc.name, nc.type, nc.capacity, nc.zone, (nc.nodeName || '').split('.')[0], nc.ready, nc.age || '0s'];
+          if (wide) r.push(nc.nodepool || 'default', 'default');
+          return r;
+        }),
       },
       ec2nodeclasses: {
-        cols: ['NAME', 'AMI-FAMILY', 'ROLE', 'READY', 'AGE'],
-        rows: (sim.cluster.ec2nodeclasses || []).map(c => [
-          c.name, c.amiFamily || 'AL2023', c.role || 'KarpenterNodeRole', c.ready || 'True', c.age || '30d']),
+        cols: ['NAME', 'READY', 'AGE'].concat(wide ? ['ROLE'] : []),
+        rows: (sim.cluster.ec2nodeclasses || []).map(c => {
+          const r = [c.name, c.ready || 'True', c.age || '30d'];
+          if (wide) r.push(c.role || 'KarpenterNodeRole');
+          return r;
+        }),
       },
     };
+  }
+
+  /* kubectl get <karpenter-kind> <name> -o yaml — CRs ki keys alphabetical aati hain (asli jaisa) */
+  function toYaml(sim, kind, o) {
+    const list = vs => (vs || []).map(v => `        - ${JSON.stringify(v)}`).join('\n');
+    if (kind === 'nodepools') {
+      const d = o.disruption || {};
+      const ns = (sim.cluster.nodes || []).filter(n => n.karpenter && (n.nodepool || 'default') === o.name);
+      return [
+        'apiVersion: karpenter.sh/v1', 'kind: NodePool', 'metadata:', `  name: ${o.name}`, 'spec:',
+        '  disruption:',
+        '    budgets:', ...((d.budgets && d.budgets.length ? d.budgets : [{ nodes: '10%' }]).map(b =>
+          `    - nodes: "${b.nodes}"` + (b.schedule ? `\n      schedule: "${b.schedule}"\n      duration: ${b.duration}` : ''))),
+        `    consolidateAfter: ${d.consolidateAfter || '0s'}`,
+        ...(d.consolidationPolicy ? [`    consolidationPolicy: ${d.consolidationPolicy}`] : []),
+        ...(o.limits ? ['  limits:', ...Object.entries(o.limits).map(([k, v]) => `    ${k}: "${v}"`)] : []),
+        '  template:', '    spec:', `      expireAfter: ${o.expireAfter || '720h'}`,
+        '      nodeClassRef:', '        group: karpenter.k8s.aws', '        kind: EC2NodeClass', `        name: ${o.nodeClassRef || 'default'}`,
+        '      requirements:', ...(o.requirements || []).map(r => `      - key: ${r.key}\n        operator: ${r.operator}\n        values:\n${list(r.values)}`),
+        ...((o.taints || []).length ? ['      taints:', ...o.taints.map(t => `      - effect: ${t.effect}\n        key: ${t.key}` + (t.value ? `\n        value: "${t.value}"` : ''))] : []),
+        ...(o.weight != null ? [`  weight: ${o.weight}`] : []),
+        'status:', '  resources:', `    cpu: "${ns.reduce((a, n) => a + (n.cpu || 0), 0)}"`,
+        `    memory: ${ns.reduce((a, n) => a + (n.mem || 0), 0)}Gi`, `    nodes: "${ns.length}"`,
+      ].join('\n');
+    }
+    if (kind === 'ec2nodeclasses') {
+      return ['apiVersion: karpenter.k8s.aws/v1', 'kind: EC2NodeClass', 'metadata:', `  name: ${o.name}`, 'spec:',
+        '  amiSelectorTerms:', `  - alias: ${(o.amiFamily || 'AL2023').toLowerCase()}@latest`,
+        `  role: ${o.role || 'KarpenterNodeRole'}`,
+        '  securityGroupSelectorTerms:', '  - tags:', '      karpenter.sh/discovery: prod',
+        '  subnetSelectorTerms:', '  - tags:', '      karpenter.sh/discovery: prod',
+        'status:', '  conditions:', `  - status: "${o.ready || 'True'}"`, '    type: Ready'].join('\n');
+    }
+    if (kind === 'nodeclaims') {
+      return ['apiVersion: karpenter.sh/v1', 'kind: NodeClaim', 'metadata:', `  name: ${o.name}`,
+        '  labels:', `    karpenter.sh/capacity-type: ${o.capacity}`, `    karpenter.sh/nodepool: ${o.nodepool || 'default'}`,
+        `    node.kubernetes.io/instance-type: ${o.type}`, `    topology.kubernetes.io/zone: ${o.zone}`,
+        'status:', '  conditions:', `  - status: "${o.ready || 'Unknown'}"`, '    type: Ready', `  nodeName: ${o.nodeName || '""'}`].join('\n');
+    }
+    return null;
+  }
+
+  /* kubectl describe nodepool/ec2nodeclass/nodeclaim — wahi fields, describe ke "Title Case" format mein */
+  function describe(sim, kind, o) {
+    const y = toYaml(sim, kind, o);
+    if (!y) return null;
+    const title = k => k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
+    const body = y.split('\n').filter(l => !/^(apiVersion|kind|metadata|  name):/.test(l)).map(l => {
+      const m = l.match(/^(\s*)(- )?([A-Za-z.\/-]+):(.*)$/);
+      if (!m || m[3].includes('/') || m[3].includes('.')) return l;      // label keys waise hi
+      return m[1] + (m[2] || '') + title(m[3]) + ':' + m[4];
+    });
+    return [`Name:         ${o.name}`, 'Namespace:', `API Version:  ${kind === 'ec2nodeclasses' ? 'karpenter.k8s.aws/v1' : 'karpenter.sh/v1'}`,
+      `Kind:         ${{ nodepools: 'NodePool', ec2nodeclasses: 'EC2NodeClass', nodeclaims: 'NodeClaim' }[kind]}`,
+      ...body, 'Events:       <none>'].join('\n');
   }
 
   /* monthly cost estimate — cost-optimization missions ke liye */
@@ -302,5 +368,5 @@ KG.karpenter = (function () {
     return { hourly: total, monthly: total * 730, nodes: nodes.length };
   }
 
-  return { reconcile, tables, cost, TYPES };
+  return { reconcile, tables, toYaml, describe, cost, TYPES };
 })();

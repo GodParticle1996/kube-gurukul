@@ -154,8 +154,19 @@ KG.helm = (function () {
   const VALUE_FLAGS = ['--version', '--timeout', '-o', '--output', '--kube-context', '--repo', '--description',
     '--max', '--post-renderer', '--username', '--password', '--history-max', '--kubeconfig', '--show-only', '-s'];
 
+  /* Helm 4 (Nov 2025 se GA): purane naam warning ke saath chalte hain — asli helm 4.0.4 ka text */
+  const RENAMED = { atomic: 'rollback-on-failure', force: 'force-replace' };
+  const REMOVED = ['recreate-pods'];
+
   function parseFlags(toks, sim, print) {
-    const f = { values: {}, files: [], sets: [], flags: new Set(), namespace: 'default', revision: null, bad: null, opts: {} };
+    const f = { values: {}, files: [], sets: [], flags: new Set(), namespace: 'default', revision: null, bad: null, opts: {}, warnings: [] };
+    const addFlag = name => {
+      if (REMOVED.includes(name)) { f.bad = `Error: unknown flag: --${name}\n(Helm 4 mein yeh flag hat gaya — pods restart karne ke liye pod template mein checksum annotation lagao)`; return; }
+      if (RENAMED[name]) f.warnings.push(`Flag --${name} has been deprecated, use --${RENAMED[name]} instead`);
+      // naya naam → wahi andar ka flag (simulator ka logic ek hi jagah)
+      const old = Object.keys(RENAMED).find(k => RENAMED[k] === name);
+      f.flags.add(old || name);
+    };
     for (let i = 0; i < toks.length; i++) {
       let t = toks[i];
       // --set=a=b · --values=x.yaml · -f=x.yaml · --namespace=prod → "flag value" jaisa
@@ -179,7 +190,11 @@ KG.helm = (function () {
       } else if (VALUE_FLAGS.includes(t)) {
         f.opts[t.replace(/^-+/, '')] = toks[++i];
       } else if (t.startsWith('--')) {
-        f.flags.add(t.slice(2));
+        // --wait=watcher · --server-side=true → flag + value
+        const [name, val] = t.slice(2).split('=');
+        addFlag(name);
+        if (val != null) f.opts[name] = val;
+        if (f.bad) return f;
       } else if (t.startsWith('-') && t.length > 1 && !/^-\d/.test(t)) {
         f.flags.add(t.slice(1));
       } else {
@@ -248,6 +263,7 @@ KG.helm = (function () {
     const rest = toks.slice(2);
     const f = parseFlags(rest, sim, print);
     if (f.bad) { print('err', f.bad); return true; }
+    f.warnings.forEach(w => print('sys', w));
     const a = f.args;
 
     if (!verb || verb === '--help' || verb === 'help') {
@@ -256,7 +272,7 @@ KG.helm = (function () {
         '  helm repo add <name> <url> · helm repo list · helm repo update',
         '  helm search repo <term>',
         '  helm install <release> <chart> [-f values.yaml] [--set k=v] [--dry-run]',
-        '  helm upgrade <release> <chart> [-f] [--set] [--atomic] [--install]',
+        '  helm upgrade <release> <chart> [-f] [--set] [--rollback-on-failure] [--install]   (Helm 3: --atomic)',
         '  helm rollback <release> [revision] · helm history <release>',
         '  helm list · helm status <release> · helm uninstall <release>',
         '  helm get values|manifest|notes <release>',
@@ -453,12 +469,12 @@ KG.helm = (function () {
             description: 'Rollback to ' + target.revision,
             values: clone(target.values), userValues: clone(target.userValues || {}) });
           if (chart.onRollback) chart.onRollback(sim, rel, target);
-          print('err', `Error: UPGRADE FAILED: release ${name} failed, and has been rolled back due to atomic being set: context deadline exceeded\n` +
-            `(--atomic laga tha → automatic rollback ho gaya, revision ${rel.revision} = revision ${target.revision} ki copy ✓)`);
+          print('err', `Error: UPGRADE FAILED: release ${name} failed, and has been rolled back due to rollback-on-failure being set: context deadline exceeded\n` +
+            `(--rollback-on-failure / --atomic laga tha → automatic rollback ho gaya, revision ${rel.revision} = revision ${target.revision} ki copy ✓)`);
           return true;
         }
         print('err', `Error: UPGRADE FAILED: context deadline exceeded\n` +
-          `(release ab "failed" hai — "helm rollback ${name}" se wapas jao. --atomic hota toh yeh khud ho jaata!)`);
+          `(release ab "failed" hai — "helm rollback ${name}" se wapas jao. --rollback-on-failure (Helm 3: --atomic) hota toh yeh khud ho jaata!)`);
         return true;
       }
       pushHist(rel, entry);
@@ -682,7 +698,11 @@ KG.helm = (function () {
       print('ok', `Pushed: ${dest.replace('oci://', '')}/${tgz.replace(/-[\d.]+\.tgz$/, '')}:${(tgz.match(/-([\d.]+)\.tgz$/) || [, '0.1.0'])[1]}\nDigest: sha256:${'a1b2c3d4'.repeat(8).slice(0, 64)}`);
       return true;
     }
-    if (verb === 'version') { print('ok', 'version.BuildInfo{Version:"v3.15.2", GoVersion:"go1.22.4"}'); return true; }
+    if (verb === 'version') {
+      print('ok', f.flags.has('short') ? 'v4.0.4+g8650e1d'
+        : 'version.BuildInfo{Version:"v4.0.4", GitCommit:"8650e1dad9e6ae38b41f60b712af9218a0d8cc11", GitTreeState:"clean", GoVersion:"go1.25.5", KubeClientVersion:"v1.34"}');
+      return true;
+    }
 
     print('err', `Error: unknown command "${verb}" for "helm"\n('helm help' se list dekho)`);
     return true;

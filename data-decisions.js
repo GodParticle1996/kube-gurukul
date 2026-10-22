@@ -1038,9 +1038,10 @@ spec:
 kind: PriorityClass
 metadata: { name: business-critical }
 value: 100000
----
-spec:
-  priorityClassName: business-critical`,
+globalDefault: false
+description: "checkout/payments — cluster bhara ho toh pehle inko jagah"
+# Use: Deployment ke pod template (spec.template.spec) mein →
+#   priorityClassName: business-critical`,
         example: 'Sale ke dauraan checkout pods ne batch analytics pods ko preempt karke jagah li.', level: 'priority',
       },
     },
@@ -1127,7 +1128,9 @@ progressDeadlineSeconds: 300`,
         gotchas: ['Traffic % ke liye traffic router (Istio, Gateway API, ALB) chahiye — warna pod-count ratio', 'Analysis queries pehle se test karo', 'Sticky sessions canary bigaad sakte hain'],
         yaml: `apiVersion: argoproj.io/v1alpha1
 kind: Rollout
+metadata: { name: pricing }
 spec:
+  # replicas, selector, template — bilkul Deployment jaise (yahan chhota rakha hai)
   strategy:
     canary:
       steps:
@@ -1361,6 +1364,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata: { name: root, namespace: argocd }
 spec:
+  project: default               # required — production mein apna AppProject (allowed repos/namespaces)
   source: { repoURL: https://github.com/acme/platform, path: apps, targetRevision: main }
   destination: { server: https://kubernetes.default.svc, namespace: argocd }
   syncPolicy: { automated: { prune: true, selfHeal: true } }`,
@@ -1460,9 +1464,8 @@ spec:
 kind: ServiceAccount
 metadata: { name: web }
 automountServiceAccountToken: false
----
-spec:
-  serviceAccountName: web`,
+# Use: Deployment ke pod template (spec.template.spec) mein →
+#   serviceAccountName: web`,
         example: 'Checkout pod compromise hua — par token tha hi nahi, cluster API tak raasta band.', level: 'rbac',
       },
       rolerb: {
@@ -1472,11 +1475,13 @@ spec:
         when: ['Controller jo apne namespace ke pods/configmaps padhe', 'Leader election (leases)'],
         avoid: ['Cluster-scoped resources (nodes) — Role unhe de hi nahi sakta'],
         gotchas: ['Binding ke subject mein SA ka <b>namespace</b> sahi likho (common bug)', '<code>kubectl auth can-i --as=system:serviceaccount:ns:sa</code> se test'],
-        yaml: `kind: Role
+        yaml: `apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
 metadata: { name: pod-reader, namespace: shop }
 rules:
   - { apiGroups: [""], resources: ["pods"], verbs: ["get", "list", "watch"] }
 ---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: { name: reporter-pod-reader, namespace: shop }
 subjects: [{ kind: ServiceAccount, name: reporter, namespace: shop }]
@@ -1490,7 +1495,8 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: pod-reader }`,
         when: ['CI deployer jo 5 team namespaces mein deploy kare', 'Reusable custom roles'],
         avoid: ['ClusterRoleBinding — woh SAARE namespaces khol deta'],
         gotchas: ['ClusterRole + RoleBinding mein bhi cluster-scoped resources grant NAHI hote'],
-        yaml: `kind: RoleBinding
+        yaml: `apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
 metadata: { name: ci-deployer, namespace: team-a }
 subjects: [{ kind: ServiceAccount, name: ci, namespace: ci }]
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: deployer }`,
@@ -1503,11 +1509,13 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: deploye
         when: ['Node readers (monitoring, autoscalers)', 'Cluster-wide operators'],
         avoid: ['Namespace ka kaam ClusterRoleBinding se — least privilege tootta hai'],
         gotchas: ['Verbs chhote rakho (get/list/watch); <code>*</code> kabhi nahi', 'Namespace delete karne se yeh objects nahi hatte — cleanup alag'],
-        yaml: `kind: ClusterRole
+        yaml: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
 metadata: { name: node-reader }
 rules:
   - { apiGroups: [""], resources: ["nodes"], verbs: ["get", "list", "watch"] }
 ---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata: { name: auditor-node-reader }
 subjects: [{ kind: ServiceAccount, name: auditor, namespace: security }]
@@ -1521,7 +1529,8 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: node-re
         when: ['<code>view</code>: read-only (secrets nahi)', '<code>edit</code>: deploy kar sakte, RBAC nahi badal sakte', '<code>admin</code>: namespace ka malik (RBAC bhi)'],
         avoid: ['Individual users ko bind karna — groups use karo (joiner/leaver aasaan)'],
         gotchas: ['<code>edit</code> secrets padh sakta hai (aur pods exec) — prod mein soch ke do'],
-        yaml: `kind: RoleBinding
+        yaml: `apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
 metadata: { name: team-a-devs, namespace: team-a }
 subjects: [{ kind: Group, name: team-a-developers, apiGroup: rbac.authorization.k8s.io }]
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }`,
@@ -1535,6 +1544,7 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }`
         avoid: ['Developers/CI ko permanent cluster-admin — ek galti = poora cluster'],
         gotchas: ['Audit logs on rakho', 'Just-in-time access (approval workflow) tools'],
         yaml: `# permanent binding nahi — JIT tool se temporary:
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata: { name: oncall-breakglass-2026-10-22 }
 subjects: [{ kind: User, name: oncall@acme.com, apiGroup: rbac.authorization.k8s.io }]
@@ -1948,13 +1958,14 @@ spec:
         why: 'Consolidation/drift ek jhatke mein bahut nodes na hilaaye.',
         when: ['Business hours mein sirf 10% nodes', 'Peak time par drift-replacement band'],
         avoid: ['Budgets ko PDB ka replacement samajhna — dono saath chahiye'],
-        gotchas: ['Budget <code>nodes: "0"</code> + schedule = window mein disruption band'],
+        gotchas: ['Budget <code>nodes: "0"</code> + schedule = window mein disruption band', 'Schedule ka cron <b>UTC</b> mein hota hai — 9 AM IST = <code>30 3 * * *</code>', 'Karpenter v1.x: <code>disruption</code> likha toh <code>consolidateAfter</code> bhi likhna zaroori (warna CRD reject karta hai)'],
         yaml: `disruption:
   consolidationPolicy: WhenEmptyOrUnderutilized
+  consolidateAfter: 1m
   budgets:
     - nodes: "10%"
     - nodes: "0"
-      schedule: "0 9 * * mon-fri"
+      schedule: "30 3 * * mon-fri"   # UTC! = 9:00 AM IST
       duration: 8h          # office hours mein koi voluntary disruption nahi`,
         example: 'Weekdays 9–5 koi consolidation nahi; raat ko 10% nodes tak.', level: 'karpenterdisrupt',
       },
@@ -1998,7 +2009,8 @@ spec:
         when: ['Har app namespace (zero-trust ka pehla kadam)', 'DB ko sirf backend se'],
         avoid: ['L7 rules (HTTP path) → mesh/Cilium L7'],
         gotchas: ['CNI enforce kare (Calico/Cilium/kindnet) — warna policy chupchaap ignore', 'Port = container port', 'namespaceSelector + podSelector ek item mein = AND'],
-        yaml: `kind: NetworkPolicy
+        yaml: `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata: { name: default-deny-ingress }
 spec: { podSelector: {}, policyTypes: ["Ingress"] }`,
         example: 'Attacker pod compromise hua — DB tak raasta hi nahi.', level: 'netpol', lab: '09-networkpolicy',

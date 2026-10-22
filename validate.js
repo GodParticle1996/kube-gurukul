@@ -983,6 +983,72 @@ t('home: mood picker ke teeno button + level intro ka "kab use karein" box', () 
   assert(boxes > 10, 'kab-box levels: ' + boxes);
   KG.state = KG.defaultState();
 });
+t('helm 4: --rollback-on-failure = --atomic (warning ke saath), --recreate-pods hata, version v4', () => {
+  const mk = () => ({ cluster: { releases: [], repos: [], charts: { './a': { name: 'a', version: '1', appVersion: '1',
+    defaults: { r: 1 }, onUpgrade: (s2, rel) => rel.values.r !== 666 } } }, history: [] });
+  let sim = mk();
+  run(sim, 'helm install a ./a');
+  let o = run(sim, 'helm upgrade a ./a --set r=666 --rollback-on-failure');
+  assert(/rolled back due to rollback-on-failure/.test(o) && sim.cluster.releases[0].status === 'deployed', 'naya flag: ' + o);
+  assert(!/deprecated/.test(o), 'naye flag par warning nahi');
+  sim = mk(); run(sim, 'helm install a ./a');
+  o = run(sim, 'helm upgrade a ./a --set r=666 --atomic');
+  assert(/Flag --atomic has been deprecated, use --rollback-on-failure instead/.test(o), 'purana flag warning: ' + o);
+  assert(sim.cluster.releases[0].status === 'deployed', 'purana flag bhi rollback karta hai');
+  assert(/unknown flag: --recreate-pods/.test(run(sim, 'helm upgrade a ./a --recreate-pods')), 'recreate-pods hata');
+  assert(/use --force-replace/.test(run(sim, 'helm upgrade a ./a --force')), 'force rename');
+  assert(/v4\./.test(run(sim, 'helm version')), 'version');
+});
+t('karpenter kubectl: asli columns, -o wide, -o yaml (v1 fields), describe, -L labels, top nodes', () => {
+  const T = term({ karpenter: { enabled: true, tick: 0, log: [] }, events: [], nodeclaims: [],
+    nodes: [{ name: 'ip-1', status: 'Ready', roles: '<none>', age: '1h', version: 'v1.30.2', karpenter: true, nodepool: 'default',
+              instanceType: 'c6a.xlarge', capacityType: 'spot', zone: 'ap-south-1a', cpu: 4, mem: 8, usedCpu: 0, usedMem: 0 }],
+    pods: [{ name: 'p', status: 'Running', ready: '1/1', restarts: 0, age: '1m', node: 'ip-1', requests: { cpu: '1' } }],
+    nodepools: [{ name: 'default', weight: 10, nodeClassRef: 'default', limits: { cpu: 100 }, used: { cpu: 4 },
+      requirements: [{ key: 'karpenter.sh/capacity-type', operator: 'In', values: ['spot', 'on-demand'] }],
+      disruption: { consolidationPolicy: 'WhenEmptyOrUnderutilized', consolidateAfter: '1m' } }],
+    ec2nodeclasses: [{ name: 'default', amiFamily: 'AL2023', role: 'KarpenterNodeRole-prod' }] });
+  let o = T.run('kubectl get nodepools');
+  assert(/^NAME\s+NODECLASS\s+NODES\s+READY\s+AGE$/m.test(o) && /default\s+default\s+1\s+True/.test(o), 'nodepools: ' + o);
+  assert(/WEIGHT\s+CPU\s+MEMORY/.test(T.run('kubectl get nodepools -o wide')), 'wide');
+  o = T.run('kubectl get nodepool default -o yaml');
+  assert(/group: karpenter\.k8s\.aws/.test(o) && /consolidateAfter: 1m/.test(o) && /kind: NodePool/.test(o), 'yaml: ' + o);
+  assert(/Consolidation Policy:\s+WhenEmptyOrUnderutilized/.test(T.run('kubectl describe nodepool default')), 'describe');
+  assert(/^NAME\s+READY\s+AGE$/m.test(T.run('kubectl get ec2nodeclasses')), 'ec2nodeclasses columns');
+  o = T.run('kubectl get nodes -L karpenter.sh/capacity-type -L node.kubernetes.io/instance-type');
+  assert(/CAPACITY-TYPE\s+INSTANCE-TYPE/.test(o) && /spot\s+c6a\.xlarge/.test(o), '-L: ' + o);
+  assert(!/INSTANCE-TYPE/.test(T.run('kubectl get nodes')), 'default get nodes = asli columns');
+  assert(/CPU\(cores\)\s+CPU\(%\)\s+MEMORY\(bytes\)\s+MEMORY\(%\)/.test(T.run('kubectl top nodes')), 'top header');
+  assert(/sirf Karpenter/.test(T.run('kubectl get pods -o yaml')), '-o yaml baaki kinds par saaf note');
+});
+t('content: <pre> mein "\\ # comment" nahi (bash line-continuation tootti hai)', () => {
+  const bad = [];
+  const scan = (v, where) => {
+    if (typeof v === 'string') { if (/\\[ \t]+#/.test(v) && /<pre|\n/.test(v)) bad.push(where); }
+    else if (Array.isArray(v)) v.forEach((x, i) => scan(x, where + '[' + i + ']'));
+    else if (v && typeof v === 'object') Object.keys(v).forEach(k => { if (typeof v[k] !== 'function') scan(v[k], where + '.' + k); });
+  };
+  KG.tracks.forEach(tr => KG.levelsOf(tr).forEach(l => scan(l, l.id)));
+  KG.decisions.forEach(tr => scan(tr, 'decision ' + tr.id));
+  assert(!bad.length, 'yahan backslash ke baad comment hai: ' + bad.slice(0, 5).join(', '));
+});
+t('content: HTML fields mein raw <placeholder> nahi (browser use tag samajh ke GAYAB kar deta hai)', () => {
+  // in fields ko engine text ki tarah dikhata hai (textContent/escapeHtml) — wahan <pod> theek hai
+  const TEXT_FIELDS = new Set(['cluster', 'files', 'responses', 'hints', 'template', 'out', 'yaml', 'start', 'cleanup', 'tokens']);
+  const OK = new Set('a abbr b br code details div em h1 h2 h3 h4 h5 i img kbd li ol p pre s small span strong sub summary sup table tbody td th thead tr u ul svg path rect circle line text g polyline polygon defs marker tspan ellipse title style section label button input'.split(' '));
+  const bad = [];
+  const scan = (v, where) => {
+    if (typeof v === 'string') {
+      const re = /<\/?([a-zA-Z][a-zA-Z0-9_.:-]*)[^<>]*>/g; let m;
+      while ((m = re.exec(v))) if (!OK.has(m[1].toLowerCase())) bad.push(where + ' ' + m[0]);
+    } else if (Array.isArray(v)) v.forEach((x, i) => scan(x, where + '[' + i + ']'));
+    else if (v && typeof v === 'object') Object.keys(v).forEach(k => { if (typeof v[k] !== 'function' && !TEXT_FIELDS.has(k)) scan(v[k], where + '.' + k); });
+  };
+  KG.tracks.forEach(tr => KG.levelsOf(tr).forEach(l => scan(l, l.id)));
+  KG.decisions.forEach(tr => scan(tr, 'decision ' + tr.id));
+  scan(KG.realLabs, 'realLabs');
+  assert(!bad.length, bad.length + ' jagah — &lt;naam&gt; likho: ' + bad.slice(0, 6).join(' | '));
+});
 t('terminal: k alias scripted responses + history tak pahunchta hai', () => {
   let hit = 0;
   const T = term({ pods: [] }, { responses: [{ re: /^kubectl rollout undo deploy\/web$/, out: 'rolled back', mutate: () => { hit++; } }] });
@@ -1044,6 +1110,8 @@ const SCRIPTS = [
   [/[؀-ۿ]/g, 'Arabic'],
   [/[֐-׿]/g, 'Hebrew'],
   [/[一-鿿぀-ヿ]/g, 'CJK/Kana'],
+  [/[\u0980-\u0DFF]/g, 'Indic (Bengali/Gurmukhi/Gujarati/Odia/Tamil/Telugu/Kannada/Malayalam)'],
+  [/[\u0E00-\u0E7F]/g, 'Thai'],
 ];
 FILES.concat(['index.html', 'gallery.html']).forEach(f => {
   const txt = fs.readFileSync(path.join(DIR, f), 'utf8');

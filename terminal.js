@@ -225,24 +225,36 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     const widths = rows[0].map((_, c) => Math.max(...rows.map(r => String(r[c]).length)) + 3);
     return rows.map(r => r.map((cell, c) => pad(cell, widths[c])).join('').trimEnd()).join('\n');
   }
-  function podTable(wide, items) {
+  function podTable(wide, items, labelCols) {
+    labelCols = labelCols || [];
     const head = ['NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE'];
     if (wide) head.push('IP', 'NODE');
-    const rows = [head];
+    const rows = [head.concat(labelCols.map(labelHeader))];
     (items || list('pods')).forEach(p => {
       const r = [p.name, p.ready, p.status, p.restarts, p.age];
       if (wide) r.push(p.ip || '<none>', p.node || '<none>');
-      rows.push(r);
+      rows.push(r.concat(labelCols.map(k => (p.labels || {})[k] || '')));
     });
     return table(rows);
   }
-  function genericTable(kind, items) {
+  /* node/pod labels — `kubectl get nodes -L karpenter.sh/capacity-type` ke liye.
+     Karpenter nodes ke fields asli well-known labels par map hote hain. */
+  function labelsOf(r) {
+    const l = Object.assign({}, r.labels || {});
+    if (r.instanceType) l['node.kubernetes.io/instance-type'] = r.instanceType;
+    if (r.capacityType) l['karpenter.sh/capacity-type'] = r.capacityType;
+    if (r.zone) l['topology.kubernetes.io/zone'] = r.zone;
+    if (r.nodepool) l['karpenter.sh/nodepool'] = r.nodepool;
+    return l;
+  }
+  // -L ka column header = label key ka aakhri hissa, UPPERCASE (asli kubectl jaisa)
+  const labelHeader = k => k.split('/').pop().toUpperCase();
+  function genericTable(kind, items, opts) {
+    const labelCols = (opts && opts.labelCols) || [];
     const defs = {
       deployments: ['NAME', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'AGE'],
       services: ['NAME', 'TYPE', 'CLUSTER-IP', 'PORT(S)', 'AGE'],
-      nodes: (sim.cluster.karpenter && sim.cluster.karpenter.enabled)
-        ? ['NAME', 'STATUS', 'INSTANCE-TYPE', 'CAPACITY', 'ZONE', 'NODEPOOL', 'AGE']
-        : ['NAME', 'STATUS', 'ROLES', 'AGE', 'VERSION'],
+      nodes: ['NAME', 'STATUS', 'ROLES', 'AGE', 'VERSION'],
       configmaps: ['NAME', 'DATA', 'AGE'],
       secrets: ['NAME', 'TYPE', 'DATA', 'AGE'],
       endpoints: ['NAME', 'ENDPOINTS', 'AGE'],
@@ -256,8 +268,9 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     };
     // Karpenter ke tables karpentersim.js se aate hain (dynamic)
     if (typeof KG.karpenter === 'object' && ['nodepools', 'nodeclaims', 'ec2nodeclasses'].includes(kind)) {
-      const t = KG.karpenter.tables(sim)[kind];
-      return t.rows.length ? table([t.cols, ...t.rows]) : 'No resources found.';
+      const t = KG.karpenter.tables(sim, opts && opts.wide)[kind];
+      const rows = items ? t.rows.filter(r => items.some(x => x.name === r[0])) : t.rows;
+      return rows.length ? table([t.cols, ...rows]) : 'No resources found.';
     }
     if (kind === 'apps') {
       const a = items || list('apps');
@@ -275,7 +288,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     }
     const cols = defs[kind];
     if (!cols) return null;
-    const rows = [cols];
+    const rows = [cols.concat(labelCols.map(labelHeader))];
     (items || list(kind)).forEach(r => rows.push(cols.map(c => {
       const key = c.toLowerCase().replace(/[^a-z]/g, '');
       const map = {
@@ -294,7 +307,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
         instancetype: r.instanceType, zone: r.zone, nodepool: r.nodepool,
       };
       return map[key] != null ? map[key] : '<none>';
-    })));
+    }).concat(labelCols.map(k => labelsOf(r)[k] || ''))));
     return table(rows);
   }
 
@@ -419,7 +432,8 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
         '  helm <cmd>                     (Helm mission: "helm help")',
         '  argocd <cmd>                   (GitOps mission: "argocd help")',
         '  kubectl argo rollouts get rollout <name> | promote | abort',
-        '  kubectl get nodepools|nodeclaims|ec2nodeclasses   (Karpenter mission)',
+        '  kubectl get nodepools|nodeclaims|ec2nodeclasses [-o wide|-o yaml]   (Karpenter mission)',
+        '  kubectl get nodes -L karpenter.sh/capacity-type -L node.kubernetes.io/instance-type',
         '  ls · clear · hint · help',
         `  shortcut: 'k' bhi chalega (k get po)`,
       ].join('\n'));
@@ -453,8 +467,17 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     }
     // flags nikal do jo hum ignore/parse karte hain
     const wide = toks.includes('-o') && toks[toks.indexOf('-o') + 1] === 'wide' || toks.includes('-owide') || toks.includes('-o=wide') || toks.includes('--output=wide');
+    // -o yaml / json / jsonpath=… (wide ke alawa koi bhi output format)
+    const fmtTok = toks.find((t, i) => /^(-o|--output)=?./.test(t) && t !== '-o' || toks[i - 1] === '-o');
+    const outFmt = fmtTok ? fmtTok.replace(/^(-o|--output)=?/, '') : '';
+    // -L key  /  -L=key  /  --label-columns=a,b  → extra label columns
+    const labelCols = [];
+    toks.forEach((t, i) => {
+      if ((t === '-L' || t === '--label-columns') && toks[i + 1]) labelCols.push(...toks[i + 1].split(','));
+      else if (/^(-L|--label-columns)=/.test(t)) labelCols.push(...t.split('=').slice(1).join('=').split(','));
+    });
     const prev = toks.includes('--previous') || toks.includes('-p') || toks.includes('--previous=true');
-    toks = toks.filter((t, i) => !(t === '-o' || (toks[i - 1] === '-o') || t === '-owide' || t === '--previous' || t === '-p' || t === '-n' || toks[i - 1] === '-n' || t === '--namespace' || toks[i - 1] === '--namespace'));
+    toks = toks.filter((t, i) => !(t === '-o' || (toks[i - 1] === '-o') || /^(-o|--output)=?./.test(t) || t === '--previous' || t === '-p' || t === '-n' || toks[i - 1] === '-n' || t === '--namespace' || toks[i - 1] === '--namespace'));
 
     const verb = toks[1];
 
@@ -482,21 +505,36 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
         };
         // karpenter ke tables karpentersim se aate hain — unhe naam se filter nahi karte
         const dynamic = ['nodepools', 'nodeclaims', 'ec2nodeclasses'].includes(kind);
-        if (names.length && kind !== 'all' && kind !== 'events' && !dynamic) {
+        if (names.length && kind !== 'all' && kind !== 'events') {
           const found = pick(list(kind));
           const missing = names.filter(n => !found.some(x => x.name === n || (x.name || '').startsWith(n)));
           if (missing.length) { print('err', `Error from server (NotFound): ${kind} "${missing[0]}" not found`); return; }
         }
         let text;
-        if (kind === 'all') {
+        // -o yaml: Karpenter CRs ka asli-jaisa YAML (baaki kinds ka poora spec simulator mein nahi hai)
+        if (outFmt && outFmt !== 'wide' && outFmt !== 'name') {
+          if (dynamic && /^(yaml|json)$/.test(outFmt) && KG.karpenter && KG.karpenter.toYaml) {
+            const objs = names.length ? pick(list(kind)) : list(kind);
+            if (names.length && !objs.length) { print('err', `Error from server (NotFound): ${kind} "${names[0]}" not found`); return; }
+            text = objs.map(o => KG.karpenter.toYaml(sim, kind, o)).join('\n---\n');
+            if (outFmt === 'json') print('sys', '(simulator: json ki jagah yaml dikha raha hoon — fields wahi hain)');
+            blocks.push(text);
+            continue;
+          }
+          print('sys', `(simulator: '-o ${outFmt}' sirf Karpenter resources ke liye hai — yahan table dikha raha hoon. Asli cluster par poora output aata. Details ke liye: kubectl describe ${r} <naam>)`);
+        }
+        if (outFmt === 'name') {
+          const objs = names.length ? pick(list(kind)) : list(kind);
+          text = objs.map(o => `${kind.replace(/s$/, '')}/${o.name}`).join('\n') || 'No resources found.';
+        } else if (kind === 'all') {
           text = ['── pods ──', podTable(wide), '', '── deployments ──', genericTable('deployments') || 'No resources found.', '', '── services ──', genericTable('services') || 'No resources found.'].join('\n');
         } else if (kind === 'pods') {
-          text = podTable(wide, pick(list('pods')));
+          text = podTable(wide, pick(list('pods')), labelCols);
         } else if (kind === 'events') {
           const evs = list('events');
           text = evs.length ? evs.join('\n') : 'No events found.';
         } else {
-          const t = genericTable(kind, names.length && !dynamic ? pick(list(kind)) : null);
+          const t = genericTable(kind, names.length ? pick(list(kind)) : null, { wide, labelCols });
           text = (t == null || (!list(kind).length && !dynamic)) ? 'No resources found.' : t;
         }
         blocks.push(kinds.length > 1 ? `── ${kind} ──\n${text}` : text);
@@ -514,7 +552,9 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       if (!name && list(kind).length === 1) name = list(kind)[0].name;   // kubectl describe <kind> = sab dikhata hai
       const obj = find(kind, name);
       if (!obj) { print('err', `Error from server (NotFound): ${kind} "${name || ''}" not found`); return; }
-      print('ok', kind === 'pods' ? describePod(obj) : (obj.describe || `Name: ${obj.name}\n(describe output is mission mein limited hai)`));
+      const kd = ['nodepools', 'nodeclaims', 'ec2nodeclasses'].includes(kind) && KG.karpenter && KG.karpenter.describe
+        ? KG.karpenter.describe(sim, kind, obj) : null;
+      print('ok', kind === 'pods' ? describePod(obj) : (obj.describe || kd || `Name: ${obj.name}\n(describe output is mission mein limited hai)`));
       return;
     }
 
@@ -592,8 +632,14 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
         only(list('pods')).forEach(p => rows.push([p.name, (p.top || '5m 20Mi').split(' ')[0], (p.top || '5m 20Mi').split(' ')[1]]));
         print('ok', table(rows));
       } else if (kind === 'nodes') {
-        const rows = [['NAME', 'CPU%', 'MEMORY%']];
-        only(list('nodes')).forEach(n => rows.push([n.name, (n.top || '18% 42%').split(' ')[0], (n.top || '18% 42%').split(' ')[1]]));
+        // asli header (kubectl v1.32): NAME CPU(cores) CPU(%) MEMORY(bytes) MEMORY(%)
+        const rows = [['NAME', 'CPU(cores)', 'CPU(%)', 'MEMORY(bytes)', 'MEMORY(%)']];
+        only(list('nodes')).forEach(n => {
+          const [c, m] = (n.top || '18% 42%').split(' ');
+          const cores = Math.round(parseFloat(c) / 100 * (n.cpu || 4) * 1000) + 'm';
+          const bytes = Math.round(parseFloat(m) / 100 * (n.mem || 16) * 1024) + 'Mi';
+          rows.push([n.name, cores, c, bytes, m]);
+        });
         print('ok', table(rows));
       } else print('err', 'error: kubectl top [pods|nodes]');
       return;

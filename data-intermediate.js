@@ -747,13 +747,46 @@ spec:
   accessModes: [ReadWriteOnce]
   resources: { requests: { storage: 1Gi } }
 EOF
-kubectl get pvc                   # Bound (ya Pending till first pod — dono normal)
-# writer pod: data likho, phir maro
-kubectl run writer --image=busybox --restart=Never -- sh -c 'echo AMAR-DATA > /mnt/f'
-# (volume attach karne ke liye YAML chahiye — kubectl explain pod.spec.volumes se
-#  khud likho, yehi asli practice hai! Ya level ke fill-game wala pattern use karo.)
-kubectl delete pvc test-pvc</pre>
-      <p>✅ Self-check: PVC Bound dekhi? explain se volumes ka YAML khud likh paaye?</p>`,
+kubectl get pvc                   # Pending — WaitForFirstConsumer: pehle pod aane do (NORMAL hai)
+
+# 1) writer pod: PVC mount karke data likho
+cat &lt;&lt;EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata: { name: writer }
+spec:
+  restartPolicy: Never
+  volumes: [{ name: data, persistentVolumeClaim: { claimName: test-pvc } }]
+  containers:
+  - name: w
+    image: busybox:1.36
+    command: ["sh", "-c", "echo AMAR-DATA &gt; /data/f"]
+    volumeMounts: [{ name: data, mountPath: /data }]
+EOF
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/writer --timeout=120s
+kubectl get pvc                   # ab Bound ✅
+kubectl delete pod writer         # pod mar gaya... data?
+
+# 2) reader pod: NAYA pod, wahi PVC
+cat &lt;&lt;EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata: { name: reader }
+spec:
+  restartPolicy: Never
+  volumes: [{ name: data, persistentVolumeClaim: { claimName: test-pvc } }]
+  containers:
+  - name: r
+    image: busybox:1.36
+    command: ["cat", "/data/f"]
+    volumeMounts: [{ name: data, mountPath: /data }]
+EOF
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/reader --timeout=120s
+kubectl logs reader               # AMAR-DATA 🎉 — data pod se zyada jeeta!
+kubectl delete pod reader &amp;&amp; kubectl delete pvc test-pvc</pre>
+      <p>✅ Self-check: PVC pehle Pending, pod aane ke baad Bound kyun hui? (StorageClass ka
+      <code>volumeBindingMode</code> dekho.) Reader ne writer ka data padha? Yahi persistence hai.
+      (kind/minikube par test kiya hua.)</p>`,
     cards: [
       { front: 'PV / PVC / StorageClass — kaun kya?', back: '🎫 <b>PVC</b> = demand parchi (dev). 🏭 <b>StorageClass</b> = disk recipe (admin, ek baar). 💾 <b>PV</b> = asli disk (dynamic provisioning se auto). PVC↔PV = Bound.' },
       { front: 'RWO vs RWX — "Once" kiska?', back: '<b>RWO = ek NODE</b> mount kar sakta hai (block disks: EBS). RWX = kai nodes (NFS/EFS). 2 replicas + RWO alag nodes par = "Multi-Attach error"!' },
@@ -1362,7 +1395,7 @@ Karpenter: Pending pods ka size dekha → PERFECT-FIT nodes seedha
         type: 'fill',
         title: 'HPA Likho',
         instructions: 'web Deployment ke liye HPA — 3 se 20 replicas, CPU 60% target.',
-        template: 'apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: web-hpa\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: {0}\n  minReplicas: {1}\n  maxReplicas: 20\n  metrics:\n  - type: Resource\n    resource:\n      name: cpu\n      target:\n        type: Utilization\n        averageUtilization: {2}\n\n# Zaroori shart (pod spec mein):\n  resources:\n    requests:\n      cpu: {3}      # iske BINA HPA andha hai!',
+        template: 'apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: web-hpa\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: {0}\n  minReplicas: {1}\n  maxReplicas: 20\n  metrics:\n  - type: Resource\n    resource:\n      name: cpu\n      target:\n        type: Utilization\n        averageUtilization: {2}\n---\n# Zaroori shart — Deployment ke CONTAINER mein (alag YAML, HPA ka hissa nahi):\nresources:\n  requests:\n    cpu: {3}      # iske BINA HPA andha hai!',
         blanks: [
           { answer: 'web', explain: 'Kis Deployment ko scale karna hai. HPA bas replicas field ghumata hai — baaki wahi Deployment machinery.' },
           { answer: '3', explain: 'Floor — traffic zero par bhi 3 (HA ke liye, Level 13 ka anti-affinity in par lagana mat bhoolna!).' },
@@ -1377,7 +1410,7 @@ Karpenter: Pending pods ka size dekha → PERFECT-FIT nodes seedha
         title: 'Good to Know — Scaling ke nuances',
         questions: [
           {
-            q: 'kubectl get hpa dikhata hai TARGETS: <unknown>/60%. Kya check karoge?',
+            q: 'kubectl get hpa dikhata hai TARGETS: &lt;unknown&gt;/60%. Kya check karoge?',
             choices: [
               'metrics-server chal raha hai? + pods mein CPU requests set hain? — dono HPA ki aankhein hain',
               'HPA delete karke naya banao',
@@ -1452,7 +1485,7 @@ kubectl create deployment php-apache --image=registry.k8s.io/hpa-example
 kubectl set resources deployment php-apache --requests=cpu=200m
 kubectl expose deployment php-apache --port=80
 kubectl autoscale deployment php-apache --cpu-percent=50 --min=1 --max=10
-kubectl get hpa -w        # pehle <unknown>, phir 0%/50%
+kubectl get hpa -w        # pehle &lt;unknown&gt;, phir 0%/50%
 # doosre terminal mein LOAD banao:
 kubectl run load --rm -it --image=busybox -- \\
   sh -c "while true; do wget -q -O- http://php-apache; done"

@@ -25,8 +25,8 @@
   /* ---- terminal mission checklists (registerLevels se PEHLE define) ---- */
   const T_TOOLKIT = [
     { text: 'kubectl get pods -n shop — pehle status dekho', check: s => s.history.some(h => /^(kubectl|k) get (pods|po)\b/.test(h)) },
-    { text: 'kubectl describe pod <naam> — Events padho', check: s => s.history.some(h => /^(kubectl|k) describe (pod|po) \S+/.test(h)) },
-    { text: 'kubectl logs <naam> --previous — mare hue container ke logs', check: s => s.history.some(h => /^(kubectl|k) logs \S+.*--previous/.test(h)) },
+    { text: 'kubectl describe pod &lt;naam&gt; — Events padho', check: s => s.history.some(h => /^(kubectl|k) describe (pod|po) \S+/.test(h)) },
+    { text: 'kubectl logs &lt;naam&gt; --previous — mare hue container ke logs', check: s => s.history.some(h => /^(kubectl|k) logs \S+.*--previous/.test(h)) },
     { text: 'Fix apply karo — kubectl apply -f add-dsn.yaml', check: s => s.cluster.pods.every(p => p.status === 'Running') },
   ];
 
@@ -228,7 +228,7 @@ product-api-7f8c9d5b4-pq8rt     6m           51Mi`,
             { text: 'Pod Running hai par app apne database tak nahi pahunch paa rahi', bin: 'exec', explain: 'Pod ke andar se DNS aur connectivity test karni padegi — kubectl exec se shell lo, ya distroless image ho to kubectl debug se ephemeral container attach karo.' },
             { text: 'Aadhe ghante pehle poora namespace hil gaya tha, ab shaant hai', bin: 'events', explain: 'Ek pod ka describe sirf us pod ki kahani deta hai. Poore namespace ki timeline ke liye: kubectl get events --sort-by=.lastTimestamp' },
             { text: 'Pod Running hai par READY column 0/1 dikha raha hai', bin: 'describe', explain: 'Container zinda hai par readiness probe fail ho rahi hai. Probe ka exact failure message describe ke Events mein aata hai: "Readiness probe failed: HTTP probe failed with statuscode: 500".' },
-            { text: 'Image distroless hai, usme sh aur bash dono nahi hain', bin: 'exec', explain: 'kubectl exec fail ho jayega kyunki shell binary hai hi nahi. kubectl debug -it <pod> --image=busybox --target=<container> ek ephemeral container chipka deta hai jo same network aur process namespace share karta hai.' },
+            { text: 'Image distroless hai, usme sh aur bash dono nahi hain', bin: 'exec', explain: 'kubectl exec fail ho jayega kyunki shell binary hai hi nahi. kubectl debug -it &lt;pod&gt; --image=busybox --target=&lt;container&gt; ek ephemeral container chipka deta hai jo same network aur process namespace share karta hai.' },
             { text: 'Ek pod baar-baar Evicted ho raha hai, wajah nahi pata', bin: 'events', explain: 'Eviction node-level dabaav se hota hai (disk ya memory pressure). Namespace ke events mein kubelet ka "The node was low on resource: ephemeral-storage" message milta hai.' },
           ],
         },
@@ -296,8 +296,8 @@ product-api-7f8c9d5b4-pq8rt     6m           51Mi`,
           {
             q: 'Interviewer: "Image distroless hai — usme shell hai hi nahi. Pod ke andar se DNS test kaise karoge?"',
             choices: [
-              'kubectl debug -it <pod> --image=busybox --target=<container> — ephemeral container same namespaces share karta hai',
-              'kubectl exec -it <pod> -- /bin/sh chalega, kubectl apna shell inject karta hai',
+              'kubectl debug -it &lt;pod&gt; --image=busybox --target=&lt;container&gt; — ephemeral container same namespaces share karta hai',
+              'kubectl exec -it &lt;pod&gt; -- /bin/sh chalega, kubectl apna shell inject karta hai',
               'Pod ko delete karke debug image ke saath dobara deploy karna hi ek raasta hai',
               'kubectl cp se busybox binary pod ke andar copy karo',
             ],
@@ -493,7 +493,9 @@ metadata:
   name: mailer
   namespace: staging
 spec:
+  selector: { matchLabels: { app: mailer } }
   template:
+    metadata: { labels: { app: mailer } }
     spec:
       {0}:                     # kubelet ko credentials yahan se milte hain
         - name: {1}
@@ -706,7 +708,7 @@ livenessProbe:
             { text: 'Last State: Terminated · Reason: Completed · Exit Code: 0', bin: 'spec', explain: 'Container ne apna kaam poora kiya aur khatam ho gaya. Deployment ko hamesha chalne wala process chahiye, isliye kubelet dobara start karta hai — anant loop. Sahi resource Job ya CronJob hai, Deployment nahi.' },
             { text: 'Error: failed to create containerd task: exec: "/app/server": stat /app/server: no such file or directory', bin: 'spec', explain: 'Entrypoint path galat hai. Binary image ke andar us path par hai hi nahi. Fix: Dockerfile ka WORKDIR/COPY ya pod spec ka command/args theek karo.' },
             { text: 'Last State: Terminated · Reason: Error · Exit Code: 139', bin: 'app', explain: 'Exit Code 139 = 128+11 = SIGSEGV (segfault). Sabse aam wajah: arm64 node par amd64 image (ya ulta), ya kisi native library ka bug.' },
-            { text: 'Status: Init:CrashLoopBackOff · Init Containers: wait-for-db (Terminated, Exit Code 1)', bin: 'spec', explain: 'Main container shuru hi nahi hua. Init container wait-for-db fail ho raha hai. Logs alag se maango: kubectl logs <pod> -c wait-for-db. Aksar init container ka DB host ka naam galat hota hai.' },
+            { text: 'Status: Init:CrashLoopBackOff · Init Containers: wait-for-db (Terminated, Exit Code 1)', bin: 'spec', explain: 'Main container shuru hi nahi hua. Init container wait-for-db fail ho raha hai. Logs alag se maango: kubectl logs &lt;pod&gt; -c wait-for-db. Aksar init container ka DB host ka naam galat hota hai.' },
             { text: 'memory limit 128Mi, container ka RSS graph 126Mi par flat hai aur restart har 4 min', bin: 'oom', explain: 'Memory limit ke bilkul kinare par chal raha hai. Har GC spike limit paar karti hai aur kubelet SIGKILL bhejta hai. Fix: limit badhao (request bhi saath badhao warna QoS Burstable rehta hai aur eviction ka khatra bana rehta hai).' },
           ],
         },
@@ -1058,7 +1060,7 @@ kubectl describe pod typo | grep -A3 "Last State"</pre>`,
               q: 'Pod ka status <code>CreateContainerConfigError</code> hai. Event: <code>Error: secret "db-creds" not found</code>. Sabse pehla kadam?',
               context: 'NAME                      READY   STATUS                       RESTARTS   AGE\ndemo-a-75bf694876-2rxs4   0/1     CreateContainerConfigError   0          6m',
               choices: [
-                'kubectl get secret db-creds -n <pod ka namespace> — dekho secret hai bhi ya nahi, aur usi namespace mein hai ya nahi',
+                'kubectl get secret db-creds -n &lt;pod ka namespace&gt; — dekho secret hai bhi ya nahi, aur usi namespace mein hai ya nahi',
                 'kubectl logs demo-a-75bf694876-2rxs4 — application ka error padho',
                 'Deployment restart karo',
                 'Memory limit badhao',
@@ -1525,11 +1527,11 @@ kubectl run big --image=nginx --overrides='{"spec":{"containers":[{"name":"big",
 kubectl run picky --image=nginx --overrides='{"spec":{"nodeSelector":{"disktype":"nvme-does-not-exist"}}}'
 
 # 3. taint
-kubectl taint nodes <node> demo=yes:NoSchedule
+kubectl taint nodes &lt;node&gt; demo=yes:NoSchedule
 kubectl run tainted --image=nginx
 
 kubectl describe pod big picky tainted | grep -A4 FailedScheduling
-kubectl taint nodes <node> demo-      # taint hatao</pre>
+kubectl taint nodes &lt;node&gt; demo-      # taint hatao</pre>
         <p>Aur booking vs usage ka farq dekho: <code>kubectl describe node &lt;node&gt; | grep -A6 "Allocated resources"</code> ko <code>kubectl top node &lt;node&gt;</code> ke saath compare karo.</p>`,
       cards: [
         { front: 'Pending pod par kaunsa command chalayein?', back: '<code>kubectl describe pod</code>. Pending pod ke paas container hai hi nahi, isliye <code>kubectl logs</code> hamesha khaali hoga. Scheduler ka poora jawab Events ki FailedScheduling line mein hai.' },
@@ -1735,8 +1737,8 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
           steps: [
             { text: 'kubectl get deploy — Deployment maujood hai? READY aur UP-TO-DATE kya keh rahe hain?', explain: 'Pehle confirm karo ki Deployment banaa bhi tha. UP-TO-DATE 0 dikhe to ReplicaSet ne ek bhi pod nahi banaya — masla neeche ki taraf hai.' },
             { text: 'kubectl get rs — ReplicaSet bana ya nahi, aur DESIRED kitna hai?', explain: 'ReplicaSet hi nahi bana to Deployment controller ki problem hai (bahut kam hota hai). ReplicaSet bana par CURRENT 0 hai to pod banane ki koshish fail ho rahi hai.' },
-            { text: 'kubectl describe rs <naam> — Events mein FailedCreate ka poora message padho', explain: 'Yahan asli error milta hai: exceeded quota, forbidden by PodSecurity, must specify requests.cpu, ya RBAC ka jawab. Deployment ke Events yahan khaali hote hain.' },
-            { text: 'Error ke hisaab se namespace ka policy object dekho — quota, limitrange, ya PSA labels', explain: 'kubectl describe quota / get limitrange / kubectl get ns <ns> --show-labels. Ab pata hai ki kaunsa policy object rok raha hai.' },
+            { text: 'kubectl describe rs &lt;naam&gt; — Events mein FailedCreate ka poora message padho', explain: 'Yahan asli error milta hai: exceeded quota, forbidden by PodSecurity, must specify requests.cpu, ya RBAC ka jawab. Deployment ke Events yahan khaali hote hain.' },
+            { text: 'Error ke hisaab se namespace ka policy object dekho — quota, limitrange, ya PSA labels', explain: 'kubectl describe quota / get limitrange / kubectl get ns &lt;ns&gt; --show-labels. Ab pata hai ki kaunsa policy object rok raha hai.' },
             { text: 'Fix lagao aur ReplicaSet ke Events dobara padho', explain: 'ReplicaSet controller apne aap dobara koshish karta hai (exponential backoff ke saath). Naya FailedCreate na aaye aur CURRENT badhe — matlab fix chal gaya.' },
           ],
         },
@@ -1818,9 +1820,9 @@ migration-once-xx0yy       0/1     Completed   0          14d`,
           {
             q: 'Interviewer: "Deployment 0/3 par atki hai aur ek bhi pod nahi bana. Pehla command kaunsa chalaoge?"',
             choices: [
-              'kubectl describe rs <replicaset> — pod banane ki har error ReplicaSet ke Events par aati hai',
-              'kubectl logs deployment/<naam> — deployment controller ke logs',
-              'kubectl describe deployment <naam> — Events wahan hote hain',
+              'kubectl describe rs &lt;replicaset&gt; — pod banane ki har error ReplicaSet ke Events par aati hai',
+              'kubectl logs deployment/&lt;naam&gt; — deployment controller ke logs',
+              'kubectl describe deployment &lt;naam&gt; — Events wahan hote hain',
               'kubectl get nodes — node capacity dekho',
             ],
             answer: 0,
@@ -2629,7 +2631,7 @@ Error from server (NotFound): services "metrics-server" not found`,
           pairs: [
             { left: 'Pod Terminating mein hai, node NotReady hai', right: 'Node ki halat theek karo — kubelet zinda hone par pod apne aap saaf hoga', explain: 'Pod ko asli mein kubelet hi hataata hai. Node NotReady hai to kubelet ke paas khabar pahunch hi nahi rahi. Node wapas aane par pod turant chala jayega. Agar node hamesha ke liye gaya hai, tab node object delete karo — pods apne aap saaf ho jayenge.' },
             { left: 'PVC Terminating mein hai par hat nahi rahi', right: 'kubectl get pods se dekho kaunsa pod abhi bhi PVC use kar raha hai', explain: 'Finalizer <code>kubernetes.io/pvc-protection</code> jaan-boojh ke rokta hai — PVC tab tak nahi hategi jab tak koi pod usse maunted rakhe hai. Pehle pod hatao, PVC apne aap chali jayegi.' },
-            { left: 'Namespace Terminating, andar kuch bhi nahi', right: 'kubectl get ns <n> -o yaml — status.conditions padho, phir anaath APIService dhoondo', explain: 'Namespace controller har API group se poochta hai. Ek bhi group jawab na de (aksar anaath APIService), to namespace atak jaata hai. Wajah conditions mein saaf likhi hoti hai.' },
+            { left: 'Namespace Terminating, andar kuch bhi nahi', right: 'kubectl get ns &lt;n&gt; -o yaml — status.conditions padho, phir anaath APIService dhoondo', explain: 'Namespace controller har API group se poochta hai. Ek bhi group jawab na de (aksar anaath APIService), to namespace atak jaata hai. Wajah conditions mein saaf likhi hoti hai.' },
             { left: 'Custom resource Terminating, operator ka finalizer laga hai', right: 'Operator ke pods aur logs dekho — operator zinda hai ya nahi', explain: 'Custom finalizer wahi operator hataata hai jisne lagaya tha. Operator crash ya scale-to-zero hai to koi finalizer hataane wala hai hi nahi. Operator ko zinda karo — usually 30 second mein object apne aap saaf ho jaata hai.' },
             { left: 'Naya pod ContainerCreating mein atka: "Multi-Attach error"', right: 'strategy: Recreate lagao, ya replicas 0 karke phir 1 karo', explain: 'RWO volume ek waqt par ek hi node par attach ho sakta hai. RollingUpdate naya pod pehle banata hai — naya pod doosre node par gaya to volume abhi purane node par attached hai. Recreate strategy purana pod pehle hataati hai.' },
             { left: 'Pod delete kiya, 5 minute se Terminating hai, node Ready hai', right: 'preStop hook aur terminationGracePeriodSeconds dekho', explain: 'kubelet SIGTERM bhejta hai aur grace period tak intezaar karta hai. Lamba grace period (jaise 300s) ya atka hua preStop hook pod ko Terminating mein rakhta hai. Application SIGTERM handle nahi karti to poora grace period lagta hai.' },
@@ -3047,8 +3049,8 @@ nc -zv kubernetes.default 443            # TCP test (ping nahi)
 ping -c2 10.96.0.1                       # jawab NAHI aayega — normal hai!</pre>
         <p>Aur node par kube-proxy ke asli rules dekho:</p>
         <pre>kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}{"\\n"}'
-# node par (ya kubectl debug node/<node> se):
-sudo iptables-save | grep <clusterIP></pre>`,
+# node par (ya kubectl debug node/&lt;node&gt; se):
+sudo iptables-save | grep &lt;clusterIP&gt;</pre>`,
       cards: [
         { front: 'ClusterIP par asli mein kaun sun raha hai?', back: '<b>Koi nahi.</b> ClusterIP kisi interface par nahi hota — ClusterIP sirf kube-proxy ke iptables/IPVS DNAT rules mein maujood hai. Isliye ping kabhi jawab nahi deta; test TCP se karo.' },
         { front: '"Connection refused" vs "connection timed out"?', back: '<b>Refused</b> = packet pahunch gaya, port par koi sun nahi raha (aksar galat targetPort). <b>Timeout</b> = packet chup-chaap gira (NetworkPolicy ya CNI). Sabse pehla sawal yahi poochna chahiye.' },
@@ -3130,9 +3132,11 @@ sudo iptables-save | grep <clusterIP></pre>`,
            <tr><td><code>kubectl uncordon &lt;node&gt;</code></td><td>Node ko phir se schedulable karta hai</td><td>Purane pods wapas nahi aate — naye pods aa sakte hain</td></tr>
          </table>
          <p><b>drain ke do zaroori flags:</b></p>
-         <pre>kubectl drain node-3 \\
-  --ignore-daemonsets \\      # DaemonSet pods evict nahi ho sakte, warna drain shuru hi nahi hoga
-  --delete-emptydir-data     # emptyDir wale pods ke liye — data KHO jayega, jaan-boojh ke maango</pre>
+         <pre># --ignore-daemonsets     → DaemonSet pods evict nahi ho sakte, warna drain shuru hi nahi hoga
+# --delete-emptydir-data  → emptyDir wale pods ke liye — data KHO jayega, jaan-boojh ke maango
+kubectl drain node-3 \\
+  --ignore-daemonsets \\
+  --delete-emptydir-data</pre>
          <p><b>Eviction aur delete ka farq:</b> <code>kubectl delete pod</code> PDB ko poori tarah ignore
          karta hai. <code>kubectl drain</code> Eviction API se chalta hai, jo PDB ko maanta hai. Isliye
          drain safe hai aur delete nahi.</p>
@@ -3382,14 +3386,14 @@ ETCDCTL_API=3 etcdctl snapshot restore /backup/etcd-2026-09-04.db \\
 kubectl create pdb web-pdb --selector=app=web --min-available=3
 
 kubectl get nodes
-kubectl drain <koi-worker> --ignore-daemonsets --delete-emptydir-data
+kubectl drain &lt;koi-worker&gt; --ignore-daemonsets --delete-emptydir-data
 # "Cannot evict pod as it would violate the pod's disruption budget" — hamesha ke liye atka
 
 # ab PDB theek karo
 kubectl delete pdb web-pdb
 kubectl create pdb web-pdb --selector=app=web --max-unavailable=1
-kubectl drain <koi-worker> --ignore-daemonsets --delete-emptydir-data   # ab chalega
-kubectl uncordon <koi-worker></pre>
+kubectl drain &lt;koi-worker&gt; --ignore-daemonsets --delete-emptydir-data   # ab chalega
+kubectl uncordon &lt;koi-worker&gt;</pre>
         <p>Aur agar tumhare paas kubeadm cluster hai, to snapshot lena aur
         <code>snapshot status</code> se verify karna zaroor practice karo — restore se pehle
         verify karna hamesha zaroori hai.</p>`,

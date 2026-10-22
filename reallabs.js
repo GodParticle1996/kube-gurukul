@@ -63,7 +63,7 @@ kubectl -n lab14 patch configmap orders-cache --type=merge -p '{"metadata":{"fin
 kubectl -n lab14-legacy patch configmap legacy-cache --type=merge -p '{"metadata":{"finalizers":null}}'
 kubectl delete ns lab14 lab14-legacy --ignore-not-found` },
   { id: '15-helm', num: '15', icon: '⛵', title: 'Helm hands-on', mins: 25,
-    concept: 'Lint pass par bug (galat key), --set reset gotcha, --atomic, helm test',
+    concept: 'Lint pass par bug (galat key), --set reset gotcha, --rollback-on-failure (Helm 3: --atomic), fail hue upgrade ka config leak, helm test',
     decision: 'Config -f file mein ya --set mein?', levels: ['helmvalues', 'helmhooks'], trees: ['packaging'],
     start: 'helm lint chart/gurukul-web\nhelm template demo chart/gurukul-web -f values-prod.yaml | grep -n "replicas:"',
     cleanup: 'helm uninstall demo -n lab15 && kubectl delete ns lab15' },

@@ -16,4 +16,9 @@ spec:
       command: ["sh", "-c"]
       args:
         - |
-          wget -qO- -T 5 http://{{ include "gurukul-web.fullname" . }}:{{ .Values.service.port }} | grep -qF {{ .Values.message | squote }}
+          # ConfigMap volume ka naya content pod tak ~1 min mein pahunchta hai (rollback ke turant baad bhi) → thoda retry
+          for i in $(seq 1 30); do
+            wget -qO- -T 3 http://{{ include "gurukul-web.fullname" . }}:{{ .Values.service.port }} | grep -qF {{ .Values.message | squote }} && exit 0
+            sleep 3
+          done
+          echo "Service ne expected message nahi lautaya"; exit 1

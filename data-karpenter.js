@@ -37,7 +37,10 @@ metadata: { name: default }
 spec:
   template:
     spec:
-      nodeClassRef: { name: default }
+      nodeClassRef:                          # v1: group + kind + name — teeno zaroori
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
       requirements:
       - key: karpenter.sh/capacity-type
         operator: In
@@ -52,12 +55,13 @@ spec:
     cpu: 1000                                # 💰 budget guard-rail!
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m                     # v1.x: disruption likha toh yeh bhi zaroori
 ---
 apiVersion: karpenter.k8s.aws/v1
 kind: EC2NodeClass                    # "AWS ki DETAIL" — cloud-specific
 metadata: { name: default }
 spec:
-  amiFamily: AL2023
+  amiSelectorTerms: [{ alias: al2023@latest }]   # v1: AMI explicitly (prod mein version pin karo)
   role: KarpenterNodeRole-prod               # nodes ka IAM role
   subnetSelectorTerms:   [{ tags: { "karpenter.sh/discovery": "prod" } }]
   securityGroupSelectorTerms: [{ tags: { "karpenter.sh/discovery": "prod" } }]</pre>
@@ -94,7 +98,7 @@ spec:
         ],
         items: [
           { text: 'capacity-type: spot, on-demand', bin: 'np', explain: 'Scheduling requirement — kaisa node chal sakta hai. Cloud-neutral concept.' },
-          { text: 'amiFamily: AL2023', bin: 'nc', explain: 'AWS-specific: kaunsi AMI use karni hai. NodePool ko AMI se koi lena-dena nahi.' },
+          { text: 'amiSelectorTerms: [{ alias: al2023@latest }]', bin: 'nc', explain: 'AWS-specific: kaunsi AMI use karni hai (v1 mein yeh field zaroori hai). NodePool ko AMI se koi lena-dena nahi.' },
           { text: 'subnetSelectorTerms (tags se subnet dhundo)', bin: 'nc', explain: 'AWS networking detail — nodes kaunse subnets mein launch honge.' },
           { text: 'limits: cpu 1000', bin: 'np', explain: 'Budget guard-rail — is pool ke saare nodes milke max 1000 CPU. Limit pahunchne par naye nodes nahi banenge (pods Pending rahenge — jaan-boojh ke!).' },
           { text: 'IAM role: KarpenterNodeRole-prod', bin: 'nc', explain: 'Nodes ki AWS identity — EC2NodeClass mein. (IRSA/Pod Identity ka concept — AWS Gurukul se connect!)' },
@@ -153,9 +157,9 @@ spec:
         type: 'fill',
         title: 'NodePool Likho',
         instructions: 'Production NodePool banao — spot-first, modern instances, budget guard-rail ke saath.',
-        template: 'apiVersion: karpenter.sh/v1\nkind: {0}\nmetadata:\n  name: default\nspec:\n  template:\n    spec:\n      nodeClassRef:\n        name: default\n      requirements:\n      - key: karpenter.sh/{1}\n        operator: In\n        values: ["spot", "on-demand"]      # spot pehle try hoga\n      - key: karpenter.k8s.aws/instance-category\n        operator: In\n        values: ["c", "m", "r"]\n  {2}:\n    cpu: 1000                              # budget guard-rail\n  disruption:\n    consolidationPolicy: {3}',
+        template: 'apiVersion: karpenter.sh/v1\nkind: {0}\nmetadata:\n  name: default\nspec:\n  template:\n    spec:\n      nodeClassRef:\n        group: karpenter.k8s.aws\n        kind: EC2NodeClass\n        name: default\n      requirements:\n      - key: karpenter.sh/{1}\n        operator: In\n        values: ["spot", "on-demand"]      # spot pehle try hoga\n      - key: karpenter.k8s.aws/instance-category\n        operator: In\n        values: ["c", "m", "r"]\n  {2}:\n    cpu: 1000                              # budget guard-rail\n  disruption:\n    consolidationPolicy: {3}\n    consolidateAfter: 1m',
         blanks: [
-          { answer: 'NodePool', operator: 'x', explain: 'karpenter.sh/v1 ka NodePool — "kaisa node chal sakta hai" ke rules. (Purane blogs mein "Provisioner" milega — woh v1beta se pehle ka naam tha.)' },
+          { answer: 'NodePool', explain: 'karpenter.sh/v1 ka NodePool — "kaisa node chal sakta hai" ke rules. (Purane blogs mein "Provisioner" milega — woh v1beta se pehle ka naam tha.)' },
           { answer: 'capacity-type', explain: 'spot + on-demand dono allowed → Karpenter spot pehle try karega (60-70% sasta), na mile toh on-demand. Fault-tolerant workloads ke liye best combo.' },
           { answer: 'limits', explain: 'Poore NodePool ki max capacity. Yeh <b>runaway cost ka brake</b> hai — koi buggy HPA 500 pods maange toh bhi bill nahi phategi (pods Pending rahenge, jo dikhta hai).' },
           { answer: 'WhenEmptyOrUnderutilized', explain: 'Khaali nodes bhi hatao aur kam bhare nodes bhi merge karo — max saving. (WhenEmpty conservative hai: sirf bilkul khaali nodes.)' },
@@ -258,7 +262,7 @@ kubectl delete deploy inflate    # ab consolidation dekho (agla level!)</pre>
       <p>✅ Self-check: Karpenter ke logs mein "launched nodeclaim" aur instance type ka faisla dikha? Woh logs padhna hi asli Karpenter debugging hai.</p>`,
     cards: [
       { front: 'Karpenter vs Cluster Autoscaler?', back: 'CA pehle se bane <b>node groups</b> scale karta hai (type fixed). Karpenter pending pods dekh kar <b>node khud design</b> karta hai (60+ types mein best-fit, spot-aware), groups ki zaroorat nahi → ~40s vs ~3min, aur right-sizing se sasta.' },
-      { front: 'NodePool vs EC2NodeClass?', back: '<b>NodePool</b> = scheduling rules (capacity-type, instance-category, limits, disruption) — cloud-neutral. <b>EC2NodeClass</b> = AWS detail (amiFamily, subnets, security groups, IAM role). NodePool NodeClass ko reference karta hai.' },
+      { front: 'NodePool vs EC2NodeClass?', back: '<b>NodePool</b> = scheduling rules (capacity-type, instance-category, limits, disruption) — cloud-neutral. <b>EC2NodeClass</b> = AWS detail (AMI via amiSelectorTerms, subnets, security groups, IAM role). NodePool NodeClass ko reference karta hai.' },
       { front: 'Provisioning flow (5 steps)?', back: 'Pending pod → Karpenter requirements padhta hai → allowed instance types filter → <b>NodeClaim</b> banata hai → EC2 launch + kubelet join → Node Ready → pod schedule. ~40 second.' },
       { front: '5 chhote pending pods — kitne nodes?', back: '<b>Ek</b> (jitne fit ho jaayein) — Karpenter saare pending pods ko batch mein dekh kar <b>bin-packing</b> karta hai. CA ki tarah har group ko andha scale nahi karta.' },
       { front: 'NodePool limits.cpu ka kaam?', back: '<b>Budget guard-rail</b> — us pool ke saare nodes ki max capacity. Limit par pods <b>Pending</b> reh jaayenge (Events mein saaf likha hota hai) — silent bill-shock se behtar. Utilization par alert lagao.' },
@@ -293,11 +297,11 @@ KG.registerLevels('karpenter', [
        </table>
        <pre>disruption:
   consolidationPolicy: WhenEmptyOrUnderutilized
-  consolidateAfter: 1m         # itni der underutilized rahe tab action
+  consolidateAfter: 1m         # node par pod aaya/gaya → itni der shaant rahe tab consolidate (Never = band)
   budgets:
   - nodes: "10%"               # ek waqt mein max 10% nodes disrupt
   - nodes: "0"                 # ...par business hours mein bilkul nahi:
-    schedule: "0 9 * * mon-fri"
+    schedule: "30 3 * * mon-fri"   # ⚠️ cron UTC mein hota hai — 03:30 UTC = 9:00 AM IST
     duration: 8h</pre>
        <p>Consolidation 3 tarah se hoti hai: <b>delete</b> (khaali node hatao),
        <b>replace</b> (bada node → chhota sasta node), aur multi-node consolidation
@@ -384,11 +388,11 @@ Zaroori: Interruption Queue (SQS) configure karo, warna warning miss ho jaayega.
             },
           },
           'disable-consolidation.yaml': {
-            desc: 'NodePool se consolidation poori tarah band kar deta hai',
+            desc: 'NodePool par consolidateAfter: Never — consolidation poori tarah band',
             apply: s => {
-              s.cluster.nodepools[0].disruption.consolidationPolicy = null;
+              s.cluster.nodepools[0].disruption.consolidateAfter = 'Never';
               s.cluster.karpenter.consolidate = false;
-              return 'nodepool/default configured — consolidation DISABLED\n\n⚠️  Job toh bach gayi, par ab khaali nodes bhi kabhi nahi hatenge — bill badhta rahega!\nSahi fix: consolidation chaalu rakho, sirf us POD ko do-not-disrupt karo (protect-spark.yaml).';
+              return 'nodepool.karpenter.sh/default configured (consolidateAfter: Never) — consolidation DISABLED\n\n⚠️  Job toh bach gayi, par ab khaali nodes bhi kabhi nahi hatenge — bill badhta rahega!\nSahi fix: consolidation chaalu rakho, sirf us POD ko do-not-disrupt karo (protect-spark.yaml).';
             },
           },
         },

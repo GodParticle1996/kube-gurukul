@@ -431,7 +431,7 @@ kubectl logs &lt;pod-name&gt;        # container ke logs (stdout)</pre>`,
         tasks: [
           { text: 'kubectl get nodes — nodes dekho', check: s => s.history.some(h => /^(kubectl|k) get (nodes|no)\b/.test(h)) },
           { text: 'kubectl get pods -o wide — pods + unke nodes', check: s => s.history.some(h => /^(kubectl|k) get (pods|po|pod)\b.*-o ?wide/.test(h)) },
-          { text: 'kubectl describe pod <naam> — kisi pod ki kundli', check: s => s.history.some(h => /^(kubectl|k) describe (pod|pods|po) \S+/.test(h)) },
+          { text: 'kubectl describe pod &lt;naam&gt; — kisi pod ki kundli', check: s => s.history.some(h => /^(kubectl|k) describe (pod|pods|po) \S+/.test(h)) },
         ],
         cluster: {
           nodes: [
@@ -895,7 +895,7 @@ Control knobs:
               '7d4f8b9c6d pod ki IP ka encoded form hai',
             ],
             answer: 0,
-            explain: 'web-<rs-hash>-<random>. Do alag hash dikhein get pods mein = do revisions ke pods ek saath (rolling update chal raha hai ya atka hai). Debugging mein yeh pattern padhna kaam aata hai!',
+            explain: 'web-&lt;rs-hash&gt;-&lt;random&gt;. Do alag hash dikhein get pods mein = do revisions ke pods ek saath (rolling update chal raha hai ya atka hai). Debugging mein yeh pattern padhna kaam aata hai!',
           },
         ],
       },
@@ -1133,7 +1133,7 @@ kubectl delete deployment web              # safai</pre>
     homework: `<p>No-endpoints incident khud recreate karo — todna hi asli practice hai:</p>
       <pre>kubectl create deployment web --image=nginx --replicas=2
 kubectl expose deployment web --name=web-svc --port=80 --selector=app=webb  # galat selector — jaan boojh ke!
-kubectl get endpoints web-svc      # <none> 🚨
+kubectl get endpoints web-svc      # &lt;none&gt; 🚨
 kubectl delete svc web-svc
 kubectl expose deployment web --name=web-svc --port=80    # sahi (selector auto)
 kubectl get endpoints web-svc      # ab IPs dikhengi ✓
@@ -1255,7 +1255,7 @@ kubectl get pods -A               # saare mohalle</pre>
               'Pod sirf describe se dikhta hai',
             ],
             answer: 0,
-            explain: 'Har kubectl command namespace-scoped hai (default: "default"). Roz ka confusion: -n <namespace> ya -A lagao. Yeh chhoti cheez ghanton bacha leti hai!',
+            explain: 'Har kubectl command namespace-scoped hai (default: "default"). Roz ka confusion: -n &lt;namespace&gt; ya -A lagao. Yeh chhoti cheez ghanton bacha leti hai!',
           },
         ],
       },
@@ -1280,7 +1280,7 @@ kubectl get pods -A               # saare mohalle</pre>
           choices: [
             'Same image, alag namespace/cluster mein alag ConfigMaps/Secrets — deploy pipeline sirf config badalti hai',
             'Staging aur prod ke liye alag-alag images banao (config baked-in)',
-            'Code mein if(env=="prod") likhో',
+            'Code mein if(env=="prod") likho',
             'Prod config ko default rakho, staging manually badlo',
           ],
           answer: 0,
@@ -1454,7 +1454,7 @@ kubectl run test --rm -it --image=busybox --env-from=configMapRef:app-config? </
         instructions: 'Interview gauntlet se pehle — 3 rapid-fire. Bina soche jawab aana chahiye ab!',
         questions: [
           { q: 'kubectl apply ke baad pod ko node kaun assign karta hai?', choices: ['Scheduler', 'kubelet', 'API Server', 'kube-proxy'], answer: 0, explain: 'Scheduler decide karta hai, kubelet chalata hai. Ab toh neend mein bhi bolo!' },
-          { q: 'Service ke endpoints <none> hain. Sabse pehla shak?', choices: ['Selector vs pod labels mismatch (ya pods NOT READY)', 'etcd down hai', 'DNS kharab hai', 'Node NotReady hai'], answer: 0, explain: 'No-endpoints = 90% selector/label mismatch, 10% not-ready pods. Muscle memory ban gayi? 💪' },
+          { q: 'Service ke endpoints &lt;none&gt; hain. Sabse pehla shak?', choices: ['Selector vs pod labels mismatch (ya pods NOT READY)', 'etcd down hai', 'DNS kharab hai', 'Node NotReady hai'], answer: 0, explain: 'No-endpoints = 90% selector/label mismatch, 10% not-ready pods. Muscle memory ban gayi? 💪' },
           { q: 'CrashLoopBackOff — pehla command?', choices: ['kubectl logs (+ --previous)', 'kubectl delete pod', 'kubectl scale --replicas=0', 'node restart'], answer: 0, explain: 'Logs → root cause → targeted fix. Track 1 ka sabse bada sabak.' },
         ],
       },

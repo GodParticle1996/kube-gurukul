@@ -58,7 +58,7 @@ kubectl label node minikube-m03 gurukul/zone=zone-b disktype=ssd
 | 12 | [StatefulSet](12-statefulset/) | headless Service, PVC per pod | Deployment ya StatefulSet? |
 | 13 | [Jobs & CronJobs](13-jobs-cronjobs/) | backoffLimit, concurrencyPolicy | Forbid / Replace / Allow — kab kaunsa? |
 | 14 | [Stuck Terminating](14-finalizers/) | finalizers, namespace conditions | Finalizer kab hatana theek — kab bilkul nahi |
-| 15 | [Helm hands-on](15-helm/) | template bugs, values precedence, `--atomic` | Config `-f` file mein ya `--set` mein? |
+| 15 | [Helm hands-on](15-helm/) | template bugs, values precedence, `--rollback-on-failure`, config-leak jaal | Config `-f` file mein ya `--set` mein? |
 
 **Suggested order:** 01 → 02 → 03 → 04 → 05 (troubleshooting ki neev) · phir jo production mein chahiye.
 App ke **🧭 Decision Dojo** mein inhi decisions ke interactive decision-trees hain.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lab 15 verify — Helm: template bug, values precedence, --atomic, helm test
+# Lab 15 verify — Helm: template bug, values precedence, --rollback-on-failure (Helm 3: --atomic), helm test
 source "$(dirname "$0")/../lib/verify.sh"
 need_cluster; need_ns lab15
 NS=lab15; REL=demo; DIR="$(dirname "$0")"
@@ -21,9 +21,9 @@ check "Prod message ConfigMap mein hai" \
   "helm get values demo -n lab15 — USER-SUPPLIED VALUES mein kya hai?" \
   contains "$(jp $NS cm/demo-gurukul-web '{.data.index\.html}')" "prod"
 
-title "Lab 15 — --atomic aur helm test"
-check "History mein ek failed upgrade hai (aur release phir bhi deployed — --atomic ne bachaya)" \
-  "bad tag ke saath upgrade karo: helm upgrade demo chart/gurukul-web -n lab15 -f values-prod.yaml --set image.tag=galat --atomic --timeout 45s" \
+title "Lab 15 — --rollback-on-failure aur helm test"
+check "History mein ek failed upgrade hai (aur release phir bhi deployed — rollback-on-failure ne bachaya)" \
+  "Step 4 wala kharab upgrade karo: ... --set image.tag=galat --rollback-on-failure --timeout 90s  (Helm 3: --atomic)" \
   contains "$(rel_status)" "failed"
 if command -v helm >/dev/null 2>&1; then
   check "helm test chala aur pass hua" \

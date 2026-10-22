@@ -323,7 +323,7 @@ kubectl logs boom --previous</pre>
 kubectl describe pod huge | tail -5</pre>`,
       cards: [
         { front: 'CrashLoopBackOff par `kubectl logs` "container is waiting to start" kyun deta hai?', back: 'Bina flag ke `kubectl logs` CURRENT container maangta hai. Backoff ke dauraan koi container chal hi nahi raha. Mare hue container ka log <code>--previous</code> se aata hai.' },
-        { front: 'Exit Code 1 vs Exit Code 137 — kya farq hai?', back: '<b>1</b> = application khud crash hui (bad config, panic, missing env). <b>137</b> = 128+9, yaani SIGKILL — kubelet ne memory limit todne par container ko maara (Reason: OOMKilled).' },
+        { front: 'Exit Code 1 vs Exit Code 137 — kya farq hai?', back: '<b>1</b> = application khud crash hui (bad config, panic, missing env). <b>137</b> = 128+9, yaani SIGKILL — aksar memory limit todne par kernel ke OOM killer ne maara (Reason: OOMKilled). Reason: Error ho toh SIGKILL kahin aur se aaya (jaise grace period ke baad force-kill).' },
         { front: 'Pod Running par 0/1 READY — kya toota hai?', back: 'Readiness probe. Container zinda hai, par Service ne pod ko endpoints se hata diya hai. Exact probe error <code>kubectl describe pod</code> ke Events mein milta hai.' },
         { front: 'Poore namespace ki timeline kaise dekhein?', back: '<code>kubectl get events -n &lt;ns&gt; --sort-by=.lastTimestamp</code> — ek pod ka describe sirf usi pod ki kahani deta hai.' },
         { front: 'Distroless container ke andar debug kaise karein?', back: '<code>kubectl debug -it &lt;pod&gt; --image=busybox --target=&lt;container&gt;</code> — ephemeral container same network/process namespace mein chipakta hai, pod restart nahi hota.' },
@@ -657,16 +657,17 @@ kubectl describe pod t3 | grep -A3 Failed</pre>
            <tr><th>Exit Code</th><th>Kisne maara</th><th>Sabse aam wajah</th></tr>
            <tr><td><code>0</code></td><td>Koi nahi — process apna kaam karke khud khatam hua</td><td>Command batch jaisi hai (jaise <code>echo hi</code>). Deployment ko lambe samay tak chalne wala process chahiye — Job use karo.</td></tr>
            <tr><td><code>1</code></td><td>Application khud</td><td>Missing env var, galat config file, DB tak nahi pahunch paayi</td></tr>
-           <tr><td><code>137</code></td><td>kubelet (SIGKILL)</td><td>Memory limit tod di → Reason: <b>OOMKilled</b></td></tr>
-           <tr><td><code>139</code></td><td>Kernel (SIGSEGV)</td><td>Segfault — galat CPU architecture ki image, ya native library ka bug</td></tr>
+           <tr><td><code>137</code></td><td>SIGKILL — kernel ka OOM killer, ya grace period ke baad runtime ka force-kill</td><td>Memory limit tod di → Reason: <b>OOMKilled</b> (Reason: Error ho toh memory nahi)</td></tr>
+           <tr><td><code>139</code></td><td>Kernel (SIGSEGV)</td><td>Segfault — native library ka bug, ya galat libc ki binary (glibc wali musl/Alpine mein). Galat CPU architecture ka error alag hai: <code>exec format error</code></td></tr>
            <tr><td><code>143</code></td><td>kubelet (SIGTERM)</td><td>Graceful shutdown chala. Aksar liveness probe fail hone ke baad.</td></tr>
            <tr><td><code>127</code></td><td>Shell</td><td>"command not found" — entrypoint ka path galat hai</td></tr>
          </table>
          <div class="war-story"><b>⚡ Sabse mehnga confusion:</b> Exit Code 137 dekhte hi log
          memory limit badha dete hain. Par 137 sirf "SIGKILL mila" kehta hai. Agar
          <code>Reason: OOMKilled</code> likha hai tabhi memory ka masla hai. Agar
-         <code>Reason: Error</code> ke saath 137 hai, to kisi aur ne SIGKILL bheja — jaise
-         node ka OOM killer ya koi sidecar. Reason padhe bina limit badhana andhera mein teer hai.</div>`,
+         <code>Reason: Error</code> ke saath 137 hai, to SIGKILL kahin aur se aaya — sabse aam:
+         SIGTERM ke baad grace period khatam hua aur runtime ne force-kill kiya (app SIGTERM par
+         ruki hi nahi). Reason padhe bina limit badhana andhere mein teer hai.</div>`,
 
         `<h3>🔁 Do "nakli" CrashLoop jo application ki galti nahi hote</h3>
          <p><b>1. Liveness probe bahut aggressive hai.</b> Application ko boot hone mein 40 second
@@ -703,13 +704,13 @@ livenessProbe:
           ],
           items: [
             { text: 'Last State: Terminated · Reason: Error · Exit Code: 1', bin: 'app', explain: 'Exit Code 1 = process ne khud non-zero code se exit kiya. Application ne kuch galat paya (missing env, config file nahi mili, DB connect fail). Asli message --previous logs mein hai.' },
-            { text: 'Last State: Terminated · Reason: OOMKilled · Exit Code: 137', bin: 'oom', explain: 'Reason OOMKilled likha hai — kubelet ne memory limit todne par SIGKILL bheja. Fix: memory limit badhao, ya application ka memory usage kam karo. Sirf 137 dekhkar OOM maan lena galat hai; Reason zaroor padho.' },
+            { text: 'Last State: Terminated · Reason: OOMKilled · Exit Code: 137', bin: 'oom', explain: 'Reason OOMKilled likha hai — container ne memory limit todi aur <b>kernel ke OOM killer</b> ne (cgroup limit par) SIGKILL maara; kubelet sirf report karta hai. Fix: memory limit badhao, ya application ka memory usage kam karo. Sirf 137 dekhkar OOM maan lena galat hai; Reason zaroor padho.' },
             { text: 'Events: Liveness probe failed: HTTP probe failed with statuscode: 503 (x8)', bin: 'probe', explain: 'kubelet ne probe fail hone par container ko SIGTERM bheja (Exit Code 143). Application shayad theek hai par abhi boot ho rahi thi. Fix: startupProbe jodo, ya initialDelaySeconds badhao.' },
             { text: 'Last State: Terminated · Reason: Completed · Exit Code: 0', bin: 'spec', explain: 'Container ne apna kaam poora kiya aur khatam ho gaya. Deployment ko hamesha chalne wala process chahiye, isliye kubelet dobara start karta hai — anant loop. Sahi resource Job ya CronJob hai, Deployment nahi.' },
             { text: 'Error: failed to create containerd task: exec: "/app/server": stat /app/server: no such file or directory', bin: 'spec', explain: 'Entrypoint path galat hai. Binary image ke andar us path par hai hi nahi. Fix: Dockerfile ka WORKDIR/COPY ya pod spec ka command/args theek karo.' },
-            { text: 'Last State: Terminated · Reason: Error · Exit Code: 139', bin: 'app', explain: 'Exit Code 139 = 128+11 = SIGSEGV (segfault). Sabse aam wajah: arm64 node par amd64 image (ya ulta), ya kisi native library ka bug.' },
+            { text: 'Last State: Terminated · Reason: Error · Exit Code: 139', bin: 'app', explain: 'Exit Code 139 = 128+11 = SIGSEGV (segfault). Aam wajah: native code/library ka bug, ya galat libc ke liye bani binary (glibc wali binary Alpine/musl image mein). (Galat CPU architecture ka error alag dikhta hai: <code>exec format error</code>.)' },
             { text: 'Status: Init:CrashLoopBackOff · Init Containers: wait-for-db (Terminated, Exit Code 1)', bin: 'spec', explain: 'Main container shuru hi nahi hua. Init container wait-for-db fail ho raha hai. Logs alag se maango: kubectl logs &lt;pod&gt; -c wait-for-db. Aksar init container ka DB host ka naam galat hota hai.' },
-            { text: 'memory limit 128Mi, container ka RSS graph 126Mi par flat hai aur restart har 4 min', bin: 'oom', explain: 'Memory limit ke bilkul kinare par chal raha hai. Har GC spike limit paar karti hai aur kubelet SIGKILL bhejta hai. Fix: limit badhao (request bhi saath badhao warna QoS Burstable rehta hai aur eviction ka khatra bana rehta hai).' },
+            { text: 'memory limit 128Mi, container ka RSS graph 126Mi par flat hai aur restart har 4 min', bin: 'oom', explain: 'Memory limit ke bilkul kinare par chal raha hai. Har GC spike limit paar karti hai aur kernel ka OOM killer SIGKILL maarta hai. Fix: limit badhao (request bhi saath badhao warna QoS Burstable rehta hai aur eviction ka khatra bana rehta hai).' },
           ],
         },
         {
@@ -841,7 +842,7 @@ payments-api-5d7f9c8b6-h3nqx     180m         210Mi`,
             },
             'add-env.yaml': {
               desc: 'worker mein missing environment variables jodta hai',
-              apply: () => 'deployment.apps/ingest-worker configured\n\n⚠️ Naya pod bhi OOMKilled hua. Exit Code 137 + Reason OOMKilled = kubelet ne memory limit par SIGKILL bheja. Exit Code 1 hota tab missing env var wali theory sahi hoti.',
+              apply: () => 'deployment.apps/ingest-worker configured\n\n⚠️ Naya pod bhi OOMKilled hua. Exit Code 137 + Reason OOMKilled = container ne memory limit todi aur kernel ke OOM killer ne SIGKILL maara. Exit Code 1 hota tab missing env var wali theory sahi hoti.',
             },
           },
           success: allOf(T_CRASH),

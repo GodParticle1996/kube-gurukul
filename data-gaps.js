@@ -34,12 +34,14 @@
     return Math.max(2, Math.min(999, v));
   }
   function evictionRank(req, lim, usage) {
-    /* 1 = kubelet sabse pehle isse maarega */
+    /* asli kubelet (node-pressure eviction) ka kram:
+       1) usage > request?  → pehli line   2) phir PRIORITY   3) phir request se kitna upar
+       QoS seedha nahi dekha jaata — par BestEffort ki request 0 hai (hamesha pehli line),
+       aur Guaranteed ka memory usage request paar kar hi nahi sakta (hamesha aakhri line). */
     const q = qosOf(req, lim);
-    if (q === 'BestEffort') return 1;
-    if (usage > req) return 2;            // request se zyada use kar raha hai
-    if (q === 'Burstable') return 3;
-    return 4;                             // Guaranteed, budget ke andar
+    if (q === 'BestEffort' || usage > req) return 1;   // pehli line — priority sirf line ke andar
+    if (q === 'Burstable') return 2;                    // aakhri line, par spike aaya toh pehli mein
+    return 3;                                           // Guaranteed — pakka aakhri line
   }
   const preemptionSafe = priority => priority >= INCOMING_PRIORITY;
 
@@ -81,16 +83,17 @@ description: "Payment flow — cluster bhara ho to bhi jagah milni chahiye"</pre
          <tr><th></th><th>Preemption</th><th>Eviction</th></tr>
          <tr><td>Kaun karta hai</td><td><b>Scheduler</b></td><td><b>kubelet</b> (node par)</td></tr>
          <tr><td>Kab hota hai</td><td>Jab ek high-priority pod Pending hai aur kahin jagah nahi</td><td>Jab node par memory/disk khatam ho rahi hai</td></tr>
-         <tr><td>Kaun chunta hai shikaar</td><td>Sabse kam <b>priority</b> wale pods</td><td>Sabse kharab <b>QoS</b> wale pods (BestEffort pehle)</td></tr>
+         <tr><td>Kaun chunta hai shikaar</td><td>Sabse kam <b>priority</b> wale pods</td><td>Pehle jo apni <b>request se zyada</b> kha rahe (unme kam <b>priority</b> pehle) — BestEffort ki request 0, isliye woh hamesha pehli line mein</td></tr>
          <tr><td>Kahan dikhta hai</td><td>Pending pod ke Events</td><td>Node ke Events + evicted pod ka status <code>Evicted</code></td></tr>
        </table>
        <div class="war-story"><b>⚡ Sabse aam confusion:</b> team ne pod ki priority
-       badha di taaki pod evict na ho — aur pod phir bhi evict hua. Kyunki
-       <b>kubelet ki eviction priority nahi, QoS dekhti hai</b>. Priority sirf scheduler
-       ke preemption faisle mein kaam aati hai. Eviction se bachna hai to
-       <code>requests = limits</code> rakh ke QoS ko <b>Guaranteed</b> banao.
-       (Kubernetes 1.22+ mein kubelet ek hi QoS class ke andar priority ko
-       tie-breaker ki tarah dekhta hai — par QoS pehle aati hai, hamesha.)</div>`,
+       badha di taaki pod evict na ho — aur pod phir bhi evict hua. Kyun? kubelet ka
+       <b>pehla sawal hai: "kaun apni request se zyada kha raha hai?"</b> Aise pods pehli
+       line mein lagte hain — priority sirf <b>usi line ke andar</b> order tay karti hai.
+       Pod request se upar tha → pehli line → evict. Bachav: <code>requests</code> asli
+       usage jitni rakho, ya <code>requests = limits</code> (Guaranteed — memory usage
+       request paar kar hi nahi sakta). <i>(Alag cheez: kernel ka OOM killer priority nahi
+       dekhta — woh QoS se bane <code>oom_score_adj</code> par chalta hai.)</i></div>`,
 
       `<h3>📌 Static Pods — kubelet ke apne pods</h3>
        <p>Static pod woh pod hai jo <b>kubelet seedha ek file se</b> banata hai, bina API
@@ -130,7 +133,7 @@ etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yam
         readouts: k => {
           const q = qosOf(k.req, k.lim);
           const rank = evictionRank(k.req, k.lim, k.use);
-          const names = { 1: '1 — SABSE PEHLE', 2: '2 — jaldi', 3: '3 — baad mein', 4: '4 — SABSE AAKHIR' };
+          const names = { 1: 'PEHLI line (request se zyada)', 2: 'aakhri line — par spike aaya toh pehli', 3: 'aakhri line — PAKKA' };
           return [
             { label: 'QoS class', value: q, state: q === 'Guaranteed' ? 'good' : q === 'Burstable' ? 'warn' : 'bad',
               hint: q === 'Guaranteed' ? 'request === limit aur dono > 0' : q === 'BestEffort' ? 'na request, na limit' : 'request aur limit alag hain' },
@@ -138,8 +141,8 @@ etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yam
               hint: 'kernel ka OOM killer zyada score wale ko pehle maarta hai' },
             { label: 'Usage vs request', value: k.use.toFixed(1) + ' / ' + k.req.toFixed(1) + ' Gi', state: k.use > k.req ? 'bad' : 'good',
               hint: k.use > k.req ? 'request se zyada — kubelet ki hit-list par' : 'apne budget ke andar' },
-            { label: 'kubelet eviction order', value: names[rank], state: rank === 4 ? 'good' : rank === 1 ? 'bad' : 'warn',
-              hint: 'kubelet QoS dekhta hai, priority nahi' },
+            { label: 'kubelet eviction line', value: names[rank], state: rank === 3 ? 'good' : rank === 1 ? 'bad' : 'warn',
+              hint: 'kubelet: pehle "request se zyada?", phir priority (line ke andar)' },
             { label: 'Preemption (priority 100000 ke saamne)', value: preemptionSafe(k.prio) ? 'SURAKSHIT' : 'PREEMPT HO JAYEGA', state: preemptionSafe(k.prio) ? 'good' : 'bad',
               hint: 'scheduler priority dekhta hai, QoS nahi' },
           ];
@@ -154,27 +157,27 @@ etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yam
           const rank = evictionRank(k.req, k.lim, k.use);
           const safe = preemptionSafe(k.prio);
           if (q === 'BestEffort')
-            return { ok: false, text: '<b>BestEffort</b> — na request, na limit. kubelet memory pressure par <b>sabse pehle</b> isi pod ko maarega, aur oom_score_adj 1000 hai (kernel ke liye sabse aasan shikaar).' };
-          if (rank === 2)
-            return { ok: false, text: `Pod apne request (${k.req.toFixed(1)}Gi) se <b>zyada</b> (${k.use.toFixed(1)}Gi) use kar raha hai. kubelet aise pods ko QoS ke baad turant chunta hai. Ya usage ghatao, ya request badhao.` };
+            return { ok: false, text: '<b>BestEffort</b> — request 0 hai, isliye har byte "request se zyada" hai → kubelet ki <b>pehli line</b> mein (priority sirf usi line ke andar order badalti hai). Kernel ke OOM killer ke liye bhi oom_score_adj 1000 — sabse aasan shikaar.' };
+          if (rank === 1)
+            return { ok: false, text: `Pod apne request (${k.req.toFixed(1)}Gi) se <b>zyada</b> (${k.use.toFixed(1)}Gi) use kar raha hai → kubelet ki <b>pehli line</b> mein, priority kitni bhi ho. Ya usage ghatao, ya request asli usage jitna karo.` };
           if (q === 'Burstable')
-            return { ok: false, text: `<b>Burstable</b> — request (${k.req.toFixed(1)}Gi) aur limit (${k.lim.toFixed(1)}Gi) alag hain. Guaranteed banane ke liye dono barabar karo (aur dono > 0).${safe ? '' : ' Priority bhi 100000 se kam hai, isliye preemption se bhi bachav nahi.'}` };
+            return { ok: false, text: `<b>Burstable</b> — abhi request ke andar ho (aakhri line), par limit (${k.lim.toFixed(1)}Gi) &gt; request (${k.req.toFixed(1)}Gi): spike aaya toh usage request paar karega aur pod pehli line mein chala jaayega. Pakka bachav: request = limit (Guaranteed).${safe ? '' : ' Priority bhi 100000 se kam hai, isliye preemption se bhi bachav nahi.'}` };
           if (!safe)
             return { ok: false, text: `QoS <b>Guaranteed</b> hai — eviction se bachav ho gaya. Par priority ${k.prio} hai aur aane wale pod ki priority 100000 hai, isliye <b>scheduler is pod ko preempt kar dega</b>. Priority badhao.` };
-          return { ok: true, text: `<b>Dono taraf se surakshit.</b> QoS Guaranteed hai (request === limit === ${k.req.toFixed(1)}Gi) aur usage budget ke andar hai, isliye kubelet is pod ko <b>sabse aakhir</b> mein chunega (oom_score_adj ${oomScoreAdj(k.req, k.lim)}). Aur priority ${k.prio} ≥ 100000 hai, isliye scheduler preempt bhi nahi kar sakta.` };
+          return { ok: true, text: `<b>Dono taraf se surakshit.</b> Guaranteed (request = limit = ${k.req.toFixed(1)}Gi) → memory usage request paar kar hi nahi sakta → kubelet ki <b>aakhri line</b> (aur wahan bhi priority ${k.prio} isse peeche rakhegi); oom_score_adj ${oomScoreAdj(k.req, k.lim)}. Aur priority ≥ 100000 hai, isliye scheduler preempt bhi nahi kar sakta.` };
         },
         check: k => k.req > 0 && k.req === k.lim && k.use <= k.req && k.prio >= INCOMING_PRIORITY,
-        lesson: 'Sabse zaroori baat jo slider se saaf ho gayi: <b>eviction aur preemption do alag knob se bache</b>. Priority ko 200000 tak le jao — QoS class phir bhi BestEffort rah sakti hai aur kubelet phir bhi sabse pehle usi pod ko maarega. Aur ulta bhi sach hai: Guaranteed QoS ke saath priority 0 rakho, to kubelet to nahi maarega par scheduler preempt kar dega. <b>QoS = kubelet se bachav, priority = scheduler se bachav.</b>',
+        lesson: 'Slider se saaf hua: <b>do alag khatre, do alag bachav</b>. kubelet (eviction) ka pehla sawal: "kaun apni request se zyada kha raha hai?" — aise pod pehli line mein, priority sirf line ke andar order badalti hai. Isliye sirf priority 200000 karne se BestEffort pod nahi bachta. Scheduler (preemption) sirf priority dekhta hai — isliye Guaranteed pod bhi priority 0 par preempt ho jaata hai. <b>Sahi requests (ya request = limit) = kubelet se bachav, priority = scheduler se bachav.</b>',
         quiz: {
           q: 'Ek team ne apne pod ki <code>priorityClassName</code> badha di taaki pod evict na ho. Pod phir bhi <code>Evicted</code> ho gaya. Kyun?',
           choices: [
-            'kubelet ki eviction QoS class dekhti hai, priority nahi. Bachav ke liye requests = limits karke QoS Guaranteed banana padta hai',
-            'PriorityClass ka value bahut kam tha',
-            'PriorityClass namespace-scoped hai aur galat namespace mein bani thi',
-            'Eviction hamesha random pod chunti hai',
+            'kubelet pehle dekhta hai kaun apni REQUEST se zyada kha raha hai — aise pods priority se pehle line mein; pod request se upar tha (bachav: sahi requests ya requests = limits)',
+            'PriorityClass ka value 1000000000 se upar hona chahiye tha — usse neeche ki user priorities kubelet eviction mein gini hi nahi jaati, sirf system classes gini jaati hain',
+            'PriorityClass namespace-scoped hai aur pod ke namespace mein nahi bani thi, isliye pod par priority lagi hi nahi',
+            'Eviction sirf node par sabse purane pods ko chunti hai — priority aur requests dono ka koi role nahi hota',
           ],
           answer: 0,
-          explain: 'Do bilkul alag mechanism hain. <b>Preemption</b> scheduler karta hai jab high-priority pod ko jagah nahi milti — wahan priority chalti hai. <b>Eviction</b> kubelet karta hai jab node par memory ya disk khatam ho rahi hai — wahan <b>QoS class</b> chalti hai (BestEffort pehle, phir apne request se zyada use karne wale Burstable, phir baaki). Priority badhane se eviction nahi rukti. (PriorityClass cluster-scoped hai, namespace-scoped nahi — isliye teesra option bhi galat hai.)',
+          explain: 'Do alag mechanism. <b>Preemption</b> (scheduler) — sirf priority. <b>Eviction</b> (kubelet, node par memory/disk khatam) — pehla filter: <b>usage &gt; request?</b> Aise pods (BestEffort hamesha, request 0) pehli line mein, unke andar kam priority pehle; request ke andar wale sabse aakhir. Priority badhana kaafi nahi tha — pod apni request se upar tha. (PriorityClass cluster-scoped hai, namespace-scoped nahi.)',
         },
       },
       {
@@ -188,7 +191,7 @@ etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yam
         ],
         items: [
           { text: 'Pending pod ke Events: "preempted by pod payments/checkout-9f8b"', bin: 'preempt', explain: 'Scheduler ne ek high-priority Pending pod ke liye jagah banayi. Scheduler ne sabse kam priority wale pods chune aur unhe hataya. Message hamesha Pending pod ke Events mein aata hai.' },
-          { text: 'Pod ka status Evicted, node ke Events mein "The node was low on resource: memory"', bin: 'evict', explain: 'kubelet ne node ko bachane ke liye pods maare. Chunav QoS ke hisaab se hua — BestEffort pehle, phir apne request se zyada use karne wale Burstable.' },
+          { text: 'Pod ka status Evicted, node ke Events mein "The node was low on resource: memory"', bin: 'evict', explain: 'kubelet ne node ko bachane ke liye pods nikaale (Evicted). Chunav: pehle jo apni request se zyada kha rahe (BestEffort hamesha — request 0), unme kam priority pehle; request ke andar wale sabse aakhir.' },
           { text: 'kubectl delete pod etcd-cp-1 chalaya, par pod 2 second mein wapas aa gaya', bin: 'static', explain: 'etcd ek static pod hai. kubelet usse <code>/etc/kubernetes/manifests/etcd.yaml</code> se seedha banata hai — koi controller beech mein nahi hai. Hataana hai to manifest file hatao.' },
           { text: 'requests = limits rakhne se pod bach gaya', bin: 'evict', explain: 'requests = limits ka matlab QoS Guaranteed. kubelet Guaranteed pods ko sabse aakhir mein chunta hai aur unka oom_score_adj -997 hota hai (kernel ke OOM killer ke liye sabse mushkil shikaar).' },
           { text: 'priorityClassName: system-cluster-critical lagane se pod bach gaya', bin: 'preempt', explain: 'Priority sirf scheduler ke preemption faisle mein chalti hai. (Aur application ke liye system-cluster-critical lagana galat hai — us class ke bharose control plane ke pods chalte hain.)' },
@@ -205,9 +208,9 @@ etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yam
             q: 'Ek PriorityClass par <code>preemptionPolicy: Never</code> laga hai. Iska kya matlab hai?',
             choices: [
               'Pod ko queue mein aage ki jagah milegi (high priority), par pod kisi doosre pod ko hataayega nahi — jagah khaali hone ka intezaar karega',
-              'Pod ko kabhi schedule nahi kiya jayega',
-              'Pod ko koi doosra pod preempt nahi kar sakta',
-              'PriorityClass ka value ignore ho jayega',
+              'Pod ko tab tak schedule nahi kiya jayega jab tak cluster mein koi aur Pending pod bacha ho — queue mein sabse aakhir',
+              'Pod ko koi doosra pod preempt nahi kar sakta — Never matlab yeh pod khud preemption se hamesha surakshit hai, chahe naya pod kitni bhi high priority ka ho',
+              'PriorityClass ka value ignore ho jaata hai — pod priority 0 wale pods ki tarah queue mein lagta hai',
             ],
             answer: 0,
             explain: '<code>preemptionPolicy: Never</code> priority aur preemption ko alag kar deta hai. Pod ko scheduling queue mein apni priority ke hisaab se aage ki jagah milti hai (yaani kam priority wale pods se pehle try hoga), par jagah na milne par pod kisi ko hataata nahi — Pending rehta hai. Batch aur analytics workloads ke liye bilkul sahi: "jaldi chahiye, par kisi ki jagah cheen ke nahi". Dhyaan do: yeh policy is pod ke <b>doosron ko preempt karne</b> ko rokti hai, doosron ke <b>is pod ko preempt karne</b> ko nahi.',
@@ -216,10 +219,10 @@ etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yam
             q: 'Node par <code>/etc/kubernetes/manifests/nginx.yaml</code> rakh di. Pod ban gaya. Ab <code>kubectl delete pod nginx-node01</code> chalaya. Kya hoga?',
             context: 'NAME            READY   STATUS    RESTARTS   AGE\nnginx-node01    1/1     Running   0          4m',
             choices: [
-              'Pod kuch second ke liye hatega aur kubelet turant wahi pod dobara bana dega — kyunki kubelet manifest file dekh raha hai',
-              'Pod poori tarah hat jayega',
-              'kubectl error dega ki static pod delete nahi ho sakta',
-              'Pod Terminating mein hamesha ke liye atak jayega',
+              'Sirf API ka mirror pod object hatega — container chalta rehta hai, aur kubelet mirror object turant wapas bana deta hai',
+              'Pod poori tarah hat jayega — kubectl delete static pod ki manifest file bhi node ki /etc/kubernetes/manifests se hata deta hai',
+              'kubectl error dega: static pods sirf node par crictl se delete hote hain, API se nahi',
+              'Pod Terminating mein atak jaayega kyunki kubelet static pod ka finalizer kabhi nahi hataata',
             ],
             answer: 0,
             explain: '<code>kubectl delete</code> sirf API server ka <b>mirror pod</b> object hataata hai. Asli container node par chal raha hai aur kubelet ke paas manifest file abhi bhi maujood hai. Agle sync par kubelet mirror pod dobara bana deta hai. Sach mein hataana hai to manifest file hatao: <code>rm /etc/kubernetes/manifests/nginx.yaml</code> — kubelet turant container bhi band kar dega. (Yahi wajah hai ki etcd ya kube-apiserver ka pod delete karne se control plane theek nahi hota.)',
@@ -228,9 +231,9 @@ etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yam
             q: 'kubelet static pod ki directory kahan se padhta hai, yeh kaise pata karoge?',
             choices: [
               'kubelet ki config file mein staticPodPath dekho — /var/lib/kubelet/config.yaml',
-              'kubectl get configmap kubelet-config -n kube-system, sirf wahi jagah hai',
-              'Directory hamesha /etc/kubernetes/manifests hi hoti hai, badli nahi ja sakti',
-              'kubectl describe node par likha hota hai',
+              'kubectl get configmap kubelet-config -n kube-system — kubelet sirf isi configmap se path padhta hai',
+              'Directory hamesha /etc/kubernetes/manifests hi hoti hai — kubelet mein yeh hard-coded hai',
+              'kubectl describe node ke Annotations mein staticPodPath likha hota hai',
             ],
             answer: 0,
             explain: 'Path <code>staticPodPath</code> field se aata hai jo kubelet ki config file mein hota hai (kubeadm clusters mein <code>/var/lib/kubelet/config.yaml</code>). Default <code>/etc/kubernetes/manifests</code> hai par badla ja sakta hai. Purane setups mein kubelet ke <code>--pod-manifest-path</code> flag se bhi aata tha (<code>systemctl cat kubelet</code> se dikh jayega). CKA exam mein yeh sawal aksar aata hai kyunki path guess karne se time barbaad hota hai.',
@@ -243,21 +246,21 @@ etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yam
         {
           q: 'Interviewer: "Preemption aur eviction — dono ka farq batao, aur har ek se bachne ka tarika."',
           choices: [
-            'Preemption scheduler karta hai aur PRIORITY dekhta hai (bachav: high PriorityClass). Eviction kubelet karta hai aur QoS dekhta hai (bachav: requests = limits se Guaranteed QoS)',
-            'Dono kubelet karta hai, dono QoS dekhte hain',
-            'Dono scheduler karta hai, dono priority dekhte hain',
-            'Preemption node ki disk par hota hai, eviction memory par',
+            'Preemption: scheduler, sirf PRIORITY (bachav: PriorityClass). Eviction: kubelet, pehle request se zyada?, phir priority (bachav: sahi requests / requests = limits)',
+            'Dono kubelet karta hai — node full hone par pehle kam priority wale pods hatte hain, requests ya QoS ka koi role nahi',
+            'Dono scheduler karta hai — naya Pending pod aane par jo pod sabse zyada memory le raha hai woh hatta hai; priority aur requests se koi farak nahi padta',
+            'Preemption disk pressure par hota hai aur eviction memory pressure par — dono mein sirf QoS class dekhi jaati hai, isliye bachav ka ek hi tarika: requests = limits',
           ],
           answer: 0,
-          explain: 'Do alag component, do alag signal, do alag bachav. <b>Preemption</b>: scheduler ke paas ek Pending high-priority pod hai aur kahin jagah nahi, isliye scheduler kam priority wale pods hataata hai — Pending pod ke Events mein dikhta hai. <b>Eviction</b>: node par memory ya disk khatam ho rahi hai, isliye kubelet pods maarta hai — QoS ke kram mein (BestEffort → request se zyada use karne wale Burstable → baaki Burstable → Guaranteed). Isliye <b>priority badhane se eviction nahi rukti</b>, aur <b>Guaranteed QoS se preemption nahi rukti</b>. Dono chahiye to dono set karo.',
+          explain: 'Do alag component, do alag signal. <b>Preemption</b>: Pending high-priority pod ko jagah nahi → scheduler kam priority wale pods hataata hai (Pending pod ke Events mein dikhta). <b>Eviction</b>: node par memory/disk khatam → kubelet pehle unhe chunta hai jo request se zyada kha rahe (BestEffort hamesha), unme kam priority pehle; request ke andar wale (Guaranteed sabse pakka) aakhir. Isliye <b>priority badhana akela eviction nahi rokta</b> agar pod request se upar hai, aur <b>Guaranteed QoS preemption nahi rokti</b>. (Kernel ka OOM killer alag hai — woh QoS se bane oom_score_adj par chalta hai.)',
         },
         {
           q: 'Interviewer: "Production cluster mein har team apne pods ko <code>system-cluster-critical</code> laga rahi hai. Kya galat ho sakta hai?"',
           choices: [
-            'Priority ka poora matlab hi khatm ho jaata hai (sab barabar), aur asli control-plane pods ko jagah nahi milegi — CNI ya CoreDNS ke pods preempt ho sakte hain aur poora cluster gir sakta hai',
-            'Kuch galat nahi, sirf ek label hai',
-            'Pods evict hona band ho jaayenge',
-            'Scheduler crash kar jayega',
+            'Priority ka matlab hi khatm (sab barabar), aur asli system pods (CNI, CoreDNS) ki jagah chhin sakti hai — preempt hue toh poora cluster gir sakta hai',
+            'Kuch galat nahi — system-cluster-critical sirf ek label hai jo dashboards mein pods ko highlight karta hai, scheduling par asar nahi',
+            'Saare pods eviction se hamesha ke liye surakshit ho jaayenge — node ki memory bharne par kubelet kisi ko nahi maarega, seedha node crash hoga',
+            'Scheduler crash ho jayega — ek hi priority value ke bahut saare pods queue ko sort nahi kar paate',
           ],
           answer: 0,
           explain: 'Priority ek <b>relative</b> paimana hai. Jab sab log sabse upar ki class le lete hain, to kisi ke paas koi faayda nahi bachta — aur system ki apni cheezein khatre mein aa jaati hain, kyunki <code>system-cluster-critical</code> (2000000000) ke bharose CoreDNS aur CNI jaise components chalte hain. Sahi tarika: apni classes ka apna paimana banao (jaise <code>tier-critical: 100000</code>, <code>tier-normal: 10000</code>, <code>tier-batch: 100</code>), <code>system-*</code> classes ko sirf cluster ke apne components ke liye chhodo, aur ResourceQuota ke <code>scopeSelector</code> se rok lagao taaki har namespace har class na le sake.',
@@ -266,8 +269,8 @@ etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yam
     },
     success: [
       'Main PriorityClass bana sakta hoon aur preemptionPolicy ka matlab jaanta hoon',
-      'Main preemption (scheduler + priority) aur eviction (kubelet + QoS) ka farq bata sakta hoon',
-      'Main jaanta hoon ki eviction se bachne ke liye requests = limits chahiye, priority nahi',
+      'Main preemption (scheduler + priority) aur eviction (kubelet: pehle usage > request, phir priority) ka farq bata sakta hoon',
+      'Main jaanta hoon ki eviction se bachne ke liye pehle requests sahi chahiye — priority sirf usi line ke andar kaam aati hai',
       'Main static pod pehchan sakta hoon aur jaanta hoon ki kubectl delete usse nahi hataata',
     ],
     homework: `<p>Preemption khud dekho:</p>

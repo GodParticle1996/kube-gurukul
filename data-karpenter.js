@@ -4,6 +4,12 @@
    Karpenter ek CONTROLLER hai: har command ke baad reconcile hota hai.
    ===================================================================== */
 
+KG.karpPodsObserved = (s, names) => {
+  const pods = names.map(name => (s.cluster.pods || []).find(p => p.name === name));
+  return pods.every(p => p && p.status === 'Running' && p.runningAt != null) &&
+    s.history.some((h, i) => /get (pods|po)\b/.test(h) && i >= Math.max(...pods.map(p => p.runningAt)));
+};
+
 KG.registerLevels('karpenter', [
 
   /* ================= LEVEL K1: NodePool & Provisioning ================= */
@@ -24,9 +30,9 @@ KG.registerLevels('karpenter', [
        <table>
          <tr><th></th><th>Cluster Autoscaler</th><th>Karpenter</th></tr>
          <tr><td>Kaam kaise karta</td><td>Pehle se bane <b>node groups (ASG)</b> ko scale karta hai</td><td>Pod ki zaroorat dekh kar <b>node khud design</b> karta hai</td></tr>
-         <tr><td>Instance type</td><td>Group mein jo fix hai wahi (m5.large hi milega)</td><td>60+ types mein se <b>best fit</b> chunta hai</td></tr>
-         <tr><td>Speed</td><td>ASG → EC2 → join (~2-4 min)</td><td>Seedha EC2 API (~40 sec)</td></tr>
-         <tr><td>Groups</td><td>Har instance-type/zone combo ka alag group (10-15 groups aam baat)</td><td><b>Zero groups</b> — ek NodePool kaafi</td></tr>
+         <tr><td>Instance type</td><td>Configured node group ke types; mixed-instance policy bhi possible, scheduling shape similar rakho</td><td>Allowed types mein se workload aur capacity ke hisaab se fit chunta hai</td></tr>
+         <tr><td>Speed</td><td>ASG scale-out → EC2 → node join</td><td>Seedha EC2 provisioning → node join; AMI/network/bootstrap se actual time badalta hai</td></tr>
+         <tr><td>Groups</td><td>Workload classes aur capacity choices ke node groups manage karo</td><td>NodePools se rules; managed workloads ke liye ASG zaroori nahi</td></tr>
          <tr><td>Cost</td><td>Group ka fixed size — aksar over-provisioned</td><td>Right-sizing + spot + consolidation</td></tr>
        </table>
        <p>Ek line mein: <b>CA groups scale karta hai, Karpenter nodes banata hai.</b></p>`,
@@ -68,19 +74,19 @@ spec:
        <p><b>Yaad rakhne ka tarika:</b> NodePool = <i>"kaisa node chal sakta hai"</i> (rules),
        EC2NodeClass = <i>"AWS mein use kaise banao"</i> (AMI, subnet, IAM, security group).
        Ek NodePool ek NodeClass ko point karta hai; kai NodePools ek hi NodeClass share kar sakte hain.</p>`,
-      `<h3>⚡ Provisioning — 40 second ki kahani</h3>
+      `<h3>⚡ Provisioning — Pending se Running tak</h3>
        <pre>1. Pod Pending (koi node par fit nahi)
 2. Karpenter pod ke requests + affinity + tolerations padhta hai
 3. NodePool ke requirements se allowed instance types filter karta hai
-4. Sabse SASTA type chunta hai jo pod ko fit kare (bin-packing!)
+4. Requests + DaemonSet overhead fit karo; EC2 price aur capacity options evaluate karo
 5. NodeClaim banata hai  → kubectl get nodeclaims mein dikhega
 6. EC2 launch → kubelet join → Node Ready
 7. Pod schedule ho jaata hai ✓</pre>
        <p>Sabse important: Karpenter <b>ek pod ke liye ek node</b> nahi banata — woh saare
        pending pods ko dekh kar <b>batch</b> mein sochta hai, aur aisa node chunta hai jisme
        zyada se zyada pods fit ho jaayein (bin-packing). Isliye 5 chhote pods ke liye ek
-       medium node banega, 5 chhote nodes nahi.</p>
-       <div class="war-story"><b>⚡ Real migration:</b> Ek company ke paas CA ke saath
+       medium node mein fit ho sakte hain; batching window aur constraints se actual packing badalti hai.</p>
+       <div class="war-story"><b>⚡ Illustrative migration:</b> Maan lo ek company ke paas CA ke saath
        <b>14 node groups</b> the (har instance-type × zone ka alag). Naya workload aane par
        naya group banana padta tha — 2 din ka Terraform kaam. Karpenter par shift kiya:
        <b>2 NodePools</b> (general + gpu), zero groups. Provisioning 3 min se 45 sec, aur
@@ -114,10 +120,11 @@ spec:
         tasks: [
           { text: 'NodePool + EC2NodeClass dekho', check: s => s.history.some(h => /get (nodepools|np)\b/.test(h)) && s.history.some(h => /get (ec2nodeclasses|ec2nc)\b/.test(h)) },
           { text: 'NodeClaim banta hua dekho', check: s => s.history.some(h => /get (nodeclaims|nc)\b/.test(h)) && (s.cluster.nodeclaims || []).length > 0 },
-          { text: 'Pod Running ho jaaye (node ready)', check: s => (s.cluster.pods || []).every(p => p.status === 'Running') },
+          { text: 'Pod Running dekho (kubectl get pods)', check: s => KG.karpPodsObserved(s, ['batch-report-xyz']) },
+          { text: 'Node aur provisioning Events dekho', check: s => s.history.some(h => /get nodes\b/.test(h)) && s.history.some(h => /get events\b/.test(h)) },
         ],
         cluster: {
-          karpenter: { enabled: true, tick: 0, log: [] },
+          karpenter: { enabled: true, tick: 0, log: [], launchTicks: 4 },
           nodes: [
             { name: 'ip-10-0-1-10.ap-south-1.compute.internal', status: 'Ready', roles: '<none>', age: '30d', version: 'v1.30.2', instanceType: 'm6a.large', capacityType: 'on-demand', zone: 'ap-south-1a', nodepool: '(managed node group)', cpu: 2, mem: 8, usedCpu: 1.8, usedMem: 6 },
           ],
@@ -125,8 +132,8 @@ spec:
             { name: 'api-7d8f9-aaa', ready: '1/1', status: 'Running', restarts: 0, age: '5d', node: 'ip-10-0-1-10.ap-south-1.compute.internal', ip: '10.244.1.5', logs: '[api] serving', requests: { cpu: '1500m', memory: '4Gi' } },
             { name: 'batch-report-xyz', ready: '0/1', status: 'Pending', restarts: 0, age: '30s', node: '<none>', ip: '<none>',
               requests: { cpu: '3', memory: '6Gi' },
-              logs: 'Error from server (BadRequest): pod is Pending — container start hi nahi hua (logs nahi honge!)',
-              describe: 'Name:      batch-report-xyz\nStatus:    Pending\nRequests:  cpu: 3, memory: 6Gi\n\nEvents:\n  Warning  FailedScheduling  30s   0/1 nodes are available: 1 Insufficient cpu.\n  Normal   Nominated         25s   karpenter: pod ne node provisioning trigger kiya — NodeClaim aa raha hai...\n\n(kubectl get nodeclaims chalao — naya node ban raha hai!)' },
+              logs: s => (s.cluster.pods.find(p => p.name === 'batch-report-xyz') || {}).status === 'Running' ? '[batch] report processing started' : '',
+              describe: 'Name:      batch-report-xyz\nStatus:    Pending\nRequests:  cpu: 3, memory: 6Gi\n\nEvents:\n  Warning  FailedScheduling  default-scheduler  0/1 nodes are available: 1 Insufficient cpu.' },
           ],
           deployments: [], services: [],
           nodepools: [
@@ -145,13 +152,17 @@ spec:
         },
         success: s => (s.cluster.pods || []).every(p => p.status === 'Running') &&
           s.history.some(h => /get (nodepools|np)\b/.test(h)) &&
-          s.history.some(h => /get (nodeclaims|nc)\b/.test(h)),
-        successText: 'Node ban gaya, pod chal pada! 🌲 Poora flow live dekha: <b>Pending pod</b> (3 CPU chahiye, maujooda node par sirf 0.2 bachi thi) → Karpenter ne NodePool ke requirements padhe → <b>NodeClaim</b> banaya → EC2 launch → <b>Node Ready</b> → pod schedule. Dhyan do konsa instance type chuna gaya — Karpenter ne <b>sabse chhota type jo fit kare</b> woh liya (bin-packing), aur <b>spot</b> capacity-type allowed thi toh sasta wala. <code>kubectl get events</code> se poori kahani dobara padh sakte ho.',
+          s.history.some(h => /get (ec2nodeclasses|ec2nc)\b/.test(h)) &&
+          s.history.some(h => /get (nodeclaims|nc)\b/.test(h)) &&
+          s.history.some(h => /get nodes\b/.test(h)) && s.history.some(h => /get events\b/.test(h)) &&
+          KG.karpPodsObserved(s, ['batch-report-xyz']),
+        successText: 'Node ban gaya, pod chal pada! 🌲 <b>Pending pod → NodeClaim Ready: Unknown → EC2 launch → Node Ready → pod Running</b> ka flow dekha. Simulator ne requests + fixed DaemonSet overhead ke liye fit hone wala chhota CPU instance chuna. <b>Asli Karpenter</b> pending pods ko batch karta hai, aur EC2 capacity/price bhi selection mein aate hain; har command ek teaching tick hai, real seconds nahi. Events mein provisioning aur scheduler assignment dono mile.',
         hints: [
           'kubectl get nodepools · kubectl get ec2nodeclasses — setup samjho',
           'kubectl get pods → batch-report Pending. kubectl describe pod batch-report-xyz → Events padho',
           'kubectl get nodeclaims (naya claim!) → phir kubectl get nodes → phir kubectl get pods (ab Running!)',
         ],
+        solution: ['kubectl get pods', 'kubectl get nodepools', 'kubectl get ec2nodeclasses', 'kubectl describe pod batch-report-xyz', 'kubectl get nodeclaims', 'kubectl get nodes', 'kubectl get events', 'kubectl get pods'],
       },
       {
         type: 'fill',
@@ -263,7 +274,7 @@ kubectl delete deploy inflate    # ab consolidation dekho (agla level!)</pre>
     cards: [
       { front: 'Karpenter vs Cluster Autoscaler?', back: 'CA pehle se bane <b>node groups</b> scale karta hai (type fixed). Karpenter pending pods dekh kar <b>node khud design</b> karta hai (60+ types mein best-fit, spot-aware), groups ki zaroorat nahi → ~40s vs ~3min, aur right-sizing se sasta.' },
       { front: 'NodePool vs EC2NodeClass?', back: '<b>NodePool</b> = scheduling rules (capacity-type, instance-category, limits, disruption) — cloud-neutral. <b>EC2NodeClass</b> = AWS detail (AMI via amiSelectorTerms, subnets, security groups, IAM role). NodePool NodeClass ko reference karta hai.' },
-      { front: 'Provisioning flow (5 steps)?', back: 'Pending pod → Karpenter requirements padhta hai → allowed instance types filter → <b>NodeClaim</b> banata hai → EC2 launch + kubelet join → Node Ready → pod schedule. ~40 second.' },
+      { front: 'Provisioning flow (5 steps)?', back: 'Pending pod → Karpenter requirements padhta hai → allowed instance types filter → <b>NodeClaim</b> banata hai → EC2 launch + kubelet join → Node Ready → pod schedule. Timing AMI, bootstrap aur available capacity par depend karti hai.' },
       { front: '5 chhote pending pods — kitne nodes?', back: '<b>Ek</b> (jitne fit ho jaayein) — Karpenter saare pending pods ko batch mein dekh kar <b>bin-packing</b> karta hai. CA ki tarah har group ko andha scale nahi karta.' },
       { front: 'NodePool limits.cpu ka kaam?', back: '<b>Budget guard-rail</b> — us pool ke saare nodes ki max capacity. Limit par pods <b>Pending</b> reh jaayenge (Events mein saaf likha hota hai) — silent bill-shock se behtar. Utilization par alert lagao.' },
     ],
@@ -315,8 +326,8 @@ KG.registerLevels('karpenter', [
        annotation. Stateless web app → PDB kaafi (Karpenter usse respect karta hai).
        Poore cluster ki safety → budgets (business hours mein 0).</p>
        <div class="war-story"><b>⚡ Real incident:</b> Ek data team ki 4-ghante wali Spark
-       job 3 baar fail hui. Wajah: consolidation ne us node ko "underutilized" samajh kar
-       hata diya (job ka CPU usage burst-y tha — beech mein kam dikhta tha). Har baar 3
+       job 3 baar fail hui. Wajah: consolidation simulation mein requested resources doosre node par
+       fit ho rahe the, isliye Karpenter ne node hata diya. <b>CPU usage graph</b> consolidation ka direct input nahi; requests aur scheduling constraints matter karte hain. Har baar 3
        ghante ka kaam barbaad. Fix: job pods par
        <code>karpenter.sh/do-not-disrupt: "true"</code>. <b>Ek annotation, teen din ka
        dukh khatam.</b> Sabak: consolidation stateless ke liye vardaan hai, long-running
@@ -326,7 +337,7 @@ KG.registerLevels('karpenter', [
   → Karpenter turant: naya node banao (spot ya on-demand)
   → pods gracefully shift karo
   → purana node cordon + drain
-Yeh sab 2 min ke andar — isliye spot production mein bhi use hota hai!
+Replacement turant trigger hota hai; naya node aur workload 2 min mein Ready honge, guarantee nahi.
 
 Zaroori: Interruption Queue (SQS) configure karo, warna warning miss ho jaayega.</pre>
        <p><b>Drift:</b> EC2NodeClass badla (naya AMI, naya security group)? Karpenter
@@ -346,14 +357,14 @@ Zaroori: Interruption Queue (SQS) configure karo, warna warning miss ho jaayega.
         tasks: [
           { text: 'Nodes aur pods ka distribution dekho', check: s => s.history.some(h => /get pods.*-o ?wide/.test(h)) },
           { text: 'Batch job ko do-not-disrupt se bachao', check: s => (s.cluster.pods || []).some(p => p.name.startsWith('spark') && p.doNotDisrupt) },
-          { text: 'Consolidation hone do — nodes kam ho jaayein', check: s => (s.cluster.nodes || []).filter(n => n.karpenter).length < 3 },
+          { text: 'Consolidation ke Events dekho — nodes kam ho jaayein', check: s => (s.cluster.nodes || []).filter(n => n.karpenter).length < 3 && s.history.some(h => /get events\b/.test(h)) },
         ],
         cluster: {
-          karpenter: { enabled: true, tick: 0, log: [] },
+          karpenter: { enabled: true, tick: 0, log: [], consolidateTicks: 5 },
           nodes: [
+            { name: 'ip-10-0-22-4.ap-south-1.compute.internal', status: 'Ready', roles: '<none>', age: '90m', version: 'v1.30.2', instanceType: 'm6a.2xlarge', capacityType: 'on-demand', zone: 'ap-south-1c', nodepool: 'default', cpu: 8, mem: 32, usedCpu: 2, usedMem: 8, karpenter: true },
             { name: 'ip-10-0-20-4.ap-south-1.compute.internal', status: 'Ready', roles: '<none>', age: '2h', version: 'v1.30.2', instanceType: 'c6a.2xlarge', capacityType: 'spot', zone: 'ap-south-1a', nodepool: 'default', cpu: 8, mem: 16, usedCpu: 1, usedMem: 2, karpenter: true },
             { name: 'ip-10-0-21-4.ap-south-1.compute.internal', status: 'Ready', roles: '<none>', age: '2h', version: 'v1.30.2', instanceType: 'c6a.xlarge', capacityType: 'spot', zone: 'ap-south-1b', nodepool: 'default', cpu: 4, mem: 8, usedCpu: 0, usedMem: 0, karpenter: true },
-            { name: 'ip-10-0-22-4.ap-south-1.compute.internal', status: 'Ready', roles: '<none>', age: '90m', version: 'v1.30.2', instanceType: 'm6a.xlarge', capacityType: 'on-demand', zone: 'ap-south-1c', nodepool: 'default', cpu: 4, mem: 16, usedCpu: 2, usedMem: 8, karpenter: true },
           ],
           pods: [
             { name: 'web-5f6a-a', ready: '1/1', status: 'Running', restarts: 0, age: '2h', node: 'ip-10-0-20-4.ap-south-1.compute.internal', ip: '10.244.2.5', requests: { cpu: '1', memory: '2Gi' }, logs: '[web] serving' },
@@ -367,14 +378,14 @@ Zaroori: Interruption Queue (SQS) configure karo, warna warning miss ho jaayega.
               { key: 'karpenter.sh/capacity-type', operator: 'In', values: ['spot', 'on-demand'] },
               { key: 'karpenter.k8s.aws/instance-category', operator: 'In', values: ['c', 'm', 'r'] },
             ],
-            limits: { cpu: 1000 }, used: { cpu: 16 },
+            limits: { cpu: 1000 }, used: { cpu: 20 },
             disruption: { consolidationPolicy: 'WhenEmptyOrUnderutilized', consolidateAfter: '1m' },
           }],
           ec2nodeclasses: [{ name: 'default', amiFamily: 'AL2023', role: 'KarpenterNodeRole-prod', ready: 'True', age: '60d' }],
           nodeclaims: [
             { name: 'default-a1b2c', nodeName: 'ip-10-0-20-4.ap-south-1.compute.internal', type: 'c6a.2xlarge', capacity: 'spot', zone: 'ap-south-1a', nodepool: 'default', ready: 'True', age: '2h' },
             { name: 'default-d3e4f', nodeName: 'ip-10-0-21-4.ap-south-1.compute.internal', type: 'c6a.xlarge', capacity: 'spot', zone: 'ap-south-1b', nodepool: 'default', ready: 'True', age: '2h' },
-            { name: 'default-g5h6i', nodeName: 'ip-10-0-22-4.ap-south-1.compute.internal', type: 'm6a.xlarge', capacity: 'on-demand', zone: 'ap-south-1c', nodepool: 'default', ready: 'True', age: '90m' },
+            { name: 'default-g5h6i', nodeName: 'ip-10-0-22-4.ap-south-1.compute.internal', type: 'm6a.2xlarge', capacity: 'on-demand', zone: 'ap-south-1c', nodepool: 'default', ready: 'True', age: '90m' },
           ],
         },
         files: {
@@ -396,15 +407,24 @@ Zaroori: Interruption Queue (SQS) configure karo, warna warning miss ho jaayega.
             },
           },
         },
+        responses: [{
+          re: /^kubectl annotate pod spark-job-driver karpenter\.sh\/do-not-disrupt=(true|false)(?: --overwrite)?$/,
+          out: (s, m) => {
+            const p = s.cluster.pods.find(p => p.name === 'spark-job-driver');
+            p.doNotDisrupt = (m[1] || '') === 'true';
+            return 'pod/spark-job-driver annotated';
+          },
+        }],
         success: s => (s.cluster.pods || []).some(p => p.name.startsWith('spark') && p.doNotDisrupt) &&
           (s.cluster.nodes || []).filter(n => n.karpenter).length < 3 &&
-          s.cluster.karpenter.consolidate !== false,
-        successText: 'Paisa bacha aur job bhi bachi! 💰 Dekha kya hua: <b>khaali node</b> (ip-10-0-21-4, 0 pods) consolidation se hat gaya — turant saving. Aur <b>spark job wala node</b> nahi hila kyunki tumne <code>do-not-disrupt</code> annotation lagayi thi. <b>Galat raasta</b> yeh hota: consolidation poori tarah band kar dena — job bach jaati par khaali nodes bhi hamesha chalte rehte (bill 💸). <b>Sahi soch: policy poore cluster ke liye rakho, exception sirf us pod par lagao.</b>',
+          s.cluster.karpenter.consolidate !== false && s.history.some(h => /get pods.*-o ?wide/.test(h)) && s.history.some(h => /get events\b/.test(h)),
+        successText: 'Consolidation active hai, nodes kam hue, aur Spark pod par <code>do-not-disrupt</code> laga hai. 💰 Annotation <b>consolidation</b> se bachata hai; Spot interruption ya manual deletion ki guarantee nahi. Spark logs mein partition 0 dikhe toh annotation der se laga: node pehle consolidate hua aur job restart hui. Replay mein annotation pehle lagao, phir Events aur node count compare karo.',
         hints: [
           'kubectl get nodes → 3 nodes; kubectl get pods -o wide → dekho kaunse node par kya hai (ek node bilkul khaali hai!)',
           'spark job 90 min chal chuki hai, 2 ghante baaki — usse bachao: ls → protect-spark.yaml (poori consolidation band MAT karo!)',
-          'Fix ke baad 2-3 commands chalao (get nodes / get events) — consolidation ko reconcile hone do',
+          'Annotation pehle lagao. Simulator mein candidate 5 ticks stable rahe tab consolidate hota hai; get nodes / get events se progress dekho.',
         ],
+        solution: ['kubectl get nodes', 'kubectl get pods -o wide', 'kubectl annotate pod spark-job-driver karpenter.sh/do-not-disrupt=true', 'kubectl logs spark-job-driver', 'kubectl get nodes', 'kubectl get nodes', 'kubectl get events'],
       },
       {
         type: 'bins',
@@ -433,7 +453,7 @@ Zaroori: Interruption Queue (SQS) configure karo, warna warning miss ho jaayega.
           {
             q: 'Spot node par AWS interruption notice aaya (2 min). Karpenter kya karta hai?',
             choices: [
-              'Turant naya node, pods ka graceful shift, purana cordon+drain — 2 min ke andar (Interruption Queue/SQS configured ho tab!)',
+              'SQS notice par replacement launch + affected node taint/drain; 2-min notice mein recovery complete hone ki guarantee nahi',
               'Kuch nahi — 2 minute mein kuch nahi ho sakta, pods mar jaate hain aur ReplicaSet baad mein naye bana deta hai',
               'Poore cluster ko turant on-demand par shift karta hai taaki aage koi interruption na aaye',
               '2 minute baad AWS se request karke usi node ko wapas le aata hai — spot node ki reservation hoti hai',
@@ -571,7 +591,8 @@ kubectl delete deploy inflate</pre>
         goal: 'Teen Pending pods hain: <b>gpu-trainer</b>, <b>huge-job</b>, aur <b>batch-worker</b>. <b>(1)</b> Har ek ka <code>kubectl describe pod</code> karke Events padho, <b>(2)</b> samjho teeno ki wajah ALAG hai, <b>(3)</b> <code>ls</code> se fixes dekho aur sahi wale apply karo — teeno Running hone chahiye.',
         tasks: [
           { text: 'Teeno pods ke Events padho', check: s => ['gpu-trainer', 'huge-job', 'batch-worker'].every(n => s.history.some(h => new RegExp('describe pod ' + n).test(h))) },
-          { text: 'Teeno fixes apply karo', check: s => (s.cluster.pods || []).every(p => p.status === 'Running') },
+          { text: 'GPU NodeClaim ka g5 instance verify karo', check: s => s.history.some(h => /get (nodeclaims|nc)\b/.test(h)) && s.cluster.nodeclaims.some(n => n.nodepool === 'gpu' && n.type.startsWith('g5.')) },
+          { text: 'Teeno pods Running dekho', check: s => KG.karpPodsObserved(s, ['gpu-trainer', 'huge-job', 'batch-worker']) },
         ],
         cluster: {
           karpenter: { enabled: true, tick: 0, log: [] },
@@ -582,21 +603,21 @@ kubectl delete deploy inflate</pre>
             { name: 'web-aaa', ready: '1/1', status: 'Running', restarts: 0, age: '5h', node: 'ip-10-0-30-4.ap-south-1.compute.internal', ip: '10.244.5.2', requests: { cpu: '3500m', memory: '7Gi' }, logs: '[web] serving' },
             {
               name: 'gpu-trainer', ready: '0/1', status: 'Pending', restarts: 0, age: '12m', node: '<none>', ip: '<none>',
-              requests: { cpu: '4', memory: '16Gi' }, unschedulable: true,
-              logs: 'Error from server: pod Pending — container start hi nahi hua',
-              describe: 'Name:       gpu-trainer\nStatus:     Pending\nRequests:   cpu: 4, memory: 16Gi\nTolerations: <none>            ← 👀\nNodeSelector: nvidia.com/gpu=true\n\nEvents:\n  Warning  FailedScheduling    12m   0/1 nodes are available: 1 Insufficient cpu.\n  Warning  FailedProvisioning  11m   karpenter: incompatible with nodepool "default",\n     daemonset overhead={}, no instance type satisfied requirements:\n     nodeSelector nvidia.com/gpu=true — is NodePool mein GPU nodes allowed hi nahi hain\n\n(GPU ke liye ALAG NodePool chahiye — taint + toleration ke saath)',
+              requests: { cpu: '4', memory: '16Gi', 'nvidia.com/gpu': '1' }, unschedulable: true,
+              logs: s => (s.cluster.pods.find(p => p.name === 'gpu-trainer') || {}).status === 'Running' ? '[trainer] NVIDIA GPU available; training started' : '',
+              describe: 'Name:       gpu-trainer\nStatus:     Pending\nRequests:   cpu: 4, memory: 16Gi, nvidia.com/gpu: 1\nTolerations: <none>\n\nEvents:\n  Warning  FailedScheduling  default-scheduler  0/1 nodes are available: 1 Insufficient cpu, 1 Insufficient nvidia.com/gpu.',
             },
             {
               name: 'huge-job', ready: '0/1', status: 'Pending', restarts: 0, age: '9m', node: '<none>', ip: '<none>',
               requests: { cpu: '32', memory: '128Gi' }, unschedulable: true,
-              logs: 'Error from server: pod Pending',
-              describe: 'Name:      huge-job\nStatus:    Pending\nRequests:  cpu: 32, memory: 128Gi        ← 👀 itna bada?\n\nEvents:\n  Warning  FailedProvisioning  9m  karpenter: no instance type satisfied resources\n     {"cpu":"32","memory":"128Gi"} — NodePool "default" ke requirements\n     (instance-category c,m,r · generation > 5) mein itna bada type allowed nahi hai\n\n(Ya toh requests galat hain, ya NodePool mein bade types allow karne padenge)',
+              logs: s => (s.cluster.pods.find(p => p.name === 'huge-job') || {}).status === 'Running' ? '[job] processing started' : '',
+              describe: 'Name:      huge-job\nStatus:    Pending\nRequests:  cpu: 32, memory: 128Gi\n\nEvents:\n  Warning  FailedScheduling  karpenter  Failed to schedule pod, no instance type satisfied resources {"cpu":"32","memory":"128Gi"} and requirements karpenter.k8s.aws/instance-size In [large, xlarge, 2xlarge]\n\n(c/m/r families mein bade types hain, par default pool ke size restriction mein allowed nahi.)',
             },
             {
               name: 'batch-worker', ready: '0/1', status: 'Pending', restarts: 0, age: '6m', node: '<none>', ip: '<none>',
               requests: { cpu: '2', memory: '4Gi' }, unschedulable: true,
-              logs: 'Error from server: pod Pending',
-              describe: 'Name:      batch-worker\nStatus:    Pending\nRequests:  cpu: 2, memory: 4Gi         (normal size!)\n\nEvents:\n  Warning  FailedProvisioning  6m  karpenter: nodepool "default" cpu limit reached:\n     limits.cpu = 4, current usage = 4                      ← 👀\n\n(Node ban hi nahi sakta — budget guard-rail lag gaya hai)',
+              logs: s => (s.cluster.pods.find(p => p.name === 'batch-worker') || {}).status === 'Running' ? '[worker] consuming queue' : '',
+              describe: 'Name:      batch-worker\nStatus:    Pending\nRequests:  cpu: 2, memory: 4Gi\n\nEvents:\n  Warning  FailedScheduling  karpenter  Failed to schedule pod, all available instance types exceed limits for nodepool: "default"\n\n(limits.cpu = 4, current provisioned CPU = 4; naye node ki capacity limit cross karegi.)',
             },
           ],
           deployments: [], services: [],
@@ -605,6 +626,7 @@ kubectl delete deploy inflate</pre>
             requirements: [
               { key: 'karpenter.sh/capacity-type', operator: 'In', values: ['spot', 'on-demand'] },
               { key: 'karpenter.k8s.aws/instance-category', operator: 'In', values: ['c', 'm', 'r'] },
+              { key: 'karpenter.k8s.aws/instance-size', operator: 'In', values: ['large', 'xlarge', '2xlarge'] },
             ],
             limits: { cpu: 4 }, used: { cpu: 4 },
             disruption: { consolidationPolicy: 'WhenEmptyOrUnderutilized' },
@@ -620,25 +642,31 @@ kubectl delete deploy inflate</pre>
                 name: 'gpu', weight: 20, nodeClassRef: 'gpu',
                 requirements: [
                   { key: 'karpenter.sh/capacity-type', operator: 'In', values: ['on-demand'] },
-                  { key: 'karpenter.k8s.aws/instance-category', operator: 'In', values: ['m'] },
+                  { key: 'karpenter.k8s.aws/instance-family', operator: 'In', values: ['g5'] },
                 ],
                 limits: { cpu: 200 }, used: { cpu: 0 },
                 taints: [{ key: 'nvidia.com/gpu', value: 'true', effect: 'NoSchedule' }],
                 disruption: { consolidationPolicy: 'WhenEmpty' },
               });
+              if (!s.cluster.ec2nodeclasses.some(c => c.name === 'gpu')) s.cluster.ec2nodeclasses.push({
+                name: 'gpu', amiFamily: 'AL2023', amiSelectorTerms: [{ name: 'amazon-eks-node-al2023-x86_64-nvidia-*' }],
+                role: 'KarpenterNodeRole-prod', ready: 'True',
+              });
               const p = s.cluster.pods.find(x => x.name === 'gpu-trainer');
-              p.tolerations = [{ key: 'nvidia.com/gpu' }];
+              p.tolerations = [{ key: 'nvidia.com/gpu', operator: 'Equal', value: 'true', effect: 'NoSchedule' }];
+              p._baseDescribe = (p._baseDescribe || p.describe).replace('Tolerations: <none>', 'Tolerations: nvidia.com/gpu=true:NoSchedule');
               delete p.unschedulable;
-              return 'nodepool.karpenter.sh/gpu created + pod/gpu-trainer patched (toleration added)\n(ab GPU pool match karega — node ban raha hai... kubectl get nodeclaims dekho)';
+              return 'ec2nodeclass.karpenter.k8s.aws/gpu created (NVIDIA AMI)\nnodepool.karpenter.sh/gpu created + pod/gpu-trainer patched (toleration added)\n(simulator assumes NVIDIA device plugin installed; kubectl get nodeclaims se g5 type verify karo)';
             },
           },
           'fix-huge-job-requests.yaml': {
-            desc: 'huge-job ke requests 32CPU/128Gi → 8CPU/16Gi (realistic)',
+            desc: 'huge-job ke measured requests 32CPU/128Gi → 6CPU/12Gi; DaemonSet overhead ke liye jagah',
             apply: s => {
               const p = s.cluster.pods.find(x => x.name === 'huge-job');
-              p.requests = { cpu: '8', memory: '16Gi' };
+              p.requests = { cpu: '6', memory: '12Gi' };
+              p._baseDescribe = (p._baseDescribe || p.describe).replace('cpu: 32, memory: 128Gi', 'cpu: 6, memory: 12Gi');
               delete p.unschedulable;
-              return 'pod/huge-job configured — requests ab 8 CPU / 16Gi\n(kisi ne copy-paste mein 32/128 likh diya tha! Ab c6a.2xlarge fit ho jayega)';
+              return 'pod/huge-job configured — requests ab 6 CPU / 12Gi\n(c6a.2xlarge par 200m CPU + 240Mi DaemonSet overhead ke baad fit; real requests profiling se set karo)';
             },
           },
           'raise-nodepool-limit.yaml': {
@@ -655,13 +683,16 @@ kubectl delete deploy inflate</pre>
           },
         },
         success: s => (s.cluster.pods || []).every(p => p.status === 'Running') &&
-          ['gpu-trainer', 'huge-job', 'batch-worker'].every(n => s.history.some(h => new RegExp('describe pod ' + n).test(h))),
-        successText: 'Teeno mysteries solved! 🕵️ <b>Teen alag wajah, teen alag fix:</b> (1) <b>gpu-trainer</b> — koi NodePool match nahi kiya (GPU ke liye alag pool + taint/toleration chahiye tha), (2) <b>huge-job</b> — requests hi pagal the (32 CPU! copy-paste ki galti) — koi allowed instance type itna bada nahi tha, (3) <b>batch-worker</b> — pod bilkul normal tha, par <b>NodePool ki limit</b> (cpu: 4) pahunch chuki thi. Note karo: <b>teeno ka jawab pod ke Events mein saaf likha tha</b> — Karpenter kabhi chup nahi rehta.',
+          ['gpu-trainer', 'huge-job', 'batch-worker'].every(n => s.history.some(h => new RegExp('describe pod ' + n).test(h))) &&
+          s.history.some(h => /get (nodeclaims|nc)\b/.test(h)) &&
+          KG.karpPodsObserved(s, ['gpu-trainer', 'huge-job', 'batch-worker']),
+        successText: 'Teeno root causes fix hue! 🕵️ <b>GPU:</b> explicit <code>nvidia.com/gpu: 1</code> request + g5 pool + matching toleration + GPU EC2NodeClass. Real GPU nodes ko <b>NVIDIA device plugin / GPU Operator</b> bhi chahiye; simulator plugin ready maanta hai. <b>huge-job:</b> default pool sirf large/xlarge/2xlarge allow karta tha; measured 6 CPU/12Gi requests overhead ke saath fit hui. <b>batch-worker:</b> pool ki provisioned-capacity limit full thi. Requests badalne aur pool limit badhane ke decisions alag hain.',
         hints: [
           'kubectl describe pod gpu-trainer / huge-job / batch-worker — teeno ke Events ALAG kahani batate hain',
-          'gpu-trainer: nodeSelector GPU maang raha hai par koi GPU NodePool hai hi nahi. huge-job: 32 CPU?! batch-worker: "limit reached"',
+          'gpu-trainer: nvidia.com/gpu resource chahiye, c/m/r types mein GPU nahi. huge-job: allowed sizes dekho. batch-worker: "all available instance types exceed limits".',
           'ls → teen alag fixes apply karo (scale-down-everything wala jugaad mat karna!)',
         ],
+        solution: ['kubectl describe pod gpu-trainer', 'kubectl describe pod huge-job', 'kubectl describe pod batch-worker', 'kubectl apply -f add-gpu-nodepool.yaml', 'kubectl apply -f fix-huge-job-requests.yaml', 'kubectl apply -f raise-nodepool-limit.yaml', 'kubectl get nodeclaims', 'kubectl get pods'],
       },
       {
         type: 'incident',
@@ -674,9 +705,9 @@ kubectl delete deploy inflate</pre>
             sitrep: '$ kubectl get nodes -L karpenter.sh/capacity-type -L node.kubernetes.io/instance-type\nNAME              STATUS  CAPACITY-TYPE   INSTANCE-TYPE\nip-10-0-40-4      Ready   on-demand       m6a.2xlarge\nip-10-0-41-4      Ready   on-demand       m6a.2xlarge\nip-10-0-42-4      Ready   on-demand       m6a.2xlarge\nip-10-0-43-4      Ready   on-demand       m6a.2xlarge\n... (18 nodes — SAB on-demand)',
             text: 'Traffic 8% badha par cost 110%. Saare nodes on-demand hain. Pehla shak?',
             choices: [
-              { t: 'NodePool ke requirements se spot capacity-type hat gaya hai — git history dekho ki kab aur kisne', good: true, next: 'n2', explain: 'Bilkul! Spot on-demand se 60-70% sasta hota hai. Saare nodes on-demand hona koi ittefaq nahi — config badla hai. Git history isse 2 min mein confirm kar degi.' },
-              { t: 'AWS ne prices badha diye honge', good: false, explain: 'EC2 on-demand prices itni jaldi 2x nahi hote. Aur traffic sirf 8% badha — matlab problem RESOURCE ALLOCATION mein hai, pricing mein nahi. Bahar blame karne se pehle apna config dekho.' },
-              { t: 'Nodes badha do taaki performance theek rahe', good: false, explain: '😱 Cost problem ka jawab aur cost badhana? Pehle samjho paisa ja kahan raha hai — abhi tak koi data hi nahi dekha.' },
+              { t: 'NodePool ke requirements mein spot hata ho sakta hai — git diff/history se capacity-type change ka waqt aur owner verify karo', good: true, next: 'n2', explain: 'Bilkul! Spot on-demand se 60-70% sasta hota hai. Saare nodes on-demand hona koi ittefaq nahi — config badla hai. Git history isse 2 min mein confirm kar degi.' },
+              { t: 'AWS pricing change ko pehla root cause maano — NodePool requirements compare karne se pehle billing support ticket kholo', good: false, explain: 'Pricing badli ho sakti hai, par all-on-demand distribution ko apni config se pehle correlate karo. Billing breakdown se pricing hypothesis verify ho sakti hai; screenshot akela pricing change ka saboot nahi.' },
+              { t: 'Traffic 8% badha hai, isliye performance buffer ke liye nodes aur badhao — utilization aur capacity-type baad mein dekho', good: false, explain: 'Cost badhne ki investigation mein bina saturation evidence nodes badhana extra kharch karega. Pehle capacity type, utilization aur config history se change explain karo.' },
             ],
           },
           n2: {
@@ -684,17 +715,17 @@ kubectl delete deploy inflate</pre>
             text: 'Do config changes mile — dono "temporary" the, dono 5 hafte se zinda hain. Ab kya?',
             choices: [
               { t: 'Dono wapas theek karo GIT mein (spot+on-demand, WhenEmptyOrUnderutilized) → PR → merge → ArgoCD sync; aur staged rollout dekho', good: true, next: 'n3', explain: 'Git-first fix (GitOps track ka sabak!). Aur dono changes ek saath — spot se instant saving, consolidation se continuous saving. Rollout dheere dekho: drift se nodes replace honge.' },
-              { t: 'kubectl edit se NodePool turant theek karo', good: false, explain: 'Agar GitOps chal raha hai toh agla sync ise wapas bigaad dega. Aur audit trail bhi nahi banega — yaani 5 hafte baad phir yahi mystery. Git se karo.' },
-              { t: 'Sirf spot wapas karo, consolidation baad mein dekhenge', good: false, explain: 'Aadha fix. Consolidation WhenEmpty par hai matlab kam-bhare nodes kabhi merge nahi honge — 18 nodes shayad 11 mein sama sakte hain. Dono lines ek hi PR mein.' },
+              { t: 'kubectl edit se live NodePool mein dono lines badlo; ArgoCD selfHeal aur Git source ko baad ke ticket mein reconcile karo', good: false, explain: 'GitOps source purana rahega toh agla sync change wapas la sakta hai. Is cost incident mein reviewed Git fix aur rollout observation dono karo.' },
+              { t: 'Git mein sirf spot+on-demand restore karke sync karo; low-utilization nodes ki consolidation policy ko bina review postpone karo', good: false, explain: 'Spot restore karna ek cause fix karega. Kam-bhare nodes ki policy bhi regression hai; consolidation behavior aur workload protection review karke policy restore karo.' },
             ],
           },
           n3: {
             sitrep: '$ argocd app sync platform-nodepools\nSynced ✓\n\n(agle 40 min mein — drift se nodes replace hue)\n$ kubectl get nodes -L karpenter.sh/capacity-type\n11 nodes: 9 spot, 2 on-demand\n\nEstimated monthly: $8,400 → $3,900  📉  (-54%)',
             text: 'Cost aadha ho gaya. Aage se yeh na ho — permanent fix?',
             choices: [
-              { t: 'NodePool changes par mandatory PR review + cost alert (bill spike par) + FinOps dashboard (spot % aur node utilization); aur "temporary" changes par expiry reminder/issue', good: true, next: 'end', explain: 'Teen layers: process (review), detection (alert — 5 hafte tak kisi ko pata nahi chala!), aur visibility (dashboard). Detection gap hi asli bug tha — cost 5 hafte tak silently badhta raha.' },
-              { t: 'Bas fix ho gaya, aage se dhyan rakhenge', good: false, explain: '"Dhyan rakhenge" process nahi hai. Yeh galti hui hi isliye kyunki koi alert nahi tha — 5 hafte tak kisi ko pata nahi chala. Detection gap bharo.' },
-              { t: 'Spot ko force kar do — on-demand allow hi mat karo', good: false, explain: 'Khatarnak! Spot capacity kabhi-kabhi milti nahi (khaas kar bade types) — tab pods Pending ho jaayenge. spot+on-demand dono allowed rakho: Karpenter spot pehle try karta hai, na mile toh on-demand. Availability > thodi si extra saving.' },
+              { t: 'PR review + bill/spot%/utilization alerts lagao; temporary config changes ko owner aur expiry issue do', good: true, next: 'end', explain: 'Teen layers: review change ko check karta hai, alerts regression pakadte hain, aur owner/expiry temporary change ko track karte hain. Paanch hafte ka detection gap close karo.' },
+              { t: 'Incident runbook mein config diff save karo aur team ko yaad dilao; cost alerts aur expiry ownership add mat karo', good: false, explain: 'Runbook useful hai, par next regression ko detect karne wala alert aur temporary change ka owner abhi bhi missing hai.' },
+              { t: 'NodePool ko spot-only kar do aur cost dashboard chalao; on-demand fallback ko har workload ke liye hata do', good: false, explain: 'Spot-only pool fault-tolerant workloads ka deliberate choice ho sakta hai. Yahan saare workloads se fallback hataana capacity shortage par Pending pods la sakta hai; availability needs pehle evaluate karo.' },
             ],
           },
           end: {
@@ -726,13 +757,13 @@ kubectl delete deploy inflate</pre>
             'Karpenter limit ignore karke node bana dega',
             'Purane pods evict hoke jagah banegi',
             'Cluster crash ho jaayega',
-          ], answer: 0, explain: 'Hard stop — Events mein "limit reached" saaf likha hota hai. Alert lagao NodePool utilization par.' },
+          ], answer: 0, explain: 'Provisioning block ho sakta hai: Events mein "all available instance types exceed limits". NodePool limits eventual-consistency se check hoti hain; fast parallel launches mein overshoot possible hai, hard monetary budget nahi.' },
           { q: 'Spot node par 2-min interruption notice — Karpenter?', choices: [
             'Naya node banata hai + pods graceful shift + cordon/drain',
             'Kuch nahi — pods 2 min baad mar jaate hain',
             'Poora cluster turant on-demand par shift karta hai',
             'Usi node ko 2 min baad wapas le aata hai',
-          ], answer: 0, explain: 'Isliye spot production-viable hai — par SQS interruption queue configure hona chahiye!' },
+          ], answer: 0, explain: 'SQS interruption handling configure karo; replacement ki readiness 2-min notice ke andar guaranteed nahi. Checkpointing/replicas aur availability needs bhi evaluate karo.' },
           { q: 'EC2NodeClass mein naya AMI — maujooda nodes?', choices: [
             '"Drifted" mark hoke budgets ke hisaab se replace honge',
             'Kuch nahi — naya AMI sirf naye nodes par lagta hai',
@@ -807,8 +838,23 @@ kubectl get nodes -L karpenter.sh/capacity-type   # kitne spot vs on-demand?
 kubectl top nodes                                  # utilization kitna hai?
 # 3) Karpenter ke logs se uski "soch" padho:
 kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100 | grep -E "launched|disrupt|nominated"
-# 4) Ek pod jaan-boojh ke Pending karao (bahut bade requests) aur Events padho:
-kubectl run huge --image=nginx --requests=cpu=64
+# 4) c6a.large (2 vCPU) maango par requests 64 CPU rakho — mismatch se Pending; Events padho:
+kubectl apply -f - <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: huge
+spec:
+  nodeSelector:
+    node.kubernetes.io/instance-type: c6a.large
+  containers:
+  - name: nginx
+    image: nginx:1.27
+    resources:
+      requests:
+        cpu: "64"
+        memory: 128Gi
+YAML
 kubectl describe pod huge | tail -10               # karpenter ka message padho!
 kubectl delete pod huge</pre>
       <p>✅ Self-check: Karpenter ke logs mein "launched nodeclaim" aur "disrupting via consolidation" dono dikhe? Aur Pending pod ke Events mein exact wajah? <b>Track COMPLETE — NODE NAWAB! 🌲🎓</b></p>`,

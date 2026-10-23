@@ -395,7 +395,8 @@ function allStages(level) {
 }
 
 function runStage() {
-  const { level, stageIdx } = KG.session;
+  const session = KG.session;
+  const { level, stageIdx } = session;
   const stages = allStages(level);
   const stage = stages[stageIdx];
   appEl.innerHTML = '';
@@ -433,17 +434,21 @@ function runStage() {
   // one-shot: purane "done" buttons dobara click ho jaayein toh stage do baar khatam na ho
   let finished = false;
   renderer(stage, arena, stats => {
-    if (finished) return;
+    // Delayed renderer callbacks belong to the screen/session that created them.
+    if (finished || KG.session !== session || session.stageIdx !== stageIdx || wrap.isConnected === false) return;
     finished = true;
     stageDone(stats, wrap);
   });
 }
 
 function stageDone(stats, wrap) {
-  KG.session.firstTry += stats.firstTry;
-  KG.session.total += stats.total;
-  const stages = allStages(KG.session.level);
-  KG.saveResume(KG.session, KG.session.stageIdx + 1);   // yeh challenge ho gaya — agli baar agle se
+  const session = KG.session;
+  if (!session || wrap.isConnected === false) return;
+  const stageIdx = session.stageIdx;
+  session.firstTry += stats.firstTry;
+  session.total += stats.total;
+  const stages = allStages(session.level);
+  KG.saveResume(session, stageIdx + 1);   // yeh challenge ho gaya — agli baar agle se
   const perfect = stats.total > 0 && stats.firstTry === stats.total;
   if (perfect) KG.addXP(KG.PERFECT_BONUS);
 
@@ -455,9 +460,10 @@ function stageDone(stats, wrap) {
   const btn = el('button', 'btn big',
     KG.session.stageIdx + 1 < stages.length ? 'Agla challenge →' : 'Level khatam karo 🏁');
   btn.onclick = () => {
+    if (KG.session !== session || session.stageIdx !== stageIdx || wrap.isConnected === false) return;
     btn.disabled = true;
-    KG.session.stageIdx++;
-    if (KG.session.stageIdx < stages.length) runStage();
+    session.stageIdx++;
+    if (session.stageIdx < stages.length) runStage();
     else levelComplete();
   };
   sum.appendChild(btn);

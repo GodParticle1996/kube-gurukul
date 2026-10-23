@@ -94,7 +94,7 @@ K8s ka promise:
           {
             q: '"Declarative" ka matlab kya hai Kubernetes mein?',
             choices: [
-              'Tum batate ho KYA chahiye (end state), K8s figure karta hai KAISE',
+              'Tum desired state likhte ho (jaise replicas: 3); controllers actual state ko target se milate rehte hain',
               'Tum har step ka command sequence likhte ho (create, phir start, phir expose) aur K8s usi order mein follow karta hai',
               'Config ko YAML mein likhna — format hi declarative hai, chahe kubectl create se do ya apply se',
               'Cluster khud decide karta hai kitne replicas chahiye — tum sirf app deploy karte ho',
@@ -289,9 +289,9 @@ kubelet ────┘</pre>
             q: 'Agar poora control plane 10 minute ke liye down ho jaaye, toh tumhari RUNNING app ka kya hoga?',
             choices: [
               'App chalti rahegi! Bas naye deploys, scaling aur pod-replacement ruk jayenge (kubelet local restarts phir bhi karega)',
-              'Saare pods turant band ho jayenge — kubelet ko har second API Server se chalne ki permission chahiye',
-              'Pods chalte rahenge par Service traffic band — kube-proxy har request API Server se route karwata hai',
-              'Nodes 5 minute baad apne aap cluster chhod denge aur un par ke pods delete ho jayenge',
+              'Saare pods turant band ho jayenge — kubelet ko API Server se permission chahiye; connection tootne par containers rok dega',
+              'Pods chalenge par Service traffic rukega — kube-proxy har request API Server se route karwata hai, local rules kaafi nahi',
+              'Nodes 5 minute baad cluster membership chhod denge — API Server ka response na aane par kubelet saare local pods hata dega',
             ],
             answer: 0,
             explain: 'Bahut popular interview question! Data plane (nodes + pods + kube-proxy) already-running cheezein chalata rehta hai. Control plane sirf CHANGES ke liye chahiye. Isliye control plane outage = "management freeze", not "app down".',
@@ -471,7 +471,7 @@ kubectl logs &lt;pod-name&gt;        # container ke logs (stdout)</pre>`,
           {
             q: 'Node-2 ka power cable nikal gaya. Control plane ko kaise pata chalega?',
             choices: [
-              'kubelet ki heartbeat aani band ho jayegi → node NotReady mark hoga',
+              'kubelet ki heartbeat band hogi → node controller grace period ke baad node NotReady mark karega',
               'containerd control plane ko shutting-down event bhejega → node turant delete hoga',
               'Pods khud doosre nodes par migrate ho jayenge, control plane ko baad mein pata chalega',
               'kube-proxy health-check fail karega → Service us node ko hata degi, node Ready hi rahega',
@@ -912,9 +912,9 @@ Control knobs:
           q: 'Deployment mein 3 replicas hain, ek pod DELETE ho gaya (ya uska node mar gaya) — behind the scenes kya hota hai? (Screenshot wala Q8!)',
           choices: [
             'Pod object hat jaata hai → ReplicaSet controller ko 2 ≠ 3 dikhta hai → naya Pod object banta hai → Scheduler node chunta hai → us node ka kubelet containers chalata hai. Sab automatic',
-            'Deployment controller purane pod ke node par SSH karke usi container ko restart karta hai — naya pod nahi banta, naam same rehta hai',
-            'kube-proxy endpoint hatata hai aur naya pod bana deta hai → Scheduler use usi purane node par wapas rakhta hai',
-            'API Server alert bhejta hai → on-call admin kubectl apply dobara chalata hai → tab ReplicaSet naya pod banata hai',
+            'Deployment controller purane node par container runtime ko restart bhejta hai → wahi container aur Pod naam laut aate hain → Scheduler ki zaroorat tabhi padti hai jab node kharab ho',
+            'kube-proxy purana endpoint hatata hai → Service controller replacement Pod banata hai → Scheduler naya Pod assign karta hai → kubelet containers start karta hai, ReplicaSet sirf count dikhata hai',
+            'API Server deletion record karta hai → admin ko alert milta hai → admin wahi manifest dobara apply karta hai → tab ReplicaSet replacement banata hai, kyunki reconciliation sirf apply par chalti hai',
           ],
           answer: 0,
           explain: 'Poora reconciliation chain bolo — yeh dikhata hai ki tum architecture samajhte ho, sirf commands nahi. Keywords: desired vs actual, ReplicaSet controller, Scheduler, kubelet, naya pod (naya naam/IP). ⚠️ Agar sirf CONTAINER crash ho (pod zinda) toh kubelet usi pod mein restart karta hai — ReplicaSet naya pod nahi banata.',
@@ -1273,9 +1273,9 @@ kubectl get pods -A               # saare mohalle</pre>
           q: '"Kubernetes Secrets kitne secure hain by default?" — honest jawab kya hai?',
           choices: [
             'Sirf base64-encoded hain (encryption nahi) — RBAC + etcd encryption-at-rest lagana padta hai, aur serious setups external managers (Vault/ESO) use karte hain',
-            'Secrets ko K8s har pod ke liye alag key se encrypt karta hai — sirf woh pod decrypt kar sakta hai, admin bhi nahi padh sakta',
-            'Secret sirf usi pod ko dikhta hai jo use mount kare — RBAC hone par koi bhi user kubectl get secret se value nahi padh sakta',
-            'Insecure hain, isliye production mein Secrets mat use karo — passwords ConfigMap mein base64 karke rakho, wahi same hai',
+            'Kubernetes Secret value ko har Pod ki alag key se encrypt karta hai — kubelet sirf us Pod ke liye decrypt karta hai, isliye cluster-admin bhi API se password nahi padh sakta',
+            'Secret mount ke baad sirf container ko value milti hai — API Server kubectl get secret ko metadata hi deta hai, isliye extra RBAC aur etcd encryption-at-rest ki zaroorat nahi',
+            'Production mein Secret ki jagah ConfigMap mein base64 password rakho — dono API objects same protection dete hain; external manager bas rotation ke liye optional convenience hai',
           ],
           answer: 0,
           explain: 'Nuanced jawab hi sahi jawab hai: base64 ≠ encryption (2 sec mein decode). Vanilla K8s mein etcd mein DEFAULT plaintext; managed clusters (jaise EKS/GKE) aksar storage/envelope encryption khud dete hain — par jiske paas <code>get secrets</code> RBAC hai woh phir bhi padh sakta hai. Isliye: RBAC tight, encryption-at-rest on, git mein kabhi nahi, aur scale par Vault/External Secrets. Yeh depth advanced track mein aayegi.',
@@ -1424,18 +1424,18 @@ kubectl run test --rm -it --image=busybox --env-from=configMapRef:app-config? </
             sitrep: '$ kubectl get pods -l app=checkout\nNAME                  READY  STATUS             RESTARTS  AGE\ncheckout-9f8e7-aaa    0/1    CrashLoopBackOff   4         18m\ncheckout-9f8e7-bbb    0/1    CrashLoopBackOff   4         17m\ncheckout-5d6c4-ccc    1/1    Running            0         6d',
             text: 'Teen pods — do naye crash ho rahe, ek purana zinda. Pehla move?',
             choices: [
-              { t: 'kubectl logs checkout-9f8e7-aaa — naye pods kyun mar rahe hain?', good: true, next: 'n2', explain: 'Sahi! Root cause pehle. Logs = crash ki zubaan.' },
-              { t: 'Teeno pods delete karo — fresh start', good: false, explain: 'Naye pods wahi crash karenge (config wahi hai), aur PURANA HEALTHY POD bhi mar jayega — 100% outage bana doge! Kabhi bhi "sab delete" 3 AM ka move nahi hai.' },
-              { t: 'Node restart karo', good: false, explain: 'Node ki koi galti nahi dikh rahi — purana pod usi node par mast chal raha hai. Shotgun debugging = aur bada blast radius.' },
+              { t: 'kubectl logs checkout-9f8e7-aaa — crash ka error padho, version failure isolate karo', good: true, next: 'n2', explain: 'Sahi! Root cause pehle. Logs = crash ki zubaan.' },
+              { t: 'Teeno pods delete karo — Deployment fresh pods banayega, crash ka state reset hoga', good: false, explain: 'Naye pods wahi crash karenge (config wahi hai), aur PURANA HEALTHY POD bhi mar jayega — 100% outage bana doge! Kabhi bhi "sab delete" 3 AM ka move nahi hai.' },
+              { t: 'Node restart karo — runtime reset se naye checkout containers boot ho jayenge', good: false, explain: 'Node ki koi galti nahi dikh rahi — purana pod usi node par mast chal raha hai. Shotgun debugging = aur bada blast radius.' },
             ],
           },
           n2: {
             sitrep: '$ kubectl logs checkout-9f8e7-aaa\ncheckout v3.3 starting...\nconnecting to payments-gateway...\nFATAL: PAYMENT_API_KEY invalid (expired 2024-01-01)\nexit 1',
             text: 'Logs saaf bol rahe hain: v3.3 ka PAYMENT_API_KEY expired hai. Ab kya?',
             choices: [
-              { t: 'kubectl rollout undo deployment/checkout — pehle service bachao', good: true, next: 'n3', explain: 'Bilkul! 3 AM ka rule: MITIGATE FIRST. v3.2 chal raha tha — usse wapas lao. Key ka permanent fix subah team ke saath.' },
-              { t: 'Naya API key generate karke abhi Secret update karo', good: false, explain: 'Payment provider ka portal, access, approvals — 3 AM par? 30+ min lagenge, revenue jalta rahega. Rollback 30 SECOND ka hai. Mitigate first, fix later!' },
-              { t: 'Crashing pods ko scale down karke sirf purana chalne do', good: false, explain: 'Manual jugaad — deployment desired state wapas ladegi, aur ek pod pura load nahi utha payega. Rollback hi clean move hai.' },
+              { t: 'kubectl rollout undo deployment/checkout — known-good v3.2 laao, phir Ready pods aur traffic verify karo', good: true, next: 'n3', explain: 'Bilkul! 3 AM ka rule: MITIGATE FIRST. v3.2 chal raha tha — usse wapas lao. Key ka permanent fix subah team ke saath.' },
+              { t: 'Naya API key generate karke abhi Secret update karo — rollback ke bina provider portal se key fix karenge', good: false, explain: 'Payment provider ka portal, access, approvals — 3 AM par? 30+ min lagenge, revenue jalta rahega. Rollback 30 SECOND ka hai. Mitigate first, fix later!' },
+              { t: 'Crashing ReplicaSet ko manually zero scale karo — ek purana healthy Pod hi abhi saara traffic sambhaal lega', good: false, explain: 'Manual jugaad — deployment desired state wapas ladegi, aur ek pod pura load nahi utha payega. Rollback hi clean move hai.' },
             ],
           },
           n3: {
@@ -1443,8 +1443,8 @@ kubectl run test --rm -it --image=busybox --env-from=configMapRef:app-config? </
             text: 'Service theek! Incident band karne se pehle aakhri zaroori kaam?',
             choices: [
               { t: 'Endpoints/traffic verify karo + incident notes likho (timeline, root cause, follow-up: key rotation)', good: true, next: 'end', explain: 'Verify + document. Subah ki team ko timeline chahiye, aur "expired key detection" jaisa follow-up warna 6 mahine baad phir 3 AM. 📝' },
-              { t: 'So jao — kaam ho gaya', good: false, explain: 'Verify kiye bina kabhi incident band nahi karte! Aur bina notes ke root cause fix hoga hi nahi — sirf snooze kiya hai problem ko.' },
-              { t: 'v3.3 dobara deploy karke dekho, shayad ab chale', good: false, explain: '😱 Wahi expired key, wahi crash, wapas outage. Bina fix ke re-deploy = incident #2 khud bulaya.' },
+              { t: 'Rollout status successful hai, pager resolve karke shift band karo — traffic check aur notes agle engineer dekh lega', good: false, explain: 'Verify kiye bina kabhi incident band nahi karte! Aur bina notes ke root cause fix hoga hi nahi — sirf snooze kiya hai problem ko.' },
+              { t: 'v3.3 dobara deploy karo aur live traffic se test karo — successful rollback ke baad naya rollout shayad boot kar le', good: false, explain: '😱 Wahi expired key, wahi crash, wapas outage. Bina fix ke re-deploy = incident #2 khud bulaya.' },
             ],
           },
           end: {
@@ -1516,9 +1516,9 @@ kubectl run test --rm -it --image=busybox --env-from=configMapRef:app-config? </
           q: 'Ek junior ne "quick fix" ke liye production pod ke andar exec karke config file edit kar di. Sabse badi problem?',
           choices: [
             'Pod replace hote hi fix GAYAB — desired state (YAML/git) mein change hai hi nahi; K8s mein truth hamesha declarative config mein hota hai',
-            'Security — exec ke andar ke commands audit log mein nahi aate, isliye compliance fail hoga; baaki fix bilkul theek hai',
-            'File edit se container ka image layer corrupt ho jaata hai — agli restart par pod boot nahi karega',
-            'Kuch galat nahi — exec se kiya change etcd mein sync ho jaata hai, isliye naye pods ko bhi milega',
+            'Security — exec command ka audit event milta hai, par file ke har badlav ka content audit mein nahi hota; restart ke baad persistence ka koi issue nahi',
+            'Container ke writable layer ko edit karte hi registry wali image bhi badal jaati hai — agle rollout mein saare replicas ko wahi unreviewed fix mil jayega',
+            'Kuch galat nahi — kubelet container ki file changes etcd mein save karta hai, phir replacement Pod ko wahi modified files restore kar deta hai',
           ],
           answer: 0,
           explain: 'Cattle, not pets! Pod kabhi bhi replace ho sakta hai (crash, eviction, rollout) — manual changes bhaap ban ke ud jaate hain. Fix hamesha manifest mein (aur aage: git mein — GitOps, advanced track ka finale).',

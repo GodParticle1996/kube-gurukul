@@ -89,6 +89,19 @@ const seenIds = new Set();
 const labStages = [];
 let nCards = 0, nStages = 0, nTerm = 0, nLevels = 0;
 const byType = {};
+const uniqueContent = (values, at) => {
+  if (new Set(values).size !== values.length) problems.push(at + ': duplicate content');
+};
+const choiceBias = {};
+const auditChoiceBias = (q, track) => {
+  if (!q || !q.choices || q.answer == null) return;
+  const lengths = q.choices.map(c => String(c).replace(/<[^>]+>/g, '').length);
+  const good = lengths[q.answer], bad = lengths.filter((_, i) => i !== q.answer);
+  if (!bad.length) return;
+  const b = choiceBias[track] || (choiceBias[track] = { total: 0, flagged: 0 });
+  b.total++;
+  if (good >= 1.15 * Math.max(...bad) || good <= 0.85 * Math.min(...bad)) b.flagged++;
+};
 
 KG.tracks.forEach(track => {
   const lvls = KG.levelsOf(track);
@@ -115,6 +128,10 @@ KG.tracks.forEach(track => {
       const sc = ctx + ' stage' + i + '(' + s.type + ')';
       if (!stageTypes.has(s.type)) problems.push(sc + ': unknown stage type');
       if (!s.title) problems.push(sc + ': no title');
+      if (['quiz', 'render', 'triage'].includes(s.type)) (s.questions || []).forEach(q => auditChoiceBias(q, track.id));
+      if (s.type === 'flow') (s.steps || []).forEach(step => auditChoiceBias(step.ask, track.id));
+      if (s.type === 'slider') auditChoiceBias(s.quiz, track.id);
+      if (s.type === 'docker') auditChoiceBias(s.observe, track.id);
 
       if (s.type === 'quiz' || s.type === 'render') {
         (s.questions || []).forEach((q, j) => {
@@ -127,6 +144,8 @@ KG.tracks.forEach(track => {
       if (s.type === 'bins') {
         if (!s.bins || !s.items) problems.push(sc + ': incomplete');
         else {
+          uniqueContent(s.bins.map(b => b.id), sc + ' bin ids');
+          uniqueContent(s.items.map(it => it.text), sc + ' item texts');
           s.items.forEach(it => {
             if (!s.bins.some(b => b.id === it.bin)) problems.push(sc + ': item bin "' + it.bin + '" undefined');
             if (!it.explain) problems.push(sc + ': item "' + it.text + '" no explain');
@@ -134,13 +153,18 @@ KG.tracks.forEach(track => {
           s.bins.forEach(b => { if (!s.items.some(it => it.bin === b.id)) problems.push(sc + ': bin "' + b.id + '" khaali hai'); });
         }
       }
-      if (s.type === 'match') (s.pairs || []).forEach((p, j) => { if (!p.left || !p.right || !p.explain) problems.push(sc + ' pair' + j + ': incomplete'); });
+      if (s.type === 'match') {
+        (s.pairs || []).forEach((p, j) => { if (!p.left || !p.right || !p.explain) problems.push(sc + ' pair' + j + ': incomplete'); });
+        uniqueContent((s.pairs || []).map(p => p.left), sc + ' left items');
+        uniqueContent((s.pairs || []).map(p => p.right), sc + ' right items');
+      }
       if (s.type === 'order') (s.steps || []).forEach((st, j) => { if (!st.text || !st.explain) problems.push(sc + ' step' + j + ': incomplete'); });
       if (s.type === 'fill') {
         if (!s.template || !s.blanks || !s.tokens) problems.push(sc + ': incomplete');
         else {
           const idxs = (s.template.match(/\\{\\d+\\}/g) || []).map(m => +m.slice(1, -1)).sort((a, b) => a - b);
           const want = s.blanks.map((_, i) => i);
+          uniqueContent(s.blanks.map(b => b.answer), sc + ' fill answers (tokens are single-use)');
           if (JSON.stringify(idxs) !== JSON.stringify(want))
             problems.push(sc + ': placeholders ' + JSON.stringify(idxs) + ' != blanks ' + JSON.stringify(want));
           s.blanks.forEach(b => {
@@ -266,8 +290,14 @@ KG.tracks.forEach(track => {
       if (q.terminal) validateMission(q.terminal, ctx + ' iv-q' + i + '(terminal)');
       else if (!q.choices || q.answer == null || !q.explain) problems.push(ctx + ' iv-q' + i + ': incomplete');
       else if (q.answer < 0 || q.answer >= q.choices.length) problems.push(ctx + ' iv-q' + i + ': answer out of range');
+      if (q.choices) uniqueContent(q.choices, ctx + ' iv-q' + i + ' choices');
+      auditChoiceBias(q, track.id);
     });
   });
+});
+
+Object.entries(choiceBias).forEach(([track, b]) => {
+  if (b.flagged / b.total > 0.10) problems.push(track + ': MCQ length bias ' + b.flagged + '/' + b.total + ' exceeds 10% ceiling; node tools/mcq-bias.js list ' + track);
 });
 
 function validateMission(s, sc) {
@@ -843,6 +873,146 @@ t('karpenter: kubectl delete pod ke baad node ki capacity wapas milti hai', () =
   assert(sim.cluster.pods.find(p => p.name === 'new').node === 'n1', 'chhoda hua space naye pod ko mila');
   assert(sim.cluster.nodeclaims.length === 0, 'faltu naya node launch nahi hua');
 });
+const karpTest = () => ({ history: [], cluster: {
+  karpenter: { enabled: true, tick: 0, log: [], consolidate: false },
+  nodes: [], nodeclaims: [], events: [], ec2nodeclasses: [{ name: 'default' }],
+  pods: [{ name: 'test', status: 'Pending', ready: '0/1', describe: 'Status: Pending', requests: { cpu: '1', memory: '1Gi' } }],
+  nodepools: [{ name: 'default', weight: 10, requirements: [], limits: { cpu: 100 }, used: { cpu: 0 }, disruption: {} }],
+} });
+t('karpenter: requirement operators aur exact instance labels', () => {
+  const cases = [
+    ['karpenter.k8s.aws/instance-category', 'In', ['g'], 'g5.xlarge'],
+    ['karpenter.k8s.aws/instance-generation', 'Gt', ['6'], 'm7g.xlarge'],
+    ['karpenter.k8s.aws/instance-generation', 'Lt', ['6'], 'g5.xlarge'],
+    ['karpenter.k8s.aws/instance-family', 'In', ['m6a'], 'm6a.large'],
+    ['karpenter.k8s.aws/instance-family', 'In', ['m6'], null],
+    ['karpenter.k8s.aws/instance-family', 'NotIn', ['c6a', 'm6a', 'r6a'], 'm7g.xlarge'],
+    ['karpenter.k8s.aws/instance-size', 'In', ['2xlarge'], 'c6a.2xlarge'],
+    ['karpenter.k8s.aws/instance-cpu', 'Gt', ['4'], 'c6a.2xlarge'],
+    ['karpenter.k8s.aws/instance-gpu-count', 'Gt', ['0'], 'g5.xlarge'],
+    ['karpenter.k8s.aws/instance-gpu-manufacturer', 'Exists', [], 'g5.xlarge'],
+    ['karpenter.k8s.aws/instance-gpu-manufacturer', 'DoesNotExist', [], 'c6a.large'],
+    ['karpenter.k8s.aws/instance-gpu-manufacturer', 'NotIn', ['nvidia'], 'c6a.large'],
+    ['karpenter.k8s.aws/instance-category', 'Exists', [], 'c6a.large'],
+    ['karpenter.k8s.aws/instance-size', 'DoesNotExist', [], null],
+    ['node.kubernetes.io/instance-type', 'In', ['m6a.xlarge'], 'm6a.xlarge'],
+    ['kubernetes.io/arch', 'In', ['arm64'], 'm7g.xlarge'],
+  ];
+  cases.forEach(([key, operator, values, expected]) => {
+    const s = karpTest(); s.cluster.nodepools[0].requirements = [{ key, operator, values }];
+    KG.karpenter.reconcile(s);
+    assert((s.cluster.nodeclaims[0] || {}).type === (expected || undefined), key + ' ' + operator);
+    if (!expected) assert(s.cluster.pods[0].unschedulable, 'incompatible requirement stays Pending');
+  });
+});
+t('karpenter: weighted fallback, all-pool reasons, zero limits aur toleration effects', () => {
+  let s = karpTest();
+  s.cluster.nodepools.unshift({ name: 'high', weight: 100, requirements: [], limits: { cpu: 0 }, used: { cpu: 0 } });
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.nodeclaims[0].nodepool === 'default', 'higher-weight zero limit must fall back');
+  s = karpTest();
+  s.cluster.nodepools.unshift({ name: 'gpu', weight: 100, requirements: [], taints: [{ key: 'nvidia.com/gpu', value: 'true', effect: 'NoSchedule' }] });
+  s.cluster.nodepools[1].limits.cpu = 0;
+  s.cluster.pods[0].tolerations = [{ key: 'nvidia.com/gpu', operator: 'Exists', effect: 'NoExecute' }];
+  KG.karpenter.reconcile(s);
+  const message = s.cluster.pods[0].describe;
+  assert(message.includes('did not tolerate nvidia.com/gpu=true:NoSchedule') && message.includes('exceed limits for nodepool: "default"'), message);
+  assert(message.includes('; ') && !message.includes('FailedProvisioning'), 'one reason per failed pool');
+  s.cluster.pods[0].tolerations[0].effect = 'NoSchedule';
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.nodeclaims[0].nodepool === 'gpu', 'Exists with matching effect tolerates taint');
+  s = karpTest();
+  s.cluster.nodepools[0].requirements = [{ key: 'kubernetes.io/arch', operator: 'In', values: ['amd64'] }];
+  s.cluster.nodepools.push({ name: 'arm', weight: 1, requirements: [] });
+  s.cluster.pods[0].nodeSelector = { 'kubernetes.io/arch': 'arm64' };
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.nodeclaims[0].nodepool === 'arm' && s.cluster.nodeclaims[0].type === 'm7g.xlarge', 'selector intersects pool requirements');
+});
+t('karpenter: GPU fit, overhead aur released GPU reuse', () => {
+  const s = karpTest();
+  s.cluster.pods[0].requests = { cpu: '4', memory: '16Gi', 'nvidia.com/gpu': '1' };
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.nodeclaims[0].type === 'g5.2xlarge', '4CPU/16Gi plus overhead cannot fit g5.xlarge');
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.nodes[0].usedGpu === 1 && s.cluster.nodes[0].usedCpu > 4, 'GPU and DaemonSet usage accounted');
+  s.cluster.pods = [{ name: 'replacement', status: 'Pending', requests: { cpu: '4', memory: '16Gi', 'nvidia.com/gpu': '1' } }];
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.pods[0].status === 'Running' && s.cluster.nodes[0].usedGpu === 1, 'deleted pod releases GPU');
+  assert(s.cluster.nodeclaims.length === 1, 'reuse freed GPU, no new node');
+  s.cluster.pods.push({ name: 'second', status: 'Pending', requests: { cpu: '1', memory: '1Gi', 'nvidia.com/gpu': '1' } });
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.nodeclaims.length === 2, 'one physical GPU cannot serve two requested GPUs');
+});
+t('karpenter: changed waiting GPU request is rechecked before assignment', () => {
+  const s = karpTest(); s.cluster.karpenter.launchTicks = 4;
+  s.cluster.pods[0].requests['nvidia.com/gpu'] = '1';
+  KG.karpenter.reconcile(s);
+  s.cluster.pods[0].requests['nvidia.com/gpu'] = '2';
+  for (let i = 0; i < 4; i++) KG.karpenter.reconcile(s);
+  assert(s.cluster.pods[0].status === 'Pending' && s.cluster.pods[0].unschedulable, 'no 2-GPU type available');
+  assert(s.cluster.nodes[0].usedGpu === 0, '1-GPU node was not overbooked');
+});
+t('karpenter: launch delay keeps NODE blank; Running describe aur observation index fresh', () => {
+  const s = karpTest(); s.cluster.karpenter.launchTicks = 4;
+  s.history.push('kubectl get pods'); KG.karpenter.reconcile(s);
+  const nc = s.cluster.nodeclaims[0];
+  assert(KG.karpenter.tables(s).nodeclaims.rows[0][4] === '', 'Unknown claim has no NODE');
+  assert(KG.karpenter.toYaml(s, 'nodeclaims', nc).includes('nodeName: ""'), 'Unknown claim yaml has no nodeName');
+  assert(/Nominated.*karpenter/.test(s.cluster.pods[0].describe), 'nomination event');
+  for (let i = 0; i < 3; i++) { s.history.push('kubectl get nodeclaims'); KG.karpenter.reconcile(s); }
+  assert(nc.ready === 'Unknown' && s.cluster.pods[0].status === 'Pending', 'three elapsed ticks not enough');
+  s.history.push('kubectl get nodes'); KG.karpenter.reconcile(s);
+  const p = s.cluster.pods[0];
+  assert(nc.ready === 'True' && p.runningAt === 5, 'Ready at bornTick+4');
+  assert(/Status:\s+Running/.test(p.describe) && /Scheduled  default-scheduler/.test(p.describe), p.describe);
+});
+t('karpenter: consolidation delay really exposes Spark loss; annotation protects progress', () => {
+  const level = KG.findLevel('karpenterdisrupt');
+  const mission = level.stages.find(s => s.type === 'terminal');
+  const run = protect => {
+    const s = { history: [], cluster: KG.cloneCluster(mission.cluster) };
+    if (protect) s.cluster.pods.find(p => p.name.startsWith('spark')).doNotDisrupt = true;
+    for (let i = 0; i < 5; i++) KG.karpenter.reconcile(s);
+    assert(s.cluster.nodes.length === 3, 'five stable reconciles leave time to protect job');
+    KG.karpenter.reconcile(s); return s;
+  };
+  const lost = run(false), saved = run(true);
+  assert(lost.cluster.pods.find(p => p.name.startsWith('spark')).logs.includes('partition 0'), 'unprotected job actually restarts');
+  assert(saved.cluster.pods.find(p => p.name.startsWith('spark')).logs.includes('340/900'), 'protected progress survives');
+  assert(saved.cluster.nodes.length < 3, 'protection still permits other consolidation');
+});
+t('karpenter: GPU workload cannot consolidate onto CPU-only node', () => {
+  const s = karpTest(); s.cluster.karpenter.consolidate = true;
+  s.cluster.nodepools[0].disruption = { consolidationPolicy: 'WhenEmptyOrUnderutilized' };
+  s.cluster.nodes = [
+    { name: 'gpu', karpenter: true, nodepool: 'default', instanceType: 'g5.2xlarge', cpu: 8, mem: 32, gpu: 1, usedCpu: 1, usedMem: 1, usedGpu: 1 },
+    { name: 'cpu', karpenter: true, nodepool: 'default', instanceType: 'm6a.2xlarge', cpu: 8, mem: 32, gpu: 0, usedCpu: 4, usedMem: 1 },
+  ];
+  s.cluster.pods = [
+    { name: 'trainer', status: 'Running', node: 'gpu', requests: { cpu: '1', memory: '1Gi', 'nvidia.com/gpu': '1' } },
+    { name: 'web', status: 'Running', node: 'cpu', requests: { cpu: '4', memory: '1Gi' } },
+  ];
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.pods[0].node === 'gpu' && s.cluster.nodes.length === 2, 'CPU capacity alone is insufficient');
+});
+t('karpenter: existing memory counts towards pool limit; NodeClaim names survive node deletion', () => {
+  const s = karpTest();
+  s.cluster.nodes = [{ name: 'ip-10-0-20-4.ap-south-1.compute.internal', nodepool: 'default', karpenter: true,
+    cpu: 2, mem: 8, usedCpu: 2, usedMem: 8 }];
+  s.cluster.nodepools[0].limits.memory = '8Gi';
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.nodeclaims.length === 0 && /exceed limits/.test(s.cluster.pods[0].describe), 'existing node exhausts pool memory');
+  s.cluster.nodepools[0].limits.memory = '100Gi';
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.nodeclaims[0].nodeName !== s.cluster.nodes[0].name, 'initial fixture name cannot collide');
+  const first = s.cluster.nodeclaims[0].nodeName;
+  KG.karpenter.reconcile(s);
+  s.cluster.nodes = s.cluster.nodes.filter(n => n.name !== first);
+  s.cluster.nodeclaims = [];
+  s.cluster.pods.push({ name: 'new', status: 'Pending', requests: { cpu: '4', memory: '16Gi' } });
+  KG.karpenter.reconcile(s);
+  assert(s.cluster.nodeclaims[0].nodeName !== first, 'subsequent claim does not reuse a deleted node name');
+});
 t('karpenter: cost calculator spot/on-demand sahi ginta hai', () => {
   const sim = { cluster: { nodes: [
     { karpenter: true, instanceType: 'c6a.xlarge', capacityType: 'spot' },
@@ -865,7 +1035,7 @@ function term(cluster, extra) {
   return {
     run(cmd) { const before = outEl.children.length; input.value = cmd; input.fire('keydown', { key: 'Enter' });
                return outEl.children.slice(before).filter(c => !c.classList.contains('t-cmd')).map(c => c.textContent).join('\n'); },
-    get done() { return done; }, st, outEl,
+    get done() { return done; }, get won() { return arena.children.some(c => c.classList && c.classList.contains('stage-summary')); }, st, outEl,
   };
 }
 console.log('\ndecision dojo + real labs (asli screens, headless):');
@@ -1080,9 +1250,45 @@ t('terminal: throw karta callback app ko nahi todta + checklist live hai', () =>
   const T = term({ pods: [] }, { tasks, responses: [{ re: /^boom$/, out: () => { throw new Error('kaboom'); } },
                                                    { re: /^on$/, out: 'on', mutate: () => { flag = true; } },
                                                    { re: /^off$/, out: 'off', mutate: () => { flag = false; } }] });
-  assert(/Simulator error/.test(T.run('boom')), 'error dikha');
+  const reportError = console.error, caught = [];
+  try {
+    console.error = e => caught.push(String(e));
+    assert(/Simulator error/.test(T.run('boom')), 'error dikha');
+  } finally { console.error = reportError; }
+  assert(caught.some(e => /kaboom/.test(e)), 'diagnostic bhi log hua');
   T.run('on'); T.run('off');
   assert(true, 'no throw');
+});
+t('stage: abandoned renderer callback cannot overwrite Home or another session', () => {
+  let finish;
+  const level = { id: 'callback-test', icon: 'x', title: 'callback test', stages: [{ type: 'callback-test', title: 'test' }] };
+  KG.renderers['callback-test'] = (stage, arena, onDone) => { finish = onDone; };
+  const previous = KG.session;
+  try {
+    KG.session = { level, stageIdx: 0, firstTry: 0, total: 0, replay: true };
+    runStage(); const stale = finish;
+    showHome(); stale({ firstTry: 1, total: 1 });
+    assert(KG.session === null, 'abandoned callback after Home must do nothing');
+    KG.session = { level, stageIdx: 0, firstTry: 0, total: 0, replay: true };
+    runStage(); stale({ firstTry: 1, total: 1 });
+    assert(KG.session.firstTry === 0 && KG.session.total === 0, 'old stage must not credit a new session');
+    const current = finish;
+    current({ firstTry: 1, total: 1 }); current({ firstTry: 1, total: 1 });
+    assert(KG.session.firstTry === 1 && KG.session.total === 1, 'current callback remains one-shot');
+  } finally { delete KG.renderers['callback-test']; KG.session = previous; KG.clearResume(); }
+});
+t('karpenter missions: deleting required Pending pods neither wins nor throws', () => {
+  let m = KG.findLevel('karpenterbasics').stages.find(s => s.type === 'terminal');
+  const waiting = term(m.cluster, m);
+  assert(!/processing started/.test(waiting.run('kubectl logs batch-report-xyz')), 'Pending workload cannot show future Running logs');
+  let T = term(m.cluster, m);
+  ['kubectl get nodepools', 'kubectl get ec2nodeclasses', 'kubectl get nodeclaims', 'kubectl get nodes',
+    'kubectl get events', 'kubectl delete pod batch-report-xyz', 'kubectl get pods'].forEach(cmd => T.run(cmd));
+  assert(!T.won, 'Pehla Node still needs its workload');
+  m = KG.findLevel('karpenterboss').stages.find(s => s.type === 'terminal'); T = term(m.cluster, m);
+  ['gpu-trainer', 'huge-job', 'batch-worker'].forEach(name => { T.run('kubectl describe pod ' + name); T.run('kubectl delete pod ' + name); });
+  T.run('kubectl get nodeclaims'); T.run('kubectl get pods');
+  assert(!T.won, 'Pending Pod Mystery still needs all three workloads');
 });
 t('har terminal mission apne solution: [...] se poora hota hai (asli renderer, headless)', () => {
   const missing = []; let n = 0;
@@ -1104,11 +1310,13 @@ t('har terminal mission apne solution: [...] se poora hota hai (asli renderer, h
         assert(!/Simulator error/.test(out), where + ': "' + cmd + '" → ' + out);
       });
       assert(won(), where + ': poora solution chalane ke baad bhi mission complete nahi hua');
+      const taskList = arena.children[0].children.find(child => child.tag === 'ul');
+      (m.tasks || []).forEach((task, i) => assert(taskList && taskList.children[i] && taskList.children[i].classList.contains('done'),
+        where + ': won with incomplete task: ' + task.text));
       n++;
     });
   }));
-  // TODO (HANDOFF.md): jab saare missions ko solution mil jaaye, yeh warning assert ban jaani chahiye
-  if (missing.length) console.log('  ⚠️  ' + missing.length + ' terminal mission(s) abhi bina solution: ' + missing.join(', '));
+  assert(missing.length === 0, 'terminal missions bina solution: ' + missing.join(', '));
   assert(n > 0, 'koi mission replay nahi hua');
 });
 `;

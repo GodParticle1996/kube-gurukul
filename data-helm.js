@@ -1446,13 +1446,15 @@ helm upgrade shop ./shop -f values-prod.yaml --atomic --timeout 5m</pre>
 helm history shop                    # kaunsa revision pending hai dekho
 helm rollback shop &lt;last-good-rev&gt;   # aksar isse hi nikal jaata hai
 # ya (agar kabhi deploy hi na hua ho): helm uninstall shop</pre>
-       <div class="war-story"><b>⚡ Real incident (CRD wala, sabse mehenga):</b> Team ne
-       cert-manager chart upgrade kiya. Chart ke <code>crds/</code> folder mein CRDs the.
-       <b>Helm (3 aur 4 dono) CRDs ko install par banata hai par upgrade par CHHOOTA NAHI</b> — naye
-       fields wali CRD kabhi apply hi nahi hui. Naye Certificate resources "unknown field"
-       se reject hone lage. Ghanton confusion. <b>Rule: CRD upgrades manually karo
-       (<code>kubectl apply -f crds/</code>) — Helm par bharosa mat karo.</b> Yeh
-       interview mein bhi poocha jaata hai!</div>
+       <div class="war-story"><b>⚡ CRD ownership ka incident:</b> Team cert-manager CRDs
+       alag <code>kubectl apply</code> se manage karti thi, chart mein <code>installCRDs: false</code> tha.
+       Chart upgrade hua, CRD bundle reh gaya — naya field reject hone laga.
+       <b>Pehle ownership dekho:</b> generic Helm <code>crds/</code> files install par banti hain;
+       existing CRDs ka upgrade/delete Helm nahi karta. Chart <code>templates/</code> mein CRDs
+       manage kare toh behavior alag hai: cert-manager v1.14 ka <code>installCRDs: true</code>
+       CRDs ko release ke saath upgrade karta tha, aur uninstall par delete bhi kar sakta tha.
+       Manually managed setup mein version-matched CRD bundle pehle apply + verify karo,
+       phir chart upgrade. Har chart ke versioned docs se ownership aur upgrade path chuno.</div>
        <p><b>Ek aur classic:</b> <code>field is immutable</code> — Deployment ka
        <code>selector</code> ya Service ka <code>clusterIP</code> badal diya. Helm rollback
        bhi nahi bachaayega; woh resource delete karke banana padta hai (planned downtime).</p>`,
@@ -1534,40 +1536,40 @@ helm rollback shop &lt;last-good-rev&gt;   # aksar isse hi nikal jaata hai
         type: 'incident',
         title: '🚨 CRD Upgrade ka Dhoka',
         instructions: 'War-story wala CRD incident — ab tum solve karo.',
-        pager: '<b>ALERT:</b> cert-manager upgrade ke baad naye Certificate resources reject ho rahe hain · "unknown field spec.privateKey.rotationPolicy" · TLS renewals ruk gaye',
+        pager: '<b>ALERT:</b> cert-manager upgrade ke baad naye Certificate resources reject ho rahe hain · "unknown field spec.privateKey.rotationPolicy" · naya Certificate manifest reject hua',
         start: 'n1',
         nodes: {
           n1: {
-            sitrep: '$ helm list -n cert-manager\nNAME          REVISION  STATUS    CHART               APP VERSION\ncert-manager  4         deployed  cert-manager-1.14.2  v1.14.2\n\n$ kubectl apply -f new-cert.yaml\nerror: error validating "new-cert.yaml": ValidationError(Certificate.spec.privateKey):\n  unknown field "rotationPolicy"',
-            text: 'Helm upgrade "deployed" dikha raha hai, chart v1.14.2 hai — par naya CRD field pehchana hi nahi jaa raha. Pehla shak?',
+            sitrep: '$ helm list -n cert-manager\nNAME          REVISION  STATUS    CHART               APP VERSION\ncert-manager  4         deployed  cert-manager-1.14.2  v1.14.2\n\n$ helm get values cert-manager -n cert-manager\ninstallCRDs: false   # CRDs manually managed\n\n$ kubectl apply -f new-cert.yaml\nerror: error validating "new-cert.yaml": ValidationError(Certificate.spec.privateKey):\n  unknown field "rotationPolicy"',
+            text: 'Historical v1.14 lab: chart mein installCRDs=false hai; CRDs kubectl se alag managed hain. Chart deployed par field missing — pehla shak?',
             choices: [
-              { t: 'CRDs upgrade hue hi nahi — Helm 3 chart ke crds/ folder ko install par banata hai par UPGRADE par chhoota nahi', good: true, next: 'n2', explain: 'Bilkul! Yeh Helm 3 ka jaana-maana design decision hai (CRD delete/upgrade khatarnak hota hai — data chala jaata hai). Isliye purani CRD hi cluster mein padi hai.' },
-              { t: 'Chart version galat hai — dobara upgrade karo', good: false, explain: 'Chart toh sahi v1.14.2 hai (helm list confirm kar raha hai). Dobara upgrade karne se CRDs phir bhi nahi badlenge — same result, time waste.' },
-              { t: 'Kubernetes version purana hai, cluster upgrade karo', good: false, explain: 'Error CRD schema ka hai, K8s API ka nahi — "unknown field" ka matlab CRD mein woh field defined hi nahi. Cluster upgrade = bada risk, galat direction.' },
+              { t: 'Is setup mein CRDs alag kubectl apply se managed hain — chart upgrade ke saath CRD bundle update miss hua hoga', good: true, next: 'n2', explain: 'Is setup mein CRDs release ke bahar hain, isliye chart upgrade bundle apply nahi karega. Generic Helm crds/ bhi existing CRDs skip karta hai. cert-manager v1.14 ka installCRDs=true alag path tha: templated CRDs release ke saath upgrade hote the.' },
+              { t: 'Wahi chart version dobara upgrade karo — release deployed hai toh installCRDs=false ke saath bhi purani CRD replace ho jayegi', good: false, explain: 'Chart version v1.14.2 hai, par installCRDs=false hai. Same flags se upgrade repeat karne par manually managed CRD schema update nahi hoga; release-matched bundle verify/apply karo.' },
+              { t: 'Kubernetes cluster upgrade karo — Certificate ke naye fields API server binary se milte hain, cert-manager CRD bundle se nahi', good: false, explain: 'Error CRD schema ka hai, K8s API ka nahi — "unknown field" ka matlab CRD mein woh field defined hi nahi. Cluster upgrade = bada risk, galat direction.' },
             ],
           },
           n2: {
-            sitrep: '$ kubectl get crd certificates.cert-manager.io -o jsonpath="{.metadata.annotations}"\n{"controller-gen.kubebuilder.io/version":"v0.12.0"}   ← purani (chart mein v0.14 hai)',
-            text: 'Confirm: CRD purani hai. Ab sahi fix kya hai?',
+            sitrep: '$ kubectl explain certificate.spec.privateKey.rotationPolicy\nerror: field "rotationPolicy" does not exist\n\n$ helm get values cert-manager -n cert-manager\ninstallCRDs: false\n# Runbook: CRDs kubectl apply se managed; latest chart upgrade mein bundle apply skip hua.',
+            text: 'Confirm: installed schema mein field missing hai aur CRDs release ke bahar managed hain. Ab sahi fix kya hai?',
             choices: [
-              { t: 'Chart ke crds/ folder se CRDs manually apply karo (kubectl apply -f), phir verify — aur is step ko upgrade runbook mein likho', good: true, next: 'n3', explain: 'Yehi official tarika hai: CRDs ka lifecycle Helm ke bahar manage karo. Har cert-manager/Prometheus upgrade ke docs mein yeh step likha hota hai — log padhte nahi. 😄' },
-              { t: 'helm uninstall + helm install — fresh CRDs aa jayengi', good: false, explain: '😱 Uninstall se saare Certificates/Issuers DELETE ho jaayenge — poore cluster ke TLS certs gayab. Cure worse than disease!' },
-              { t: 'CRD delete karke helm upgrade dobara chalao', good: false, explain: 'CRD delete = us kind ke SAARE resources delete (cascading!). Saare Certificates chale jaayenge. CRD kabhi casually delete mat karo.' },
+              { t: 'Release-matched CRD bundle docs ke mutabik apply karo, schema verify karo; manually managed CRDs ko upgrade runbook mein rakho', good: true, next: 'n3', explain: 'Manually managed cert-manager CRDs ko target release ke published bundle se upgrade karo, version-specific instructions aur backup/compatibility checks ke saath. Schema field verify karo; generator annotation akeli CRD version ka proof nahi.' },
+              { t: 'cert-manager release uninstall karke same installCRDs=false values se reinstall karo — existing CRDs bhi refresh ho jayengi', good: false, explain: 'Is manually managed setup mein uninstall existing CRDs ko refresh nahi karega; controller downtime alag milega. cert-manager v1.14 mein installCRDs=true path par CRDs Helm-managed hote aur uninstall unhe/custom resources ko delete kar sakta tha. Ownership jaane bina reinstall recovery mat chuno.' },
+              { t: 'Certificate CRD delete karke chart reinstall karo — custom resources etcd mein bachenge aur nayi CRD par khud laut aayenge', good: false, explain: 'CRD delete = us kind ke SAARE resources delete (cascading!). Saare Certificates chale jaayenge. CRD kabhi casually delete mat karo.' },
             ],
           },
           n3: {
             sitrep: '$ kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.2/cert-manager.crds.yaml\ncustomresourcedefinition.apiextensions.k8s.io/certificates.cert-manager.io configured\n\n$ kubectl apply -f new-cert.yaml\ncertificate.cert-manager.io/shop-tls created ✓',
             text: 'Fix ho gaya. Aage se yeh na ho, iske liye kya karoge?',
             choices: [
-              { t: 'Upgrade runbook/CI mein CRD-apply step add karo (chart upgrade se pehle), aur release notes padhne ko process banao — CRD changes hamesha wahan likhi hoti hain', good: true, next: 'end', explain: 'Process fix > memory fix. CI mein: kubectl apply -f crds/ → phir helm upgrade. Aur "CRD version" ko monitor karna bhi accha idea hai.' },
-              { t: 'Kuch nahi — ab pata chal gaya, yaad rahega', good: false, explain: '6 mahine baad, dusra engineer, wahi incident. Jo cheez sirf "yaad" par tiki hai woh process nahi hai — Track 3 ka wahi sabak.' },
-              { t: 'cert-manager hata ke manual certs use karo', good: false, explain: 'Ek chart ke ek gotcha ki wajah se poora automation chhodna? Manual certs = expiry incidents (jo Level 25 mein padha tha). Overreaction.' },
+              { t: 'Runbook/CI mein CRD ownership, version-matched bundle apply aur schema verify rakho; har upgrade ke release notes padho', good: true, next: 'end', explain: 'Runbook mein CRD ownership aur target-version upgrade instructions likho. Is manually managed setup mein published bundle apply → schema verify → chart upgrade hai. Helm-managed templated CRDs ko wahi manual rule bina docs padhe apply mat karo.' },
+              { t: 'Incident notes mein gotcha likh do — ownership aur version verification CI mein na jodo, agla engineer release se pehle yaad kar lega', good: false, explain: '6 mahine baad, dusra engineer, wahi incident. Jo cheez sirf "yaad" par tiki hai woh process nahi hai — Track 3 ka wahi sabak.' },
+              { t: 'cert-manager replace karke manual certificates renew karo — expiry calendar rakhne se CRD lifecycle aur automation dono ki zaroorat khatam', good: false, explain: 'Ek chart ke ek gotcha ki wajah se poora automation chhodna? Manual certs = expiry incidents (jo Level 25 mein padha tha). Overreaction.' },
             ],
           },
           end: {
             end: true,
             text: 'CRD mystery solved. 🧯',
-            summary: '<b>Yaad rakho:</b> Helm 3 CRDs ko <code>crds/</code> se sirf INSTALL par banata hai — <b>upgrade par touch nahi karta</b> (jaan-boojh ke, kyunki CRD delete = saare custom resources delete). Isliye har operator/chart upgrade mein CRDs manually apply karna runbook ka step hona chahiye. Yeh interview ka bhi favourite sawal hai!',
+            summary: '<b>Yaad rakho:</b> ownership pehle: Helm <code>crds/</code> existing CRDs upgrade/delete nahi karta; <code>templates/</code> se managed CRDs release lifecycle follow kar sakti hain. Is lab ke manually managed cert-manager CRDs ko version-matched bundle se apply aur schema verify karna tha. CRD delete karne se us kind ke custom resources bhi delete hote hain.',
           },
         },
       },
@@ -1821,7 +1823,7 @@ env:
         title: 'Boss Round 3: Speed Round',
         instructions: 'Poore track ka rapid-fire. Ab yeh sab reflex hona chahiye!',
         questions: [
-          { q: 'Values precedence mein sabse strong kaun?', choices: ['--set', 'chart ki values.yaml', 'pehli -f file', 'Chart.yaml'], answer: 0, explain: 'defaults < -f (left→right) < --set 👑. Aur --set agle upgrade par gayab ho jaata hai!' },
+          { q: 'Values precedence mein sabse strong kaun?', choices: ['--set se diya override', 'Chart ki default values.yaml', 'Sabse pehli -f values file', 'Chart.yaml ka appVersion'], answer: 0, explain: 'defaults < -f (left→right) < --set 👑. Aur --set agle upgrade par gayab ho jaata hai!' },
           { q: 'toYaml ke saath indent ki jagah nindent kyun?', choices: [
             'nindent newline + indent dono karta hai — bina newline ke content pichli line se chipak jaata hai',
             'nindent tez chalta hai — indent har line ko alag process karta hai, nindent poore block ko ek saath',

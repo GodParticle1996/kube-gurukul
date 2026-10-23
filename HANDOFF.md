@@ -1,3 +1,78 @@
+# KubeGurukul improvement status — 2026-10-23
+
+A–D implementation complete on `codex/kube-gurukul-handoff-completion`.
+The original handoff below is retained as historical context: its old branch,
+403 push result, environment paths and remaining-work list describe the earlier session.
+Use the current checkout and Git remote state for delivery.
+
+## Changes completed
+
+- Karpenter: GPU types/requests/accounting; generic instance requirement operators;
+  weighted NodePool fallback; CPU/memory limits; DaemonSet sizing overhead; readable
+  scheduling events; fresh Running descriptions; launch/consolidation tick controls.
+  Unknown NodeClaims have a blank NODE, and node names stay unique after consolidation.
+- All three Karpenter missions now demonstrate the intended behavior. Spark is a real
+  consolidation candidate: unprotected work restarts, while early annotation preserves progress.
+  GPU training uses g5 capacity, matching taint/toleration and a NVIDIA EC2NodeClass.
+  Deleting a required workload cannot complete or crash a mission.
+- Added the 15 missing KodeKloud solutions and corrected selector/endpoints and final-boss
+  win conditions. Fixed stale post-repair state, required final observations, script-vs-YAML
+  actions, namespace finalization, seccomp defaults and related troubleshooting claims.
+- Reviewed answer lengths and factual explanations across tracks: 303 MCQs and 29 incident
+  nodes have no current heuristic flags. Decision Dojo expected flags fell from 24.1% to
+  about 0.3% across 93 scenarios. This heuristic does not prove factual accuracy.
+- Validator now requires a replayable solution for every mission, wins on the final command,
+  and checks every task at the win. It also rejects duplicate single-use fill answers,
+  matching/bin items and interview options; per-track MCQ bias ceiling is 10%.
+- README/EXTENDING describe Decision Dojo, 15 Real Labs, stage-boundary resume, mood picker,
+  Helm 4 behavior, Karpenter simulator limits, terminal contracts and both developer tools.
+- Browser QA also exposed and fixed delayed stage callbacks contaminating another screen/session,
+  plus mobile overflow from the long CreateContainerConfigError heading.
+
+## Validation and evidence
+
+```bash
+node validate.js                       # ends with ✅ SAB THEEK
+node tools/replay-missions.js run       # pass 43, fail 0, no-solution 0
+node tools/mcq-bias.js                  # MCQ/incident/Dojo length audit
+node tools/mcq-bias.js --kind=incident
+node tools/mcq-bias.js --kind=decision
+node tools/mcq-bias.js --json
+git diff --check
+```
+
+Local Chromium QA: 252 checks, eight terminal replays, 27 screenshots; zero console/page
+errors or document overflows. Covers a complete level plus interview in all seven tracks,
+resume/reload, decisions/practice, all 15 Real Lab details, mood routes, and a 375px sweep
+of all 58 intros. Both delayed-callback navigation regressions pass.
+Final Karpenter browser recheck adds six passing scenarios: three solution replays,
+two required-workload deletion paths, and a waiting GPU request mutation; no browser errors.
+Artifacts for this workspace run: `/tmp/kube-gurukul-qa/REPORT.md`, `REPORT.json`,
+`qa.cjs`, screenshots and `validate-final.log`. Earlier failures are preserved in `FIRST-RUN.*`.
+Linux test fonts lack some emoji glyphs; text and layouts remain readable.
+
+Real cluster exercises were viewed and their local files checked; they were **not rerun on
+kind, minikube, EKS or real devices**. No Docker, cluster, server or deployment was started.
+The simulator has illustrative instance prices and fixed overhead; it is not a full scheduler,
+AWS capacity model, or production billing estimate. Resume restores challenge boundaries,
+not partially executed terminal commands.
+
+## Primary references used for corrections
+
+- [Karpenter scheduling and GPU device plugins](https://karpenter.sh/docs/concepts/scheduling/)
+- [Karpenter NodePools, weights and limits](https://karpenter.sh/docs/concepts/nodepools/)
+- [Karpenter disruption and interruption](https://karpenter.sh/docs/concepts/disruption/)
+- [Kubernetes Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+- [Kubernetes webhook practices](https://kubernetes.io/docs/concepts/cluster-administration/admission-webhooks-good-practices/)
+- [Argo CD sync options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)
+- [Argo CD automated sync and allowEmpty](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/)
+- [Helm CRD handling](https://helm.sh/docs/chart_best_practices/custom_resource_definitions/)
+- [cert-manager v1.14 chart CRD ownership](https://cert-manager.io/v1.14-docs/installation/helm/)
+
+---
+
+## Original handoff — historical, completed above
+
 # 🤝 Handoff — KubeGurukul improvement work (for the next AI agent)
 
 Branch: **`claude/gifted-thompson-nx168o`** · run `node validate.js` first (must end with `✅ SAB THEEK`).

@@ -1206,9 +1206,9 @@ spec:
             sitrep: '$ kubectl describe deploy payments | grep -i memory\n  memory: 256Mi        ← 2 hafte pehle 512Mi kiya tha?!\n\n$ argocd app history payments\nID  DATE         REVISION\n41  today 09:12  abc123 (unrelated config change, synced OK)',
             text: 'Limit khud "wapas" kaise ho gayi? Sabse pehla shak?',
             choices: [
-              { t: 'Git check karo — 3 AM wala fix shayad sirf cluster mein tha, git mein kabhi aaya hi nahi; aaj ke sync ne git ka (purana) sach wapas laga diya', good: true, next: 'n2', explain: 'GitOps mein cluster ki har "memory" git se aati hai. Manual fix = udhaar — agla sync usse wasool leta hai. War-story live!' },
-              { t: 'ArgoCD ka bug hai — usse restart karo', good: false, explain: 'ArgoCD ne apna kaam PERFECT kiya: git jo bolta tha wahi lagaya. Bug system mein nahi, PROCESS mein tha (fix git tak nahi pahuncha).' },
-              { t: 'Kisi ne jaan-boojh ke revert kiya hoga — logs kholo, culprit dhundo', good: false, explain: 'Blame-hunt se pehle mechanism samjho. git log 2 min mein dikha dega ki limit-change commit KABHI EXIST hi nahi karta tha. No villain, just drift.' },
+              { t: 'Git manifest aur sync diff dekho — 512Mi ka manual fix commit nahi hua hoga; aaj Git ka 256Mi wapas laga', good: true, next: 'n2', explain: 'GitOps mein cluster ki har "memory" git se aati hai. Manual fix = udhaar — agla sync usse wasool leta hai. War-story live!' },
+              { t: 'ArgoCD restart karo — controller ne memory limit galat cache ki hogi; Git commit aur sync diff baad mein dekhenge', good: false, explain: 'ArgoCD ne apna kaam PERFECT kiya: git jo bolta tha wahi lagaya. Bug system mein nahi, PROCESS mein tha (fix git tak nahi pahuncha).' },
+              { t: 'Audit logs mein revert karne wala user dhundo — bina Git history padhe maan lo ki limit kisi ne jaan-boojh kar ghatayi', good: false, explain: 'Blame-hunt se pehle mechanism samjho. git log 2 min mein dikha dega ki limit-change commit KABHI EXIST hi nahi karta tha. No villain, just drift.' },
             ],
           },
           n2: {
@@ -1216,8 +1216,8 @@ spec:
             text: 'Ab OOMKills phir ho rahe hain. Sahi sequence kya hai?',
             choices: [
               { t: 'Emergency PR: limit 512Mi → fast-track review → merge → ArgoCD sync — 10 min mein fix, is baar PERMANENT', good: true, next: 'end', explain: 'GitOps ka emergency path bhi git se hai — bas fast lane mein. Ab yeh fix kabhi "gayab" nahi hoga, aur git log mein iski kahani bhi hai.' },
-              { t: 'kubectl edit se abhi badha do, PR baad mein bana denge', good: false, explain: 'YEHI galti dobara?! selfHeal on hua toh ArgoCD minutes mein revert kar dega; nahi bhi ho toh "baad mein" kabhi nahi aata — do hafte pehle bhi yahi socha tha. 😅' },
-              { t: 'ArgoCD ka auto-sync band kar do, phir manual fix karo aaram se', good: false, explain: 'Drift-protection ko maarna = GitOps ke saare fayde maarna. Ek incident ke liye poore system ka immune system band? Fix PROCESS se karo, system todke nahi.' },
+              { t: 'kubectl edit se abhi 512Mi badhao — fast-track PR ke bajay baad mein kisi ko Git update karne ki reminder bhej denge', good: false, explain: 'YEHI galti dobara?! selfHeal on hua toh ArgoCD minutes mein revert kar dega; nahi bhi ho toh "baad mein" kabhi nahi aata — do hafte pehle bhi yahi socha tha. 😅' },
+              { t: 'ArgoCD auto-sync band karke 512Mi manually set karo — Git se reconcile kab karna hai, agle normal release tak taal do', good: false, explain: 'Drift-protection ko maarna = GitOps ke saare fayde maarna. Ek incident ke liye poore system ka immune system band? Fix PROCESS se karo, system todke nahi.' },
             ],
           },
           end: {
@@ -1449,9 +1449,9 @@ spec:
           q: '"Service mesh kyun exist karta hai?" — user ke syllabus ka EXACT sawal. Best jawab?',
           choices: [
             'Cross-cutting network concerns (mTLS, traffic splitting, retries, observability) ko app code se nikaal ke sidecar/proxy mein — har language mein duplicate karne ki jagah, ek jagah, bina code change',
-            'Kubernetes ka built-in networking slow hai — mesh ke sidecars kernel bypass karke packets tez bhejte hain, isliye high-traffic apps ko performance ke liye mesh chahiye',
-            'Mesh ke bina services aapas mein connect hi nahi ho sakti — Kubernetes Service sirf bahar ke traffic ke liye hai, andar ka raasta mesh banata hai',
-            'Yeh sirf observability tool hai — Prometheus jaise metrics dene ke liye; security aur traffic control ke liye alag tools chahiye hote hain',
+            'Mesh ka main fayda performance optimization hai — proxies connections pool karke network faster banate hain; security aur policy secondary hain, isliye high-throughput apps mein mesh default choice hai',
+            'Mesh services ke beech basic connectivity banata hai — Kubernetes Service sirf external clients ke liye routing deta hai, isliye internal API calls ko discover aur connect karne ke liye mesh zaroori hai',
+            'Mesh ka main kaam metrics collect karna hai — proxy latency aur error rate record karta hai, par encryption, authorization aur traffic splitting app libraries ya Ingress mein hi implement karne padte hain',
           ],
           answer: 0,
           explain: '"Why" ka core: separation of concerns at network layer. Teen pillars gino (security/traffic/observability) + "no code change" + polyglot argument. Phir judgement dikhao: "chhote setups mein overkill" — balanced close.',
@@ -1628,26 +1628,26 @@ minikube delete -p mesh</pre>
             text: 'App khud fast hai, uski OUTGOING calls slow hain. Errors zero. Deploy koi nahi. Pehla investigative move?',
             choices: [
               { t: 'Ek pod mein exec karke us external call ko manually time karo — DNS resolve vs connect vs response alag-alag naapo', good: true, next: 'n2', explain: 'Perfect isolation: "call slow hai" ko todo — DNS? TCP connect? TLS? server response? curl -w se har phase ka time milta hai. Guessing zero, measurement full.' },
-              { t: 'Checkout ke replicas double kar do — latency baant jayegi', good: false, explain: 'Latency LOAD se nahi aa rahi (CPU normal!) — har pod ki HAR call slow hai. 2x pods = 2x slow calls. Symptom ko samjhe bina scaling = paisa jala kar wahi problem.' },
-              { t: 'External API provider ko blame-mail bhejo', good: false, explain: 'Ho sakta hai woh ho — par PROOF ke bina? Pehle apni taraf ka data lo (DNS/connect/response times). "Evidence first, blame later" — senior ka pehla usool.' },
+              { t: 'Checkout replicas double karo — outgoing calls ka load zyada Pods par batega, DNS/connect/response phase naapna baad mein karenge', good: false, explain: 'Latency LOAD se nahi aa rahi (CPU normal!) — har pod ki HAR call slow hai. 2x pods = 2x slow calls. Symptom ko samjhe bina scaling = paisa jala kar wahi problem.' },
+              { t: 'External provider ko outage report bhejo — app CPU normal hai toh pehle apne DNS aur connection timings naapne ki zaroorat nahi', good: false, explain: 'Ho sakta hai woh ho — par PROOF ke bina? Pehle apni taraf ka data lo (DNS/connect/response times). "Evidence first, blame later" — senior ka pehla usool.' },
             ],
           },
           n2: {
             sitrep: '$ kubectl exec checkout-aaa -- sh -c \'time nslookup api.stripe.com\'\n;; connection timed out; no servers could be reached (first try)\nreal    0m4.02s     ← 4 SECOND sirf DNS?!\n\n$ kubectl get pods -n kube-system -l k8s-app=kube-dns\ncoredns-aaa   1/1   Running   0   45d\ncoredns-bbb   0/1   Running   14  45d    ← 👀 restarts + NOT READY',
             text: 'DNS resolution 4s le raha hai — aur ek CoreDNS pod bimar hai. Diagnosis + sahi soch?',
             choices: [
-              { t: 'CoreDNS ka ek replica unhealthy hai — kuch queries usi ke paas jaa ke time-out ho rahi hain (retry ke baad doosre se resolve → isliye errors nahi, sirf LATENCY). CoreDNS ko fix/restart karo aur uski memory/limits dekho', good: true, next: 'n3', explain: 'Exactly! DNS half-broken = latency without errors (retries bacha lete hain). READY 0/1 wala pod endpoints se to nikla hoga par... nahi — READY 0/1 hokar bhi kube-dns Service mein tha kya? Restart count bolta hai OOM/crash cycle. describe karke dekho.' },
-              { t: 'ndots ki problem hai — resolv.conf mein ndots:5 hata do sab jagah turant', good: false, explain: 'Accha guess (ndots REAL cheez hai — external names par 4-5 extra internal lookups hote hain!) — PAR woh problem PEHLE DIN se hoti, aaj SUDDEN nahi. Aaj ka trigger: bimar CoreDNS pod. ndots optimization = valid follow-up, root cause of today ≠.' },
-              { t: 'Saare checkout pods restart karo — DNS cache clear ho jayega', good: false, explain: 'App pods ki galti hi nahi — DNS SERVER side bimar hai. Restart se naye pods WAHI bimaar CoreDNS se poochhenge. Galat component ki surgery!' },
+              { t: 'CoreDNS endpoints, OOM history aur bache replica ka load dekho — NotReady Pod ko active DNS backend maan lena kaafi proof nahi', good: true, next: 'n3', explain: 'NotReady backend normally ready endpoints se nikalta hai. Restarts clue hain, routing proof nahi: kube-dns EndpointSlices, CoreDNS previous logs, OOM history, remaining replica load aur DNS request latency compare karo. Retries user errors chhupa sakti hain.' },
+              { t: 'Har app mein ndots:5 turant hata do — aaj ka sudden trigger aur CoreDNS endpoints check kiye bina search expansion ko root maano', good: false, explain: 'ndots search expansion query load badha sakta hai, par setting dekhkar aaj ka root cause prove nahi hota. Sudden query storm ke saath purani setting bhi contribute kar sakti hai; pehle endpoints, query rate aur latency ka evidence lo.' },
+              { t: 'Checkout pods restart karo — client DNS cache reset hoga; CoreDNS ke restarts, ready endpoints aur load ko abhi chhod sakte hain', good: false, explain: 'Client restart se CoreDNS capacity ya query storm solve nahi hota. Pehle DNS path isolate karo; bache ready backend ka load aur server-side OOM evidence check kiye bina sab checkout Pods restart karna extra churn hai.' },
             ],
           },
           n3: {
-            sitrep: '$ kubectl describe pod coredns-bbb -n kube-system | grep -A3 "Last State"\nLast State: Terminated\n  Reason:   OOMKilled          ← purana dost! 😄\n  Exit Code: 137\n\n(CoreDNS ki memory limit chhoti thi; ek naye internal service ne\n DNS queries ka toofan shuru kiya tha aaj subah — cache overflow)',
+            sitrep: '$ kubectl describe pod coredns-bbb -n kube-system | grep -A3 "Last State"\nLast State: Terminated\n  Reason:   OOMKilled          ← purana dost! 😄\n  Exit Code: 137\n\n(EndpointSlice: coredns-aaa ready=true; coredns-bbb ready=false.\nCoreDNS metrics: ready replica overloaded, DNS request latency 4s;\nquery rate 10x after an internal service started a lookup loop.\nOOM memory usage limit se upar gaya; cache overflow bina profile ke prove nahi hota.)',
             text: 'CoreDNS OOMKill loop mein tha. Poora fix package kya hoga? (Senior answer!)',
             choices: [
-              { t: 'Ab: CoreDNS memory limit badhao (git/GitOps se!) + recover karo. Phir: DNS query toofan wale service ka fix, CoreDNS metrics par alert (symptom: p99!), aur ndots/NodeLocal DNSCache evaluation — poori chain document karo', good: true, next: 'end', explain: 'COMPLETE package: immediate (limit via git — drift nahi!), root-root cause (query storm), detection gap (alert tha hi nahi), aur systemic hardening (NodeLocal DNSCache = har node par DNS cache, CoreDNS ka load hi gir jaata). Yeh 4-layer thinking hi seniority hai.' },
-              { t: 'Bas limit badha do kubectl edit se, kaam ho gaya', good: false, explain: 'Teen galtiyan ek mein: (1) kubectl edit = DRIFT (Round 1 se kuch seekha? 😄), (2) query-storm root cause zinda, (3) detection gap zinda — agli baar phir p99 se hi pata chalega. Patch ≠ fix.' },
-              { t: 'CoreDNS ko hata ke har pod mein public DNS (8.8.8.8) daal do', good: false, explain: '💀 Cluster DNS ke bina Services ka naam-resolution hi mar jayega (web-svc kaun batayega?). 8.8.8.8 ko tumhare internal names ka koi pata nahi. Cure worse than disease — architecture samjho, todo mat.' },
+              { t: 'CoreDNS capacity Git se recover karo, query storm roko; DNS latency alerts aur NodeLocal DNSCache evaluate karke incident document karo', good: true, next: 'end', explain: 'Pehle ready DNS capacity recover karo aur node memory headroom ke hisaab se limits tune karo. Query storm ka source throttle/fix karo, DNS latency/error alerts jodo, phir cache hit-rate aur workload se NodeLocal DNSCache evaluate karo. Cache madad kar sakta hai; har query cacheable nahi hoti.' },
+              { t: 'kubectl edit se CoreDNS limit badhao aur close karo — query storm baaki capacity se absorb ho jayega, alert aur Git update abhi optional hain', good: false, explain: 'Teen galtiyan ek mein: (1) kubectl edit = DRIFT (Round 1 se kuch seekha? 😄), (2) query-storm root cause zinda, (3) detection gap zinda — agli baar phir p99 se hi pata chalega. Patch ≠ fix.' },
+              { t: 'Pods ko public DNS 8.8.8.8 par bhejo — external API resolve hogi; internal Service names ko apps mein IP se replace karke CoreDNS hata denge', good: false, explain: '💀 Cluster DNS ke bina Services ka naam-resolution hi mar jayega (web-svc kaun batayega?). 8.8.8.8 ko tumhare internal names ka koi pata nahi. Cure worse than disease — architecture samjho, todo mat.' },
             ],
           },
           end: {
@@ -1666,9 +1666,9 @@ minikube delete -p mesh</pre>
           q: 'PANEL: "Ek naya production-grade platform zero se design karo — kaunse layers, kaunse tools, kya order?" (2 minute ka whiteboard jawab)',
           choices: [
             'GitOps + managed cluster day-1 → security (RBAC least-priv, PSA restricted, NetPol default-deny, ESO) → reliability (requests/limits, probes, spread, autoscaling) → observability (symptom alerts) → traffic (Gateway; mesh jab maange)',
-            'Pehle saari apps jaldi deploy karo taaki business value dikhe → security, RBAC aur NetworkPolicies baad mein jab pehla audit aaye → monitoring tab jab pehla incident ho → GitOps tab jab team badi ho',
-            'Day-1 par sab kuch ek saath: Istio, Vault, ArgoCD, Karpenter, OPA, Backstage — platform shuru se complete hona chahiye, baad mein add karna mushkil hai, order ka farak nahi',
-            'Kubernetes mat use karo — VMs sasti aur simple hain; ek bade VM par Docker Compose + cron backups + ek load balancer har startup ke liye kaafi hai, scale baad mein dekhenge',
+            'Pehle saari apps jaldi deploy karo taaki business value dikhe → security aur NetworkPolicies pehle audit par → requests/limits first outage ke baad → monitoring customer tickets ke baad → GitOps tab jab team badi ho',
+            'Day-1 par poora platform banao: Istio, Vault, ArgoCD, Karpenter, OPA aur Backstage → har service ke liye har feature compulsory → phir apps migrate karo; requirements naapne se pehle standardize karna future rework kam karega',
+            'Kubernetes migration ke saath sab services ek hi bade node par pack karo → requests aur spread baad mein → pehle Docker Compose wala host layout preserve karo; platform stable hone tak RBAC aur GitOps introduce karna taal do',
           ],
           answer: 0,
           explain: 'Layered + sequenced + judgement (mesh "jab scale maange"!). Yeh jawab tumhare 26 levels ka map hai — literally. Panel isme dekh raha hai: kya yeh vyakti PRIORITIZE kar sakta hai? Order hi seniority hai.',

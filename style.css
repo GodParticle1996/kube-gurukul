@@ -174,7 +174,7 @@ pre {
   margin-top: 20px;
 }
 .crumb { font-size: .78rem; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
-.level-h, .stage-h { margin: 0 0 14px; }
+.level-h, .stage-h { margin: 0 0 14px; overflow-wrap: anywhere; }
 .instructions { color: var(--muted); line-height: 1.5; }
 
 .lesson-card {

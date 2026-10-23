@@ -286,10 +286,12 @@ kubectl get pods                # ArgoCD ne banaye!</pre>
          <tr><td><code>prune</code></td><td>Git se file delete ki? Resource cluster mein <b>zinda rahega</b> aur app hamesha <b>OutOfSync</b> dikhega (bahut confusing!)</td></tr>
          <tr><td><code>selfHeal</code></td><td>Kisi ne <code>kubectl edit</code> kiya toh drift <b>dikhega</b> par theek nahi hoga — koi manually sync kare tab</td></tr>
        </table>
-       <p>⚠️ <code>prune: true</code> shakti bhi hai aur khatra bhi: galat path ya khaali
-       folder git mein push hua toh ArgoCD <b>sab kuch delete</b> kar dega. Isliye
-       production mein <code>prune</code> ke saath <b>PR review</b> aur
-       <code>PruneLast=true</code> jaise options use hote hain.</p>`,
+       <p><code>prune: true</code> Git se hate tracked resources ko delete karta hai.
+       Galat par valid manifests partial deletion kara sakte hain. Bilkul empty target par
+       automated pruning ko default <code>allowEmpty: false</code> safety guard rokta hai;
+       <code>allowEmpty: true</code> ho toh empty target bhi prune ho sakta hai.
+       PR review, sync diff aur critical resources par <code>Prune=confirm</code> use karo.
+       <code>PruneLast=true</code> sirf deletion ka order badalta hai, approval guard nahi.</p>`,
       `<h3>🩹 selfHeal — drift ka ilaaj</h3>
        <pre>3:00 AM  on-call: kubectl scale deploy/shop --replicas=20   (traffic spike)
 3:00:30  ArgoCD: "cluster git se alag hai" → OutOfSync
@@ -308,10 +310,15 @@ kubectl get pods                # ArgoCD ne banaye!</pre>
   - group: apps
     kind: Deployment
     jsonPointers:
-      - /spec/replicas          # HPA ise manage karta hai — ArgoCD chhod de</pre>
-       <p>Bina iske: HPA ne 3→8 kiya → ArgoCD "OutOfSync" → selfHeal ne 3 kar diya →
-       HPA ne phir 8 kiya → <b>infinite fight</b> 🥊. Yeh classic hai — HPA + GitOps ek
-       saath use karte ho toh yeh setting must hai.</p>`,
+      - /spec/replicas          # comparison mein HPA-owned field ignore
+  syncPolicy:
+    syncOptions:
+      - RespectIgnoreDifferences=true</pre>
+       <p>HPA ne 3→8 kiya, Git mein 3 raha → ArgoCD selfHeal aur HPA replicas ke liye
+       lad sakte hain. <code>ignoreDifferences</code> diff ko ignore karta hai;
+       <code>RespectIgnoreDifferences=true</code> existing resource ka live field sync
+       ke waqt bhi preserve karta hai. Pehli creation par desired manifest apply hota hai.
+       HPA-owned <code>replicas</code> field Git se omit karna bhi valid design hai.</p>`,
     ],
     stages: [
       {
@@ -407,7 +414,7 @@ kubectl get pods                # ArgoCD ne banaye!</pre>
               'App Degraded ho jaayega aur ArgoCD sync rok dega jab tak HPA delete na ho',
             ],
             answer: 0,
-            explain: 'Classic HPA + GitOps ki ladai! Dono controllers apna-apna "desired state" enforce karte hain. Ilaaj: <code>ignoreDifferences</code> mein <code>/spec/replicas</code> daalo — ArgoCD us field ko dekhega hi nahi.',
+            explain: 'Dono controllers replicas likh rahe hain. HPA ke liye Git manifest se replicas omit karna ownership saaf karta hai. Field rakhni ho toh ignoreDifferences diff ko ignore karta hai; unrelated sync par overwrite rokne ke liye RespectIgnoreDifferences=true bhi chahiye (existing resources par).',
           },
           {
             q: 'Sahi <code>ignoreDifferences</code> config kaunsi hai?',
@@ -418,7 +425,7 @@ kubectl get pods                # ArgoCD ne banaye!</pre>
               'HPA delete kar do aur replicas git mein 8 likh do — ek hi source of truth',
             ],
             answer: 0,
-            explain: 'Surgical fix: sirf woh EK field ignore karo jo doosra controller manage karta hai — baaki sab par GitOps ka control bana rahe. selfHeal band karna = poori suraksha khona sirf ek field ke liye.',
+            explain: 'Diff ke liye group apps, kind Deployment aur /spec/replicas sahi scope hai. Sync ke dauraan bhi existing live replica count preserve karna ho toh syncOptions mein RespectIgnoreDifferences=true jodo. HPA-owned replicas ko Git se omit karna bhi valid ownership design hai.',
           },
         ],
       },
@@ -505,17 +512,17 @@ kubectl get deploy guestbook-ui -w                 # 30-60 sec dekho...
 # → ArgoCD ne wapas 1 kar diya! 🩹 (Ctrl+C)
 
 argocd app get guestbook | head -20                # Sync Policy line padho
-# ab ignoreDifferences try karo:
-kubectl -n argocd patch app guestbook --type merge -p '{"spec":{"ignoreDifferences":[{"group":"apps","kind":"Deployment","jsonPointers":["/spec/replicas"]}]}}'
+# ab diff ignore aur sync-time respect dono try karo:
+kubectl -n argocd patch app guestbook --type merge -p '{"spec":{"ignoreDifferences":[{"group":"apps","kind":"Deployment","jsonPointers":["/spec/replicas"]}],"syncPolicy":{"syncOptions":["RespectIgnoreDifferences=true"]}}}'
 kubectl scale deploy/guestbook-ui --replicas=5
 argocd app get guestbook                           # ab Synced hi rahega! 🙈</pre>
       <p>✅ Self-check: selfHeal ne replicas wapas kiye? Phir ignoreDifferences ke baad drift dikhna band ho gaya?</p>`,
     cards: [
       { front: 'syncPolicy ke 3 switches?', back: '<b>automated</b> (git badla → khud apply), <b>prune</b> (git se hata → cluster se bhi hatao), <b>selfHeal</b> (manual change → git wala wapas). Teeno alag kaam karte hain — ek on karne se baaki nahi hote.' },
       { front: 'App "hamesha OutOfSync" — #1 chhupa hua reason?', back: 'Koi resource <b>git se delete</b> ho chuka hai par cluster mein zinda hai aur <code>prune</code> OFF hai. Bina <code>--prune</code> ke woh kabhi nahi hatega. (Doosra reason: HPA/webhook field badal raha hai → ignoreDifferences.)' },
-      { front: 'HPA + GitOps ki ladai kya hai?', back: 'HPA replicas 3→8 karta hai, ArgoCD selfHeal 8→3 karta hai, infinite fight 🥊. Fix: <code>ignoreDifferences</code> mein <code>/spec/replicas</code> — sirf woh field ignore, baaki sab par GitOps ka control.' },
+      { front: 'HPA + GitOps ki ladai kya hai?', back: 'HPA aur Git dono replicas likhen toh fight hoti hai. Git se replicas omit karo, ya /spec/replicas ka scoped ignoreDifferences + RespectIgnoreDifferences=true lagao. Sirf diff ignore se unrelated sync par overwrite ab bhi ho sakta hai; sync option existing resources par kaam karta hai.' },
       { front: 'Auto-sync ON hai — rollback kaise?', back: '<b>git revert + push</b>. <code>argocd app rollback</code> auto-sync ke saath kaam nahi karta (agla sync usse wapas aage kar dega). GitOps mein rollback = git ka operation hai, cluster ka nahi.' },
-      { front: 'prune: true ka risk?', back: 'Galat path/khaali folder push hua toh <b>sab delete</b>. Safeguards: PR review, critical resources par <code>Prune=false</code> annotation, aur sync se pehle diff dekhna.' },
+      { front: 'prune: true ka risk?', back: 'Git se hate tracked resources delete honge. Empty target par automated pruning default allowEmpty=false se rukti hai; allowEmpty=true guard hata deta hai. Partial deletion phir bhi possible: PR review, diff aur critical resources par Prune=confirm/false chuno.' },
     ],
   },
 
@@ -1331,10 +1338,10 @@ kubectl argo rollouts abort shop-web                # turant stable par wapas</p
         {
           q: 'AnalysisTemplate ka fayda kya hai — sirf pause kaafi nahi?',
           choices: [
-            'Pause insaan par depend karta hai (raat 2 baje dashboard kaun dekhega?); Analysis Prometheus metrics se khud promote/abort karta hai — human error aur reaction time dono hat jaate',
-            'Analysis sirf logging ke liye hai — har step ke metrics ka record rakhta hai taaki post-mortem ho sake; promote/abort ka faisla hamesha insaan karta hai',
-            'Pause aur analysis same hain — dono rollout rokte hain; analysis bas pause ka naya naam hai jo docs aur UI mein use hota hai, kaam bilkul same',
-            'Analysis rollout ko fast banata hai — pause ki jagah metrics dekhta hai isliye har step 10x jaldi complete hota hai',
+            'Indefinite pause ko manual promote chahiye; timed pause duration par khulta hai. Analysis configured metrics se success/fail/inconclusive decide karta hai — fail par abort, inconclusive par pause',
+            'Analysis metrics record karke dashboard update karta hai — threshold cross hone par bhi rollout apne aap nahi rukta, kyunki promote/abort har step par human approval se hi hoga',
+            'Pause aur Analysis dono fixed-duration wait hain — Analysis mein metrics labels hote hain, par duration poora hone par result dekhe bina next step chal jaata hai, safety same hai',
+            'Analysis fixed pause ka tez alternative hai — successful metric query aate hi next step khul jaata hai, error-rate threshold sirf report hota hai aur rollout abort nahi kar sakta',
           ],
           answer: 0,
           explain: '"Automate the decision, not just the deployment" — yeh line bolo. Aur Observability level se jodo: analysis tabhi possible hai jab metrics already achhe se instrumented hon.',
@@ -1542,33 +1549,33 @@ kubectl delete ns argo-rollouts</pre>
             sitrep: '$ argocd app get shop-prod | head -12\nSync Policy:   Automated (Prune) (Self Heal)\nSync Status:   Synced (f7a8b9c)\nHealth Status: Healthy\n\n$ kubectl get deploy shop-web\nNAME       READY   UP-TO-DATE   AVAILABLE\nshop-web   3/3     3            3          ← 12 hone chahiye the!',
             text: 'App "Synced + Healthy" hai, par replicas 12 se 3 ho gaye. Deploy bhi nahi hua. Pehla shak?',
             choices: [
-              { t: 'Kisi ne 12 replicas manually (kubectl scale) set kiye the — git mein hamesha 3 tha; aaj selfHeal ne usse "theek" kar diya', good: true, next: 'n2', explain: 'Bilkul! selfHeal ne apna kaam kiya — cluster ko git jaisa banaya. "Kisi ne kuch nahi kiya" sach hai... aaj. Galti purani hai: 12 kabhi git mein gaya hi nahi.' },
-              { t: 'ArgoCD ka bug hai — usse restart karo', good: false, explain: 'App Synced+Healthy hai — ArgoCD apna kaam theek kar raha hai. Restart se woh phir git wala state hi lagayega. Tool ko blame karne se pehle git dekho.' },
-              { t: 'HPA ne scale down kiya hoga', good: false, explain: 'Accha guess — par HPA hota toh app OutOfSync dikhta (ya ignoreDifferences hoti). Yahan Synced hai = cluster GIT jaisa hai, matlab git mein hi 3 likha hai.' },
+              { t: 'Git replicas, HPA aur recent selfHeal enablement check karo — purana manual 12 ab desired 3 par reconcile hua hoga', good: true, next: 'n2', explain: 'Pehle hypothesis verify karo: Git desired count, HPA presence, ignore rules aur Application policy history dekho. Synced + Healthy capacity sahi hone ka proof nahi; recent selfHeal enablement purani manual scaling ko reconcile kar sakta hai.' },
+              { t: 'ArgoCD restart karo — Synced aur Healthy output stale hoga; Git manifest aur recent policy change verify karna baad mein dekhenge', good: false, explain: 'App Synced+Healthy hai — ArgoCD apna kaam theek kar raha hai. Restart se woh phir git wala state hi lagayega. Tool ko blame karne se pehle git dekho.' },
+              { t: 'HPA scale-down ko root cause maan lo — HPA object aur desired replica count check kiye bina autoscaling disable kar do', good: false, explain: 'HPA valid hypothesis hai, par object/status dekhe bina cause pakka nahi hota. Synced app HPA ke saath bhi ho sakti hai: same desired count ya ignoreDifferences. Agle evidence mein HPA absent aur selfHeal enablement dono verify honge.' },
             ],
           },
           n2: {
-            sitrep: '$ git log --oneline -3 -- apps/shop/prod/deployment.yaml\nf7a8b9c (2 din pehle) bump image to 2.5.0\nc4d5e6f (3 hafte pehle) initial prod manifests\n\n$ git show f7a8b9c:apps/shop/prod/deployment.yaml | grep replicas\n  replicas: 3        ← git mein HAMESHA 3 tha\n\n$ kubectl get events | grep -i scaled | tail -2\n38m  Normal  ScalingReplicaSet  Scaled down replica set shop-web-7d4f to 3',
-            text: 'Confirm: git mein hamesha 3. Kisi ne 3 hafte pehle manually 12 kiya tha, aur aaj selfHeal ne wapas 3 kar diya. Ab kya?',
+            sitrep: '$ git log --oneline -3 -- apps/shop/prod/deployment.yaml\nf7a8b9c (2 din pehle) bump image to 2.5.0\nc4d5e6f (3 hafte pehle) initial prod manifests\n\n$ git show f7a8b9c:apps/shop/prod/deployment.yaml | grep replicas\n  replicas: 3        ← git mein HAMESHA 3 tha\n\n$ kubectl get events | grep -i scaled | tail -2\n38m  Normal  ScalingReplicaSet  Scaled down replica set shop-web-7d4f to 3\n\n$ kubectl get hpa\nNo resources found in shop-prod namespace.\n\nApplication audit: 20:02 selfHeal false -> true (platform policy update)\nManual scale audit: 2 din pehle last sync ke baad replicas 3 -> 12',
+            text: 'Confirm: HPA nahi, Git mein 3; last sync ke baad manual 12 hua tha. selfHeal abhi enable hua aur 3 wapas lag gaye. Ab kya?',
             choices: [
               { t: 'Emergency PR: git mein replicas 12 (ya sahi number) karo → merge → ArgoCD sync — aur post-mortem mein HPA lagane ka action item', good: true, next: 'n3', explain: 'GitOps ka ekmatra sahi raasta: fix GIT mein. Aur asli sawal — "12 kyun chahiye?" — ka permanent jawab HPA hai, manual scale nahi.' },
-              { t: 'kubectl scale se turant 12 karo, git baad mein', good: false, explain: '😱 selfHeal ON hai — 30 second mein wapas 3 ho jayega! Yehi galti 3 hafte pehle kisi ne ki thi, aur aaj hum uska natija bhugat rahe hain.' },
-              { t: 'selfHeal band kar do taaki aisa dobara na ho', good: false, explain: 'Ulta! selfHeal ne to problem BATAYI hai (chhupi hui drift ko saamne laaya). Usse band karne ka matlab: agli baar drift 3 hafte tak chhupi rahegi, aur kisi bure waqt par phatt jayegi.' },
+              { t: 'kubectl scale se 12 karo aur close karo — selfHeal enabled hone par bhi Git ka replicas field next release se pehle dobara apply nahi hoga', good: false, explain: 'selfHeal ab ON hai: manual 12 ko controller dobara Git ke 3 par la sakta hai. Exact detection/sync timing configuration aur reconciliation par depend karti hai. Git fix ya documented temporary break-glass coordination ke bina manual scale durable fix nahi.' },
+              { t: 'selfHeal permanently band karke manually 12 rakho — drift protection hatane se future capacity changes ke liye Git update ki zaroorat nahi', good: false, explain: 'Ulta! selfHeal ne to problem BATAYI hai (chhupi hui drift ko saamne laaya). Usse band karne ka matlab: agli baar drift 3 hafte tak chhupi rahegi, aur kisi bure waqt par phatt jayegi.' },
             ],
           },
           n3: {
             sitrep: '$ git commit -m "prod: replicas 3 -> 12 (traffic growth)" && git push\n$ argocd app sync shop-prod\nSynced ✓  replicas: 12\n\nLatency wapas normal. 📉',
             text: 'Service theek. Post-mortem mein permanent fix kya likhoge?',
             choices: [
-              { t: 'HPA lagao (min 12 / max 40) + uske /spec/replicas ko ignoreDifferences mein daalo; aur team ko batao ki har change git se — emergency ke liye fast-track PR process', good: true, next: 'end', explain: 'Teen layers ka fix: (1) sahi tool (HPA — manual scaling ki zaroorat hi na pade), (2) tooling conflict ka ilaaj (ignoreDifferences warna HPA vs selfHeal ki ladai), (3) process (fast-track PR). Yeh poora Track 2 + Track 5 ka gyaan ek saath hai.' },
-              { t: 'Bas git mein 12 likh diya, kaam ho gaya', good: false, explain: 'Aaj 12 kaafi hai, agle sale par 40 chahiye honge — phir wahi manual scaling, wahi drift. Static number traffic-driven problem ka jawab nahi.' },
-              { t: 'Sabko bol do ki kubectl scale mat karna', good: false, explain: 'Sirf "bol dena" process nahi hai. 6 mahine baad naya engineer, wahi galti. Tool-level fix (HPA) + process (fast-track PR) chahiye — insaan ki yaaddasht par mat tiko.' },
+              { t: 'HPA min/max load se tune karo; Git replicas field omit karo (ya ignore + RespectIgnoreDifferences); emergency PR process banao', good: true, next: 'end', explain: 'HPA capacity ko measured traffic se tune kare; min 12/max 40 automatic universal answer nahi. Git se replicas omit karo, ya scoped ignoreDifferences ke saath RespectIgnoreDifferences=true se existing live field sync par preserve karo. Emergency PR aur audited break-glass runbook dono define karo.' },
+              { t: 'Git mein replicas 12 fix rakho — har sale par engineers manual scale karenge, HPA ya ownership rules ki abhi zaroorat nahi', good: false, explain: 'Aaj 12 kaafi hai, agle sale par 40 chahiye honge — phir wahi manual scaling, wahi drift. Static number traffic-driven problem ka jawab nahi.' },
+              { t: 'Runbook mein kubectl scale mana likh do — HPA aur fast-track Git changes ki jagah team ki manual traffic planning par bharosa rakho', good: false, explain: 'Sirf "bol dena" process nahi hai. 6 mahine baad naya engineer, wahi galti. Tool-level fix (HPA) + process (fast-track PR) chahiye — insaan ki yaaddasht par mat tiko.' },
             ],
           },
           end: {
             end: true,
             text: 'Drift mystery solved. 🕵️',
-            summary: '<b>Is incident ke 3 sabak:</b> (1) <b>Synced + Healthy</b> ka matlab hai ArgoCD sahi hai — problem git mein ya process mein hai, tool mein nahi. (2) selfHeal <b>dushman nahi</b> — usne 3 hafte purani chhupi drift saamne laayi; usse band karna problem ko andhere mein dhakelna hai. (3) Har change git se — aur agar koi cheez baar-baar manually badalni pad rahi hai, toh woh <b>galat tool</b> ka signal hai (yahan: HPA chahiye tha).',
+            summary: '<b>3 sabak:</b> Synced desired/live comparison hai, Healthy resource health hai; dono required business capacity prove nahi karte. Recent selfHeal enablement ne purani manual scaling reconcile ki. HPA aur Git ki field ownership saaf rakho, aur emergency changes ka durable source + recovery process define karo.',
           },
         },
       },

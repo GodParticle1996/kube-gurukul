@@ -382,8 +382,10 @@ spec:
        <code>failurePolicy: Fail</code> rakha (default yahi hai). Ek din webhook ke apne pods
        CrashLoop mein chale gaye. Ab API server har pod create par webhook se poochta,
        jawab nahi milta, aur request reject ho jaati — <b>webhook ke apne pods bhi nahi ban paate</b>.
-       Cluster deadlock mein chala gaya aur usse nikalne ka ek hi raasta bacha:
-       <code>kubectl delete validatingwebhookconfiguration &lt;naam&gt;</code>.<br><br>
+       Recovery path webhook ke scope aur dependency par depend karta hai: allowed API se
+       missing dependency restore karo, ya audited temporary namespace exemption/fail-open
+       se webhook recover karo. Puri configuration delete karna broad last resort hai;
+       recovery ke baad original policy verify aur restore karo.<br><br>
        <b>Teen bachav:</b> <b>(1)</b> <code>namespaceSelector</code> se <code>kube-system</code>
        aur webhook ke apne namespace ko baahar rakho; <b>(2)</b> non-critical policy ke liye
        <code>failurePolicy: Ignore</code> rakho; <b>(3)</b> <code>timeoutSeconds</code> chhota
@@ -423,13 +425,13 @@ spec:
             ], answer: 0, explain: 'Kram hi is design ka poora maksad hai. <b>Mutating pehle, validating baad mein</b> — isliye validating ko hamesha <i>final</i> object dikhta hai. Yahi wajah hai ki "policy khud hi field bhar deti hai aur phir khud hi check karti hai" wala pattern kaam karta hai: user ko manually likhna nahi padta, aur phir bhi compliance pakki rehti hai. Ulta kram hota to Kyverno ka apna daala field kabhi check hi na ho paata.' } },
           { lane: 'client', t: 'API server ne OpenAPI schema check kiya', detail: 'Ab jab saare mutations lag chuke hain, tab API server dekhta hai ki final object schema ke hisaab se sahi hai — har field maujood hai aur har type sahi hai.<br><b>Yahan fail ho to:</b> <code>error validating data: unknown field "replicaCount"</code>.' },
           { lane: 'val', t: 'PodSecurity ne restricted level ke hisaab se pod check kiya', detail: 'Namespace par <code>pod-security.kubernetes.io/enforce=restricted</code> laga hai. PodSecurity ne final object dekha: <code>runAsNonRoot</code>, <code>allowPrivilegeEscalation</code>, <code>capabilities.drop</code>, <code>seccompProfile</code> — sab maujood hain (kuch Kyverno ne bhare the). Pass.' },
-          { lane: 'val', t: 'Custom webhook: "latest tag mana hai" — image acme/api:1.4 hai, pass', detail: 'Ek ValidatingWebhookConfiguration har Deployment par chalta hai. Image ka tag <code>1.4</code> hai, <code>latest</code> nahi — allow.<br><b>Yahan fail ho to:</b> <code>admission webhook "no-latest.acme.io" denied the request</code>.',
+          { lane: 'val', t: 'Custom webhook: "latest tag mana hai" — image acme/api:1.4 hai, pass', detail: 'Ek ValidatingWebhookConfiguration har namespace ke Pod/Deployment CREATE aur UPDATE par chalta hai. Image ka tag <code>1.4</code> hai, <code>latest</code> nahi — allow.<br><b>Yahan fail ho to:</b> <code>admission webhook "no-latest.acme.io" denied the request</code>.',
             ask: { q: 'Is webhook ke apne pods CrashLoop mein chale jaayein aur <code>failurePolicy: Fail</code> laga ho, to kya hoga?', choices: [
-              'API server har Deployment create ko reject karega — webhook ke apne pods samet — aur cluster deadlock mein aa jayega',
+              'Matching Pod/Deployment requests reject honge; apne namespace ke replacement Pods bhi webhook par atkenge',
               'Webhook apne aap skip ho jaayega — API server 3 baar fail hone par webhook ko disable kar deta hai',
               'API server 30 second intezaar karke request allow kar dega — timeout par hamesha allow hota hai',
               'Sirf naye namespaces par asar padega — maujooda namespaces ki Deployments webhook ke bina chalti rahengi',
-            ], answer: 0, explain: '<code>failurePolicy: Fail</code> (jo default hai) kehta hai: "webhook se jawab nahi mila to request reject karo". Webhook ke pods gir gaye to jawab kabhi nahi aayega, isliye har matching request reject hoti hai — <b>webhook ke apne deployment samet</b>. Nikalne ka ek hi raasta bachta hai: <code>kubectl delete validatingwebhookconfiguration &lt;naam&gt;</code>. Bachav ke teen tarike: <code>namespaceSelector</code> se kube-system aur apna namespace baahar rakho, non-critical policy ke liye <code>failurePolicy: Ignore</code> rakho, aur <code>timeoutSeconds</code> 2-3 rakho.' } },
+            ], answer: 0, explain: '<code>failurePolicy: Fail</code> (jo default hai) kehta hai: "webhook se jawab nahi mila to request reject karo". Webhook ke pods gir gaye to jawab kabhi nahi aayega, isliye har matching request reject hoti hai — <b>webhook ke apne deployment samet</b>. Recovery ke liye rules se bahar missing dependency restore karo, ya audited temporary namespace exemption/fail-open do; webhook config delete karna broad last resort hai. Policy recovery ke baad restore/verify karo. Bachav ke teen tarike: <code>namespaceSelector</code> se kube-system aur apna namespace baahar rakho, non-critical policy ke liye <code>failurePolicy: Ignore</code> rakho, aur <code>timeoutSeconds</code> 2-3 rakho.' } },
           { lane: 'etcd', t: 'Object etcd mein likha gaya', detail: 'Ab jaake Deployment sach mein maujood hai. Gaur karo: jo object etcd mein gaya woh alice ke bheje manifest se <b>alag</b> hai — usme default ServiceAccount, LimitRange ke resources, aur Kyverno ka seccompProfile bhi hai. Isliye <code>kubectl get -o yaml</code> hamesha bheje hue manifest se bada dikhta hai.' },
         ],
         summary: '✅ Chhe darwaze, chhe alag error. <b>401</b> = authentication · <b>403</b> = RBAC · <code>admission webhook denied</code> = validating policy · <code>unknown field</code> = schema · <code>context deadline exceeded calling webhook</code> = webhook dhima ya down. Error ka message hi bata deta hai kaunsa darwaza band hua.',
@@ -476,7 +478,7 @@ spec:
         type: 'incident',
         title: '🚨 3AM: "har deploy fail ho raha hai"',
         pager: `<b>PagerDuty · 03:40</b><br>
-          Har namespace mein har <code>kubectl apply</code> fail ho raha hai.<br>
+          Har namespace mein Pod/Deployment create aur update fail ho rahe hain.<br>
           Chal rahe pods bilkul theek chal rahe hain, traffic normal hai.<br>
           Ek release 20 minute pehle gaya tha.`,
         start: 'a1',
@@ -494,9 +496,9 @@ security    policy-guard-7d8c9b6a5-kk2ll      0/1     CrashLoopBackOff   14     
             text: 'Ek admission webhook jawab nahi de raha aur uske apne pods CrashLoop mein hain. Pehla kadam?',
             choices: [
               { t: 'Webhook ka failurePolicy aur namespaceSelector dekho: kubectl get validatingwebhookconfiguration policy-guard -o yaml', good: true, next: 'a2', explain: 'Sahi. Pehle yeh samjho ki webhook <b>kis-kis par</b> lagta hai aur jawab na milne par <b>kya karta hai</b>. Dono baatein isi ek object mein likhi hain, aur dono aage ka faisla badal deti hain.' },
-              { t: 'validatingwebhookconfiguration turant delete kar do', good: false, explain: 'Yeh aakhri hathiyaar hai, pehla kadam nahi. Delete karte hi poore cluster ki security policy hat jayegi. Pehle 10 second lagao yeh dekhne mein ki kya webhook ko apne hi namespace se baahar rakh ke bhi kaam ban sakta hai.' },
-              { t: 'policy-guard ke pods delete karo taaki naye banein', good: false, explain: 'Pod already CrashLoopBackOff mein hai — kubelet pehle se baar-baar restart kar raha hai. Ek aur restart wahi natija dega. Aur naya pod banane ke liye API server ko wahi webhook call karna pad sakta hai jo down hai.' },
-              { t: 'API server restart karo', good: false, explain: 'Webhook ki configuration etcd mein hai, API server ki memory mein nahi. Restart ke baad API server wahi webhook dobara call karega aur wahi timeout milega. Aur 3AM par control plane restart karna naya outage bana sakta hai.' },
+              { t: 'ValidatingWebhookConfiguration turant delete karo — saari deploy requests unblock hongi; webhook ka scope baad mein dekhenge', good: false, explain: 'Yeh aakhri hathiyaar hai, pehla kadam nahi. Delete karte hi poore cluster ki security policy hat jayegi. Pehle 10 second lagao yeh dekhne mein ki kya webhook ko apne hi namespace se baahar rakh ke bhi kaam ban sakta hai.' },
+              { t: 'policy-guard ke pods delete karo — naye pods clean start karenge; admission rules dekhe bina controller ko recovery karne do', good: false, explain: 'Pod already CrashLoopBackOff mein hai — kubelet pehle se baar-baar restart kar raha hai. Ek aur restart wahi natija dega. Aur naya pod banane ke liye API server ko wahi webhook call karna pad sakta hai jo down hai.' },
+              { t: 'API server restart karo — webhook connection pool clear hoga; etcd mein saved policy ko badle bina admission recover ho jayega', good: false, explain: 'Webhook ki configuration etcd mein hai, API server ki memory mein nahi. Restart ke baad API server wahi webhook dobara call karega aur wahi timeout milega. Aur 3AM par control plane restart karna naya outage bana sakta hai.' },
             ],
           },
           a2: {
@@ -512,9 +514,9 @@ webhooks:
         resources: ["pods","deployments"]`,
             text: '<code>failurePolicy: Fail</code> hai aur <code>namespaceSelector: {}</code> ka matlab har namespace. Yeh combination kya banata hai?',
             choices: [
-              { t: 'Deadlock — policy-guard ke apne naye pods bhi nahi ban sakte, kyunki unke liye bhi wahi (down) webhook call hota hai', good: true, next: 'a3', explain: 'Bilkul. Webhook apne hi namespace par bhi lagta hai. policy-guard ka naya pod banane ke liye API server policy-guard se poochta hai, policy-guard down hai, request reject — aur policy-guard kabhi upar nahi aa paata. Yahi classic admission deadlock hai.' },
-              { t: 'Kuch khaas nahi — 10 second baad request apne aap allow ho jayegi', good: false, explain: 'Ulta hai. <code>timeoutSeconds: 10</code> sirf itna kehta hai ki 10 second tak intezaar karo; uske baad <code>failurePolicy</code> tay karta hai kya karna hai. <code>Fail</code> hai, isliye 10 second baad request <b>reject</b> hoti hai, allow nahi.' },
-              { t: 'Sirf naye namespaces par asar padega', good: false, explain: '<code>namespaceSelector: {}</code> ka matlab "koi filter nahi" — yaani <b>har</b> namespace, purana bhi aur naya bhi, aur <code>kube-system</code> bhi.' },
+              { t: 'Deadlock — policy-guard ke apne naye pods bhi nahi ban sakte, kyunki unke liye bhi wahi (down) webhook call hota hai', good: true, next: 'a3', explain: 'Webhook apne namespace ke Pod CREATE/UPDATE ko bhi block karta hai: replacement Pod banane ke liye down webhook ka jawab chahiye. Existing Pod ke andar kubelet container restart kar sakta hai; object creation deadlock aur local restart alag hain.' },
+              { t: '10 second ke timeout ke baad API server request allow karega — failurePolicy sirf explicit webhook deny par apply hoti hai', good: false, explain: 'Ulta hai. <code>timeoutSeconds: 10</code> sirf itna kehta hai ki 10 second tak intezaar karo; uske baad <code>failurePolicy</code> tay karta hai kya karna hai. <code>Fail</code> hai, isliye 10 second baad request <b>reject</b> hoti hai, allow nahi.' },
+              { t: 'Sirf naye namespaces ke Pods reject honge — existing namespaces pehle admit ho chuke hain, unke updates webhook skip karega', good: false, explain: '<code>namespaceSelector: {}</code> ka matlab "koi filter nahi" — yaani <b>har</b> namespace, purana bhi aur naya bhi, aur <code>kube-system</code> bhi.' },
             ],
           },
           a3: {
@@ -525,12 +527,13 @@ $ kubectl get cm -n security
 NAME              DATA   AGE
 kube-root-ca.crt  1      210d
 
-(20 minute pehle wale release mein policy-rules ConfigMap ka naam badla tha)`,
+(Pod ka policy-rules volume optional: true hai; app bundle missing par exit karta hai.
+20 minute pehle wale release ne ConfigMap rename karke purana bundle hata diya.)`,
             text: 'Asli wajah mil gayi: release ne ConfigMap ka naam badal diya aur policy-guard usse dhoondh nahi paa raha. Ab sabse achha kadam?',
             choices: [
-              { t: 'Gayab ConfigMap wapas laao — release rollback karo ya sahi naam se ConfigMap dobara banao', good: true, next: 'a4', explain: 'Sahi — asli karan yahi hai. ConfigMap wapas aate hi policy-guard boot ho jayega, webhook jawab dene lagega, aur deploys apne aap chalne lagenge. Koi security hataani nahi padegi.' },
-              { t: 'validatingwebhookconfiguration delete kar do, baad mein dekhenge', good: false, explain: 'Cluster to chal padega par poore cluster ki admission policy hat jayegi, aur 3AM ke "baad mein dekhenge" aksar hafton tak reh jaate hain. Asli karan (gayab ConfigMap) 30 second mein theek ho sakta hai — pehle wahi karo.' },
-              { t: 'failurePolicy ko Ignore kar do', good: false, explain: 'Deploys chal padenge par har policy check chup-chaap skip hone lagega — <b>bina kisi ko pata chale</b>. Yeh usse bhi khatarnak hai jitna webhook delete karna, kyunki cluster surakshit <i>dikhta</i> rahega. Agar turant unblock karna hi ho to yeh raasta le sakte ho, par uske turant baad asli fix karna zaroori hai.' },
+              { t: 'policy-rules ConfigMap restore karo — ConfigMap CREATE webhook ke pods/deployments rules se bahar hai', good: true, next: 'a4', explain: 'Rules sirf pods/deployments par hain, isliye ConfigMap create abhi allowed hai. policy-rules restore karo aur existing Pod ke retry par bundle load/Ready verify karo. Deployment rollback webhook se block ho sakta hai; zaroorat par controlled exemption ya temporary fail-open ka audited recovery path chahiye.' },
+              { t: 'ValidatingWebhookConfiguration delete karke deploys unblock karo — ConfigMap restore ko incident ke baad dekhenge', good: false, explain: 'Cluster to chal padega par poore cluster ki admission policy hat jayegi, aur 3AM ke "baad mein dekhenge" aksar hafton tak reh jaate hain. Asli karan (gayab ConfigMap) 30 second mein theek ho sakta hai — pehle wahi karo.' },
+              { t: 'failurePolicy Ignore ko permanent fix bana do — webhook recover ho ya na ho, deploys ki availability pehle rakho', good: false, explain: 'Ignore sirf webhook invocation failure par matching request ko fail-open karta hai; available webhook ab bhi allow/deny evaluate karta hai. Permanent Ignore missing bundle ko restore nahi karta. Required security policy ke liye availability/security trade-off explicit rakho; audited temporary bypass ke baad webhook recover aur intended policy restore/verify karo.' },
             ],
           },
           a4: {
@@ -545,9 +548,9 @@ $ kubectl apply -f web.yaml
 deployment.apps/web configured`,
             text: 'Cluster wapas chal pada. Ab aage ke liye kya badalna zaroori hai?',
             choices: [
-              { t: 'namespaceSelector se security aur kube-system ko baahar rakho, aur timeoutSeconds 2-3 karo', good: true, next: 'aend', explain: 'Yahi asli sudhaar hai. Webhook ko apne hi namespace se baahar rakhne se deadlock ka raasta hamesha ke liye band ho jaata hai — policy-guard hamesha apne pods bana paayega, chahe policy-guard khud down ho. Aur chhota timeout ek dhime webhook ko har API call ghaseetne se rokta hai.' },
-              { t: 'failurePolicy hamesha ke liye Ignore rakh do', good: false, explain: 'Tab policy ka koi matlab hi nahi bachta — webhook down hote hi har cheez chup-chaap allow ho jayegi. <code>Fail</code> theek default hai; asli sudhaar <b>scope chhota karna</b> hai, policy kamzor karna nahi.' },
-              { t: 'policy-guard ki replicas 1 se 3 kar do, bas', good: false, explain: 'Replicas badhana achha hai (aur karna bhi chahiye — PodDisruptionBudget ke saath), par deadlock ka raasta khula rehta hai. Agar teeno replicas ek hi gayab ConfigMap par crash karein, to phir wahi haalat. <b>namespaceSelector se apna namespace baahar rakhna</b> hi wo cheez hai jo deadlock ko structurally namumkin banati hai.' },
+              { t: 'Webhook apne security namespace ko exclude kare; kube-system scope aur timeout budget review karo, replicas/PDB bhi rakho', good: true, next: 'aend', explain: 'Self-namespace exemption replacement Pods ka admission deadlock todti hai. kube-system exemptions apni policy aur protected workloads ke mutabik scope karo; timeout measured latency budget se chuno. Replicas/PDB availability badhate hain, par shared missing config ko akela solve nahi karte.' },
+              { t: 'failurePolicy ko hamesha Ignore rakho — webhook outage mein deploy chalte rahenge, namespace exemptions zaroori nahi', good: false, explain: 'Ignore mein webhook unavailable ho toh matching requests policy check ke bina allow hoti hain; webhook available ho toh policy ab bhi evaluate hoti hai. Availability/security trade-off explicit chuno. Is required security policy ke liye permanent bypass root fix nahi; audited temporary recovery alag decision hai.' },
+              { t: 'policy-guard ko teen replicas aur PDB do — shared ConfigMap missing hone par bhi replicas admission ko available rakhenge', good: false, explain: 'Replicas badhana achha hai (aur karna bhi chahiye — PodDisruptionBudget ke saath), par deadlock ka raasta khula rehta hai. Agar teeno replicas ek hi gayab ConfigMap par crash karein, to phir wahi haalat. <b>namespaceSelector se apna namespace baahar rakhna</b> hi wo cheez hai jo deadlock ko structurally namumkin banati hai.' },
             ],
           },
           aend: {
@@ -562,11 +565,12 @@ deployment.apps/web configured`,
               1️⃣ <code>failed calling webhook … context deadline exceeded</code> ka matlab policy ne mana nahi kiya —
               policy ne <b>jawab hi nahi diya</b>.<br>
               2️⃣ <code>failurePolicy: Fail</code> + <code>namespaceSelector: {}</code> = deadlock ka nuskha.
-              Webhook ko hamesha apne aur <code>kube-system</code> namespace se <b>baahar</b> rakho.<br>
-              3️⃣ Emergency exit yaad rakho: <code>kubectl delete validatingwebhookconfiguration &lt;naam&gt;</code> —
-              par pehle 30 second asli karan dhoondhne mein lagao.<br>
-              4️⃣ Chal rahe pods bilkul theek chal rahe the. Admission sirf <b>naye ya badalte</b> objects par lagta hai,
-              isliye traffic par koi asar nahi tha — sirf har badlav ruk gaya tha.`,
+              Apne namespace ko exclude karo aur <code>kube-system</code> scope review karo.<br>
+              3️⃣ Is case mein <code>ConfigMap CREATE</code> rules se bahar tha: missing bundle restore hua.
+              Agar recovery API bhi blocked ho toh audited temporary namespace exemption/fail-open chuno;
+              webhook config delete karna broad last resort hai. Recovery ke baad policy restore/verify karo.<br>
+              4️⃣ Chal rahe pods traffic serve karte rahe. Is webhook ke rules sirf Pod/Deployment
+              CREATE/UPDATE par the; ConfigMap CREATE aur existing containers ke local restarts allowed the.`,
           },
         },
       },

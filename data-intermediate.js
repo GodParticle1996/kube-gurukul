@@ -309,17 +309,17 @@ startupProbe:
             sitrep: '$ kubectl get pods\ncheckout-new-aaa   1/1  Running  0  30s   ← naya (READY?!)\ncheckout-new-bbb   1/1  Running  0  28s\n\n$ kubectl describe pod checkout-new-aaa | grep -i probe\n(no probes configured)',
             text: 'Naye pods turant 1/1 READY dikhte hain, phir bhi 90s tak 503. Root cause kya hai?',
             choices: [
-              { t: 'Readiness probe hai hi nahi — K8s ko boot ka pata nahi, booting pods ko turant traffic de raha hai', good: true, next: 'n2', explain: 'Bilkul! Bina readiness ke "container started" == "READY" maan liya jaata hai. App 90s boot leti hai — us window mein saare requests 503.' },
-              { t: 'Network slow hai, CNI ka issue hoga', good: false, explain: 'Network hota toh pattern random hota — yahan EXACTLY deploy ke baad, EXACTLY ~90s (app ka boot time!). Pattern hi clue hai.' },
-              { t: 'Replicas kam hain, badha do', good: false, explain: 'Zyada replicas = zyada booting pods = zyada 503 sources. Ulta effect!' },
+              { t: 'Readiness probe missing hai — Running ka matlab app ready nahi; Service booting containers ko bhi traffic bhej raha hai', good: true, next: 'n2', explain: 'Bilkul! Bina readiness ke "container started" == "READY" maan liya jaata hai. App 90s boot leti hai — us window mein saare requests 503.' },
+              { t: 'Network slow lag raha hai — CNI routes check karne se pehle app boot ko cause na maano; Running pods traffic le sakte hain', good: false, explain: 'Network hota toh pattern random hota — yahan EXACTLY deploy ke baad, EXACTLY ~90s (app ka boot time!). Pattern hi clue hai.' },
+              { t: 'Replicas badhao — boot hote containers ko traffic milne par extra copies capacity badha dengi, readiness ki zaroorat nahi', good: false, explain: 'Zyada replicas = zyada booting pods = zyada 503 sources. Ulta effect!' },
             ],
           },
           n2: {
             text: 'Fix design karo — sabse sahi combination?',
             choices: [
-              { t: 'readinessProbe (/healthz) + startupProbe (12×10s window) add karke redeploy', good: true, next: 'end', explain: 'Readiness = boot ke waqt traffic band; startup = slow boot ka buffer. Ab rolling update mein naya pod tabhi endpoints mein aayega jab SACH mein ready hoga.' },
-              { t: 'Deploy ke baad script se 90s sleep karke phir traffic on karna', good: false, explain: 'Jugaad — aur fragile (boot 120s ho gaya toh?). K8s ke paas iska FIRST-CLASS solution hai: probes. Platform se lado mat, use karo.' },
-              { t: 'livenessProbe lagao periodSeconds: 5 ke saath', good: false, explain: 'Khatarnak! Boot 90s + aggressive liveness = boot ke BEECH restart → CrashLoop jaisa pattern. Liveness traffic control karta hi nahi — yeh readiness ka kaam hai.' },
+              { t: 'App-ready check wala readinessProbe + 12×10s startupProbe lagao — 90s boot ko time do, phir traffic bhejo', good: true, next: 'end', explain: 'Readiness = boot ke waqt traffic band; startup = slow boot ka buffer. Ab rolling update mein naya pod tabhi endpoints mein aayega jab SACH mein ready hoga.' },
+              { t: 'Deploy script mein fixed 90s sleep rakho, phir traffic bhejo — readiness probe ki jagah ek timer kaafi hai', good: false, explain: 'Jugaad — aur fragile (boot 120s ho gaya toh?). K8s ke paas iska FIRST-CLASS solution hai: probes. Platform se lado mat, use karo.' },
+              { t: 'Sirf livenessProbe lagao (periodSeconds: 5) — process zinda dikhte hi traffic dena boot completion ka proof hai', good: false, explain: 'Khatarnak! Boot 90s + aggressive liveness = boot ke BEECH restart → CrashLoop jaisa pattern. Liveness traffic control karta hi nahi — yeh readiness ka kaam hai.' },
             ],
           },
           end: {
@@ -890,7 +890,7 @@ nodeSelector: { accelerator: nvidia }  # "aur mujhe GPU node CHAHIYE bhi"</pre>
           {
             q: '3 nodes, required anti-affinity (hostname), replicas: 4. Chautha pod ka kya hoga?',
             choices: [
-              'PENDING — required rule tootne nahi dega, aur koi 4th node hai nahi',
+              'Chautha Pod PENDING rahega — required anti-affinity tod nahi sakte, aur eligible chautha node nahi hai',
               'Scheduler majboori mein kisi node par doosra pod rakh dega aur event mein warning likh dega',
               'Apply par hi error aayega — anti-affinity ke saath replicas nodes se zyada nahi ho sakte',
               'Chautha pod control-plane node par chala jaayega — wahan anti-affinity check nahi hota',
@@ -1632,27 +1632,27 @@ kubectl delete deploy php-apache load --ignore-not-found; kubectl delete svc php
             sitrep: '$ kubectl get pods | grep -c Pending\n14\n$ kubectl describe pod web-new-abc | tail -3\nWarning FailedScheduling 30s (x12)\n  0/6 nodes are available: 6 Insufficient cpu.',
             text: 'HPA ne scale kiya (accha!) par 14 pods Pending — "Insufficient cpu" har node par. Sabse sahi IMMEDIATE move?',
             choices: [
-              { t: 'Cluster Autoscaler/node capacity check — nodes badhao (ya CA ka max limit unlock karo)', good: true, next: 'n2', explain: 'Pods elastic the, nodes nahi (IPL syndrome live!). CA hai toh uska max-nodes limit dekho — aksar wahi cap hota hai. Capacity ke bina scheduling ka koi jugaad nahi.' },
-              { t: 'Pending pods delete karo — alerts kam ho jayenge', good: false, explain: 'HPA phir banayega (desired state!) — aur delete karne se CAPACITY nahi aati. Alert chhupana ≠ problem solve karna.' },
-              { t: 'Requests ghata do sabke, sab fit ho jayenge', good: false, explain: 'Sale-peak par requests ghatana = overpacking = node-level OOM cascade ka invitation (Level 9 war-story!). Squeeze mat karo, capacity lao.' },
+              { t: 'Autoscaler ka max aur cloud capacity check karo — 14 Pending Pods ki requests ke liye usable node capacity badhao', good: true, next: 'n2', explain: 'Pods elastic the, nodes nahi (IPL syndrome live!). CA hai toh uska max-nodes limit dekho — aksar wahi cap hota hai. Capacity ke bina scheduling ka koi jugaad nahi.' },
+              { t: 'Pending pods delete karo — Deployment naye pods bana dega, fresh scheduling se bhari nodes par bhi jagah nikal aayegi', good: false, explain: 'HPA phir banayega (desired state!) — aur delete karne se CAPACITY nahi aati. Alert chhupana ≠ problem solve karna.' },
+              { t: 'Sab Pods ki CPU requests bina usage dekhe ghata do — scheduler ko free space dikhega, node capacity badhana taal sakte hain', good: false, explain: 'CPU requests ghatane se scheduler overpack kar sakta hai; CPU contention/throttling aur latency badhenge. Memory requests bhi andha-dhund ghatane se node-pressure eviction/OOM ka alag risk hai. Pehle measured demand aur capacity dekho.' },
             ],
           },
           n2: {
             sitrep: '+3 nodes aa gaye. Pending clear. Par ab:\n$ kubectl get pods -l app=payments\npayments-aaa   1/1  Running  3  12m   ← restarts?!\npayments-bbb   1/1  Running  4  12m\n\n$ kubectl describe pod payments-aaa | grep -A2 "Last State"\nLast State: Terminated\n  Reason:   OOMKilled\n  Exit Code: 137',
             text: 'Payments pods LOAD mein OOMKill ho rahe hain — restart hote hain, phir load se phir marte hain. 9 PM hai. Best move?',
             choices: [
-              { t: 'Memory limit turant badhao (rollout) — sale ke baad leak/profiling investigate', good: true, next: 'n3', explain: 'Mitigate first! Load-correlated OOM at peak = limit realistic karo ABHI (capacity ab hai). Leak vs legit growth ka post-mortem subah — Level 9 ka nuance, sahi time par lagaya.' },
-              { t: 'Liveness probe hata do taaki restarts band hon', good: false, explain: 'OOMKill kernel/cgroup se hota hai, liveness se NAHI — probe hatane se kill nahi rukega, sirf visibility jayegi. Galat layer ka ilaaj!' },
-              { t: 'Payments ke replicas ghata do — kam pods, kam OOM', good: false, explain: 'Ulta! Kam pods par WAHI traffic = har pod par ZYADA memory pressure = aur tez OOM. Peak par critical service ko chhota karna 🙈.' },
+              { t: 'Node headroom check karke memory request/limit Git se badhao — peak mitigate karo, phir leak/profile investigate', good: true, next: 'n3', explain: 'Mitigate first! Load-correlated OOM at peak = limit realistic karo ABHI (capacity ab hai). Leak vs legit growth ka post-mortem subah — Level 9 ka nuance, sahi time par lagaya.' },
+              { t: 'Liveness probe hata do — kubelet ke restart rukenge aur container memory limit paar karke bhi chalta rahega', good: false, explain: 'OOMKill kernel/cgroup se hota hai, liveness se NAHI — probe hatane se kill nahi rukega, sirf visibility jayegi. Galat layer ka ilaaj!' },
+              { t: 'Payments replicas ghata do — kam containers chalenge toh har bache hue Pod ki memory limit apne aap badh jayegi', good: false, explain: 'Ulta! Kam pods par WAHI traffic = har pod par ZYADA memory pressure = aur tez OOM. Peak par critical service ko chhota karna 🙈.' },
             ],
           },
           n3: {
-            sitrep: 'Payments stable ✓. Par ab search team ka message:\n"search results khaali aa rahe kuch users ko"\n\n$ kubectl get endpoints search-svc\nNAME         ENDPOINTS\nsearch-svc   10.244.2.61:8080     ← sirf EK? replicas toh 4 hain!\n\n$ kubectl get pods -l app=search\nsearch-aaa  1/1  Running   ← yeh endpoints mein hai\nsearch-bbb  0/1  Running   ← 0/1!\nsearch-ccc  0/1  Running\nsearch-ddd  0/1  Running',
+            sitrep: 'Payments stable ✓. Par ab search team ka message:\n"search timeouts aa rahe kuch users ko"\n\n$ kubectl get endpoints search-svc\nNAME         ENDPOINTS\nsearch-svc   10.244.2.61:8080     ← sirf EK? replicas toh 4 hain!\n\n$ kubectl get pods -l app=search\nsearch-aaa  1/1  Running   ← yeh endpoints mein hai\nsearch-bbb  0/1  Running   ← 0/1!\nsearch-ccc  0/1  Running\nsearch-ddd  0/1  Running',
             text: '4 mein se 3 search pods READY 0/1 — endpoints se bahar, saara load ek pod par. Diagnosis?',
             choices: [
-              { t: 'Naye pods (scale-up wale) abhi index load kar rahe hain — startupProbe unhe endpoints se sahi hi rok raha hai; ek warm pod overload na ho isliye thodi der min capacity / gradual scale manage karo', good: true, next: 'end', explain: 'Probes SAHI kaam kar rahe hain — booting pods ko traffic se bacha rahe hain! Problem timing ki hai: sale-peak par cold-start slow app. Ilaaj: pehle se warm replicas (minReplicas upar), ya boot fast karo. Probe hataana bhool ke bhi nahi!' },
-              { t: 'Readiness probes hata do — sab endpoints mein aa jayenge, load batega', good: false, explain: 'NAHI! 0/1 pods ka index abhi LOADED hi nahi — unhe traffic doge toh woh KHAALI/error results denge (issi liye complaint aayi thi!). Probe symptom nahi, protection hai.' },
-              { t: 'search-aaa ko delete karo, sab barabar ho jayenge', good: false, explain: 'Ekmatra WARM pod ko maar doge?! Phir 100% requests failing. 3 AM logic bhi isse better hota hai. 😅' },
+              { t: 'Naye pods index load kar rahe hain — startup/readiness gates rakho; warm capacity aur gradual scale se load sambhaalo', good: true, next: 'end', explain: 'Probes SAHI kaam kar rahe hain — booting pods ko traffic se bacha rahe hain! Problem timing ki hai: sale-peak par cold-start slow app. Ilaaj: pehle se warm replicas (minReplicas upar), ya boot fast karo. Probe hataana bhool ke bhi nahi!' },
+              { t: 'Readiness probes hata do — naye pods traffic lete hue index load kar lenge, aur warm Pod ka overload turant ghatega', good: false, explain: '0/1 pods ka index abhi loaded nahi — traffic doge toh incomplete/error results ka naya failure khulega. Abhi timeout warm Pod overload se hai; readiness gate ko hatana capacity fix nahi.' },
+              { t: 'Purana warm search-aaa Pod delete karo — saare replicas ek saath boot honge toh index version aur latency barabar hogi', good: false, explain: 'Ekmatra WARM pod ko maar doge?! Phir 100% requests failing. 3 AM logic bhi isse better hota hai. 😅' },
             ],
           },
           end: {

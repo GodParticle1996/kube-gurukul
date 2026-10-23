@@ -33,6 +33,9 @@ KG.registerLevels('intermediate', [   // 'beginner' | 'intermediate' | 'advanced
 ```
 
 Level track ke aakhir mein jud jaata hai. **Bas file save karo, browser refresh — done.**
+Data helpers ko `KG.meraHelper` par rakho, ya file ko IIFE mein lapeto. Alag script tags
+aur validator ek global scope share karte hain; top-level `const`/`function` names takra sakte hain.
+Hinglish mein object/command ka naam likho; vague "yeh/woh/isse" se learner ko guess karna padta hai.
 
 ### Track ke BEECH mein level daalna (boss se pehle)
 
@@ -190,22 +193,43 @@ Sab diagrams ek saath dekhne ke liye: `gallery.html`.
               respawn: { ...podSpec } } ],   // delete par ReplicaSet naya banaye
     deployments: [...], services: [...], endpoints: [...], configmaps: [...],
     events: [...], hpas: [...], statefulsets: [...], // jo tables chahiye
+    apiError: s => s.cluster.apiFixed ? null : 'Unable to connect to the server: ...',
   },
-  files: {   // kubectl apply -f <naam> ke fixes ('ls' se dikhte hain)
+  files: {   // 'ls' / 'cat <naam>' se discover karo
     'fix-x.yaml': { desc: '...', apply: s => { /* s.cluster mutate karo */ return 'output'; } },
+    'fix-node.sh': { desc: 'Node repair', content: '#!/bin/sh\n# learner ko asli steps dikhao',
+      apply: s => { s.cluster.apiFixed = true; return 'Node repair complete'; } },
   },
   responses: [   // KISI BHI command ko script karo (builtins se pehle match hota hai)
     { re: /^kubectl rollout undo deployment\/web$/, out: 'text ya fn(s)', mutate: s => {...} },
   ],
   success: s => s.cluster.pods.every(p => p.status === 'Running'),  // mission complete kab
   successText: 'Jeetne par seekh (HTML)',
-  hints: [ 'Hint 1', 'Hint 2' ] }   // har hint −5 XP
+  hints: [ 'Hint 1', 'Hint 2' ],    // har hint −5 XP
+  solution: [ 'kubectl get pods', 'bash fix-node.sh', 'kubectl apply -f fix-x.yaml' ] }
 ```
 
 Builtin commands jo free milte hain: `get` (pods/deploy/svc/nodes/cm/endpoints/events/
 sts/ds/ing/netpol/hpa/pvc/all, `-o wide`), `describe`, `logs` (`--previous`),
 `delete pod`, `apply -f`, `exec`, `top`, plus `help`/`ls`/`clear`/`hint`.
 Kuch aur chahiye (scale, rollout, argocd, koi bhi command)? → `responses` mein regex se script karo.
+
+`solution` ko actual goal/tasks ke mutabik likho: validator asli renderer mein commands replay
+karta hai aur **win aakhri command par** hona chahiye. Jeetne ke baad input disable hota hai;
+verification command learner se chalwana hai toh task banao, `successText` mein mat chhupao.
+Shell chains ke andar bhi har command alag history entry aur reconcile tick banata hai.
+
+`.yaml` sirf cluster objects ke liye; node/etcd/certificate/git repair `.sh` + `bash fix-node.sh`
+se model karo. Script ka `content` learner ko steps dikhata hai; simulator `apply(sim)` callback
+chalata hai, asli shell nahi. `kubectl apply -f fix-node.sh` reject hota hai. `sudo` strip hota hai.
+`cluster.apiError` string ya `(sim) => string|null` API-dependent kubectl commands ko rokta hai;
+local `help`, `version --client` aur `config` chalte hain. Scripted `responses` builtins se pehle
+match hote hain, isliye API-down scenario mein kubectl override soch kar do.
+
+`responses[].out(sim, m)` mein captures ko `m[1] || ''` se guard karo (validator `out(sim, [])`
+bhi call karta hai). Fix ke baad custom `describe`, events aur logs update karo. CrashLoopBackOff
+mein `logs` last crashed run dikha sakta hai (`prevLogs` fallback); `--previous` zero restarts par
+error deta hai, never-started containers ka waiting error alag hai.
 
 ### ⛵ Helm missions (helmsim.js)
 
@@ -227,9 +251,10 @@ cluster: {
       lint: ['==> Linting ./shop', …], lintFailed: false,
       needsDeps: true, deps: [ { name, version, repository, condition } ],
       render: (vals, rel) => 'rendered yaml', // helm template / get manifest
+      renderError: 'template: shop/templates/deployment.yaml: ...', // broken chart; fix par clear karo
       notes: 'NOTES.txt text',
       onInstall:  (sim, rel) => { /* pods banao */ },
-      onUpgrade:  (sim, rel, prev) => { /* return false = upgrade FAIL (atomic test!) */ },
+      onUpgrade:  (sim, rel, prev) => { /* return false = upgrade FAIL (rollback test) */ },
       onRollback: (sim, rel, target) => {},
       onUninstall:(sim, rel) => {},
       testOut: 'helm test output', testFailed: false,
@@ -238,8 +263,13 @@ cluster: {
 }
 ```
 
+Helm 4 flavoured subset: `--rollback-on-failure` aur `--force-replace` use karo.
+Helm 3 ke `--atomic` / `--force` aliases warning dete hain; `--recreate-pods` reject hota hai.
+Chart ka `renderError` `template`, `install`, `upgrade` ko fail karata hai; `lintFailed` lint ka
+alag result hai. Lint pass ko runtime correctness ka proof mat banao.
+
 Free milta hai: `repo add/list/update`, `search repo`, `install` (+`--dry-run`),
-`upgrade` (+`--install --atomic --reuse-values`), `rollback`, `history`, `status`,
+`upgrade` (+`--install --rollback-on-failure --reuse-values`), `rollback`, `history`, `status`,
 `list`, `uninstall`, `get values|manifest|notes|all` (+`--all`, `--revision`),
 `template`, `lint`, `show values|chart`, `dependency list|update`, `test`,
 `diff upgrade`, `package`, `push oci://…`, `version`.
@@ -293,6 +323,7 @@ KG.addCard('custom-1', 'Front sawal?', 'Back jawab', '🏷️ Tag');
 - [ ] Incident: har non-end node mein exactly ek `good: true` choice + `next` valid
 - [ ] Terminal: `success()` fresh cluster par crash nahi karta
 - [ ] Terminal: `success()` ko `KG.allOf(TASKS)` se banaya (neeche 🪤 jaal dekho)
+- [ ] Terminal: `solution` replay last command par win karta hai; fix ke baad output stale nahi hai
 - [ ] Slider: default knob values par goal poora NAHI hona chahiye, aur kisi na kisi
       combination par poora hona chahiye — validator dono check karta hai
 - [ ] Triage: kam se kam ek `clue: true` command hai, aur koi duplicate `cmd` nahi
@@ -341,7 +372,7 @@ har command ke baad `reconcile()` chalta hai:
 
 ```js
 cluster: {
-  karpenter: { enabled: true, tick: 0, log: [] },
+  karpenter: { enabled: true, tick: 0, log: [], launchTicks: 4, consolidateTicks: 5 },
   nodepools: [ { name, weight, nodeClassRef,
     requirements: [ { key: 'karpenter.sh/capacity-type', operator: 'In', values: ['spot'] },
                     { key: 'karpenter.k8s.aws/instance-category', operator: 'In', values: ['c','m','r'] } ],
@@ -350,17 +381,37 @@ cluster: {
     disruption: { consolidationPolicy: 'WhenEmptyOrUnderutilized' } } ],
   ec2nodeclasses: [ { name, amiFamily, role, drifted: false } ],
   nodeclaims: [],                          // controller khud bharta hai
-  pods: [ { name, status: 'Pending', requests: { cpu: '3', memory: '6Gi' },
+  pods: [ { name, status: 'Pending', requests: { cpu: '3', memory: '6Gi', 'nvidia.com/gpu': '0' },
             tolerations: [ { key } ], doNotDisrupt: true } ],
 }
 ```
 
-Controller khud karta hai: Pending pod → NodeClaim → (agla command) Node Ready → pod
+Controller khud karta hai: Pending pod → NodeClaim (`Ready: Unknown`) → Node Ready → pod
 scheduled; khaali/kam-bhare nodes par consolidation (`doNotDisrupt` respect karta hai);
 EC2NodeClass `drifted: true` par nodes drifted mark. Failure reasons pod ke `describe`
 mein aate hain (no NodePool match / koi instance type fit nahi / limit reached) — aur
 har reconcile par **dobara evaluate** hote hain, isliye learner kisi bhi order mein fix
 kare, kaam karega. `KG.karpenter.cost(sim)` se monthly cost estimate milta hai.
+
+`launchTicks` = NodeClaim ke janam ke baad Ready hone tak reconciles; Ready se pehle NODE
+column blank hai. `consolidateTicks` = node ko disruption candidate rehne ke liye required
+reconciles (`candidateSince` tracks eligibility; workload badle toh timer reset hota hai).
+Defaults `launchTicks: 1`, `consolidateTicks: 0` hain; mission mein delay badhao
+taaki learner Pending/Unknown dekhe aur workload protect kar sake. Ticks terminal commands
+hain, wall-clock seconds nahi; real Karpenter asynchronously reconcile karta hai.
+
+NodePools weight order mein try hote hain; taint/resource/limit failure par agla pool try hota hai.
+Instance requirements `In/NotIn/Gt/Lt/Exists/DoesNotExist` support karte hain: category,
+generation, family, size, CPU, GPU count/manufacturer, instance type, architecture, OS aur
+capacity type. Well-known `nodeSelector` labels match hote hain; arbitrary labels ka support limited hai.
+CPU/memory/GPU requests placement aur consolidation mein count hote hain; GPU demand ke liye
+`g5` types aur compatible toleration chahiye. Real EKS par NVIDIA AMI ke saath device plugin /
+GPU Operator bhi chahiye; simulator GPU driver install nahi karta.
+
+Yeh limited instance catalogue, request-fit aur consolidation model teaching ke liye hai.
+Launch ke liye fixed 200m CPU + 240Mi overhead, illustrative prices, sequential provisioning aur command-based time ko real
+AWS availability, billing, full scheduler, PDB/disruption budgets ya production capacity proof
+mat samjho. Production choices ko real cluster/events aur provider documentation se verify karo.
 
 ## 🪤 Do jaal jo pehle bhi pakde ja chuke hain
 
@@ -392,11 +443,12 @@ Naya content add karne ke baad **hamesha**:
 
 ```bash
 node validate.js
+node tools/replay-missions.js run
 ```
 
 Yeh pakadta hai: missing visuals, toote fill-tokens, unreachable incident nodes,
 answer-index out of range, khaali bins, pre-solved terminal missions, callbacks jo
-clone mein kho jaayein, aur simulators ke regressions.
+clone mein kho jaayein, solution replay aur simulators ke regressions.
 
 **Labs ke liye validator sirf structure nahi dekhta — labs ko sach mein RENDER karta hai
 aur unke goals ko solvable saabit karta hai:**
@@ -436,3 +488,88 @@ Laptop par asli processes chalwane wala stage (System Gurukul / SQL Gurukul jais
   ek mini cluster hai (kubelet ke asli probe niyam, endpoints, Service). Har README "Asli cluster par" wale YAML ke saath.
 - Purane level mein naya video → `KG.extendLevel(id, { objectives, lesson, stages, success, cards, interview, homework })`
   (`core.js`), level na mile toh ERROR. Batch files (`data-ext-sdd.js`) sabse aakhir mein, `app.js` se pehle load hoti hain.
+
+## 12. Decision Dojo (`decisions.js` + `data-decisions.js`)
+
+Abhi **15 trees aur 93 practice scenarios** hain. Tree data IIFE ke andar register karo:
+
+```js
+KG.registerDecisions([{
+  id: 'mera-decision', icon: '🧭', title: 'Kab kaunsa?', short: 'Topic',
+  tldr: 'Decision ki ek-line rule', levels: ['mera-topic'], labs: ['01-crashloop-oom'],
+  start: 'q1',
+  nodes: {
+    q1: { q: 'Constraint kya hai?', why: 'Constraint choice ko kaise badalta hai',
+      options: [{ t: 'Stable identity chahiye', next: 'stateful' }, { t: 'Stateless replicas', next: 'deploy' }] },
+    stateful: { leaf: true, pick: 'StatefulSet', icon: '🗄️', one: 'Stable identity + storage',
+      why: 'Ordinal identity workload ki requirement hai', when: ['Stable identity'],
+      avoid: ['Sirf interchangeable replicas'], gotchas: ['Backup aur replication app ki zimmedari hain'],
+      yaml: 'kind: StatefulSet', example: 'Database replicas' },
+    deploy: { leaf: true, pick: 'Deployment', icon: '📦', one: 'Interchangeable replicas',
+      why: 'Har replica same traffic serve karta hai', when: ['Stateless API'],
+      avoid: ['Ordinal identity chahiye'], gotchas: ['Persistent volume se app apne-aap stateful-safe nahi banta'] },
+  },
+  compare: { cols: ['Need', 'StatefulSet', 'Deployment'], rows: [['Pod identity', 'Stable ordinal', 'Replaceable']] },
+  scenarios: [{ s: 'Replicas ko stable per-pod hostname chahiye.', answer: 'stateful',
+    explain: 'Stable ordinal + headless Service per-pod DNS dete hain.' }],
+}]);
+```
+
+Har edge valid node tak jaaye, har leaf reachable ho aur leaf ka `pick` tree ke andar unique ho.
+Scenario ka `answer` leaf ID hai; practice options leaves se bante hain. Scenario mein decisive
+constraint likho, options ki length se jawab reveal mat karo. Renderer recommendation, full map,
+comparison aur answer ka decision-route dikhata hai. Mixed practice 8 scenarios leti hai;
+galat jawab Revision Dojo mein mistake card banta hai. `levels`/`labs` links dono taraf sahi IDs do.
+
+## 13. Real Labs (`reallabs.js` + `real-labs/`)
+
+Abhi **15 lab directories** hain. Naye lab mein `README.md`, `verify.sh` aur `solution/` banao;
+broken setup YAML/script, expected output, hints, decision recap aur cleanup document karo.
+[`real-labs/README.md`](real-labs/README.md) mein setup aur verification helpers diye hain.
+Phir `KG.realLabs` mein unique `id`, `num`, `title`, `mins`, `concept`, `decision`, related
+`levels` aur `trees` register karo. Default start `kubectl apply -f setup.yaml`, cleanup
+`kubectl delete ns lab<num>` hai; scripts/extra cluster resources wale labs explicit overrides dein.
+Catalogue ke start/cleanup commands lab README mein bhi match hone chahiye.
+
+App lab commands copy karwata hai aur completion localStorage mein **self-mark** karta hai;
+browser cluster se connected nahi hai. `verify.sh` learner ke terminal par actual assertions
+chalata hai. `node validate.js` catalogue/folders/links/commands check karta hai; manifests ko
+real cluster par execute nahi karta. Purana kind v1.32 PASS record nayi lab/change ka proof nahi;
+fresh cluster verification kiya ho toh cluster/version aur observed result saaf record karo.
+
+## 14. Resume + mood picker
+
+`KG.saveResume(session, stageIdx)` challenge boundaries par level ID, challenge index, score
+aur replay flag save karta hai. `KG.getResume()` missing level ko reject karta hai;
+`resumeLevel()` changed stage list ke liye index clamp karta hai. Stable level IDs rakho;
+stages reorder karne par existing checkpoint ka meaning badal sakta hai. Mid-challenge terminal,
+board ya typed input persist nahi hota: current challenge fresh renderer se khulta hai.
+
+Home ka mood picker: ~5 min → due cards ya mixed decisions; 15–20 min → resume ya next
+unlocked unfinished level; 45 min+ → pehla unmarked Real Lab. `realLabsDone` mark actual cluster
+verification ka substitute nahi hai. Saari progress browser/origin ke localStorage mein hai.
+
+## 15. Content tools
+
+```bash
+node tools/replay-missions.js list           # terminal + interview mission keys / solution status
+node tools/replay-missions.js info kk-pending
+node tools/replay-missions.js run            # saare stored solutions; pass/fail/no-solution
+node tools/replay-missions.js run "" 'karpenterboss|t0' # transcript + task status
+node tools/replay-missions.js run /tmp/solutions.json 'karpenterboss|t0'
+node tools/mcq-bias.js                       # per-track answer-length heuristic
+node tools/mcq-bias.js list beginner         # flagged keys + option lengths
+node tools/mcq-bias.js --kind=incident       # incident good-vs-false options
+node tools/mcq-bias.js --kind=decision       # expected bias of sampled Dojo options
+node tools/mcq-bias.js --json                # visible lengths + audit records
+```
+
+Optional solutions JSON ka shape `{ "level-id|t0": ["command", "command"] }` hai;
+interview missions ke keys `level-id|iv0` hain. Replay early win aur incomplete goal report
+karta hai; `node validate.js` final gate hai. Saare missions ko solution chahiye; final command par
+win aur saare checklist tasks done hone chahiye. Validator duplicate fill answers, matching/bin
+items aur interview choices reject karta hai. Per-track MCQ length-bias ceiling 10% hai.
+Bias tool MCQ, incident aur Decision Dojo practice measure karta hai: visible answer 1.15x sab
+distractors se lamba, ya 0.85x sabse chhote distractor se chhota ho toh flag. Dojo mein four-wrong-leaf
+sampling ki exact expected probability report hoti hai. Yeh diagnostic hai: report clean hone se
+factual accuracy ya teaching quality prove nahi hoti; plausible distractors aur explanations review karo.

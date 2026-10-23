@@ -13,7 +13,7 @@ explorer.exe index.html        # WSL se
 # ya Windows Explorer mein index.html double-click
 
 # Option 2: serve karo
-cd kubegurukul
+cd kube-gurukul
 python3 -m http.server 8000
 # → http://localhost:8000
 ```
@@ -73,15 +73,29 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
   🚨 3AM-pager incident decision-trees · 🧩 **chart workbench** (values + template
   side-by-side — batao Helm kya render karega) · 🖥️ **terminal simulator**:
   - **kubectl** — CrashLoopBackOff, OOMKilled, no-endpoints, RBAC Forbidden, drift…
-  - **helm** — asli release engine: `install/upgrade/rollback/history/get values/
-    template/lint/dependency/package/push/test`, values precedence, `--atomic`
-    auto-rollback, stuck `pending-upgrade` releases, dependency gating
+  - **helm** — Helm 4 flavoured release simulator: `install/upgrade/rollback/history/get values/
+    template/lint/dependency/package/push/test`, values precedence, `--rollback-on-failure`
+    auto-rollback, `--force-replace`, stuck `pending-upgrade` releases, dependency gating.
+    Purane `--atomic` / `--force` flags warning ke saath chalte hain; `--recreate-pods` hata hai
   - **argocd** — `app list/get/diff/sync (--prune)/history/rollback/set`, `appset`,
     `proj`, sync waves, failed syncs, drift + selfHeal, aur
     `kubectl argo rollouts get/promote/abort` (canary weights live badalte hain)
-  - **karpenter** — ek LIVE controller: har command ke baad reconcile hota hai —
+  - **karpenter** — browser mein controller simulation: har command ke baad reconcile hota hai —
     Pending pod → NodeClaim → EC2 → Node Ready → pod scheduled, aur khaali/kam-bhare
-    nodes par consolidation (`do-not-disrupt` respect karte hue)
+    nodes par consolidation (`do-not-disrupt` respect karte hue). CPU/memory/GPU fit,
+    requirements, weighted NodePool fallback aur configurable launch/consolidation delay
+    decisions ko visible banate hain. Ticks commands hain; EC2 timing/prices illustrative hain
+
+- **🧭 Decision Dojo — 15 trees, 93 practice scenarios:** sawal → wajah → recommendation;
+  saath mein poora map, X vs Y table, production gotchas, YAML aur related levels/labs.
+  Topic practice ya 8-scenario mixed round khelo; galat jawab Revision Dojo card banta hai
+
+- **🧪 Real Cluster Labs — 15 folders** in [`real-labs/`](real-labs/README.md): broken scenario,
+  expected output, hints, `verify.sh`, `solution/` aur cleanup. Docker + kind/minikube +
+  kubectl chahiye; Helm lab ke liye Helm bhi. Browser commands dikhata hai; commands tumhare
+  terminal par chalte hain. App ka "ho gaya" button self-mark hai; cluster checks `./verify.sh`
+  karta hai. Lab README ka kind v1.32 verification pehle ka recorded result hai;
+  `node validate.js` real cluster ya current machine par lab execution verify nahi karta
 
 - **Interactive labs (4)** — `labs.js`. Inme "sahi option yaad karo" nahi hai;
   inme tum kuch **chalate** ho aur simulator naya number ya naya output deta hai:
@@ -101,12 +115,32 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
   - 🎲 **Surprise Pop Quiz** — naye level se pehle purane concepts ka random quick-check
   - 🔥 **Daily Streak** — roz khelo, flame badhao
 
-- **Progression:** XP per first-try answer, perfect bonuses, 11 Gurukul ranks
+- **Progression:** XP per first-try answer, perfect bonuses, 13 Gurukul ranks
   (🐣 Pod Shishya → 👑 Kubernetes Mahaguru), per-level badges + 1–3 stars,
   har track ka certificate.
 
-- **Progress localStorage mein save hota hai** — tab band karo, baad mein wahin se continue.
-  Reset home screen se.
+- **Resume-anywhere:** localStorage mein challenge ke shuru/khatam ka checkpoint aur score
+  save hota hai; Home se continue karo. Adhoore challenge ka terminal/board state dobara
+  shuru hota hai. Progress isi browser/origin mein rehta hai; reset Home se
+- **⚡ Mood picker:** ~5 min → due flashcards, warna mixed decision practice;
+  15–20 min → saved challenge, warna agla unlocked level; 45 min+ → agla unfinished Real Lab.
+  Time labels planning estimates hain
+
+Terminal mission authors ke liye: `solution: ['cmd', ...]` automated replay ka proof hai
+(win aakhri command par); `.sh` fixes `bash fix.sh` se, YAML fixes `kubectl apply -f` se.
+`cluster.apiError` API outage simulate karta hai; chart ka `renderError` template/install/upgrade
+fail karata hai. Puri contract aur examples [`EXTENDING.md`](EXTENDING.md) mein hain.
+
+Developer tools:
+
+```bash
+node tools/replay-missions.js list
+node tools/replay-missions.js info karpenterboss
+node tools/replay-missions.js run
+node tools/replay-missions.js run "" 'karpenterboss|t0' # ek mission ka transcript
+node tools/mcq-bias.js
+node tools/mcq-bias.js list beginner
+```
 
 ## App extend karna (naya concept aaya?)
 
@@ -125,8 +159,11 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `helmsim.js` | helm simulator (releases, revisions, values merge, lifecycle) |
 | `argosim.js` | argocd simulator (Applications, sync/health, waves, prune, Rollouts) |
 | `karpentersim.js` | Karpenter controller sim (provisioning, consolidation, cost) |
+| `decisions.js` · `data-decisions.js` | Decision trees, comparison tables, scenario practice + related content |
+| `reallabs.js` · `real-labs/` | Browser catalogue + real-cluster README/setup/verify/solution files |
+| `tools/replay-missions.js` · `tools/mcq-bias.js` | Mission transcripts + solution checks; answer-length bias report |
 | `validate.js` | **`node validate.js`** — content + engine + simulator tests.<br>Labs ko sach mein **render** karta hai, unke goals ko **solvable saabit** karta hai (slider ka knob sweep, board ka backtracking), aur **non-Latin script leaks** pakadta hai |
-| `app.js` | Screens: home, track maps, stages, interview, Dojo, pop quiz, certificates |
+| `app.js` | Screens: home + mood/resume, track maps, stages, interview, Revision Dojo, pop quiz, certificates |
 | `visuals.js` | 58 concept diagrams (`VISUALS[levelId]`) |
 | `data-core.js` | Ranks + track definitions |
 | `data-beginner.js` · `data-intermediate.js` · `data-advanced.js` · `data-helm.js` · `data-argocd.js` · `data-karpenter.js` · `data-kodekloud.js` | Level content |

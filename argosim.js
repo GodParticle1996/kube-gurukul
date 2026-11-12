@@ -350,9 +350,10 @@ ${ro.analysisMsg ? '\nANALYSIS:\n  ' + ro.analysisMsg : ''}`);
       const id = parseInt(a[2] || f.kv.to, 10);
       const entry = (app.history || []).find(x => x.id === id);
       if (!entry) { print('err', `Error: application '${app.name}' does not have history id ${a[2] || '?'}\n(argocd app history ${app.name} se IDs dekho)`); return true; }
-      if (app.syncPolicy && app.syncPolicy.automated && app.syncPolicy.automated.selfHeal) {
+      // asli argocd: auto-sync ON ho (selfHeal ho ya na ho) toh rollback shuru hi nahi hota
+      if (app.syncPolicy && app.syncPolicy.automated) {
         print('err',
-`Error: rollback cannot be performed — application has automated sync with selfHeal enabled.
+`FATA[0000] rpc error: code = FailedPrecondition desc = rollback cannot be initiated when auto-sync is enabled
 
 ⚠️  GitOps ka asli sabak: auto-sync ON hai toh rollback ka matlab hai GIT ko peeche le jaana:
     git revert <commit> && git push   → ArgoCD khud sync kar dega.

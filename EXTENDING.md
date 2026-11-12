@@ -158,7 +158,7 @@ Sab diagrams ek saath dekhne ke liye: `gallery.html`.
   summary: 'HTML — aakhir mein' }
 
 // 🧲 BOARD — pod ko node par rakho, asli scheduler predicates (labs.js)
-// Engine khud check karta hai: nodeSelector → taints → podAntiAffinity → capacity.
+// Engine khud check karta hai (asli scheduler ka order): taints → nodeSelector → capacity → podAntiAffinity.
 // Pod select karte hi HAR node ✅/❌ + asli FailedScheduling wajah dikhata hai.
 { type: 'board', title: '...', instructions: '...', goal: '...',
   nodes: [ { id: 'n1', name: 'node-1', labels: { type: 'gpu' },
@@ -573,3 +573,63 @@ Bias tool MCQ, incident aur Decision Dojo practice measure karta hai: visible an
 distractors se lamba, ya 0.85x sabse chhote distractor se chhota ho toh flag. Dojo mein four-wrong-leaf
 sampling ki exact expected probability report hoti hai. Yeh diagnostic hai: report clean hone se
 factual accuracy ya teaching quality prove nahi hoti; plausible distractors aur explanations review karo.
+
+## 16. 🧯 Lab aur simulator ki galtiyan jo review mein pakdi gayin (2026-11-11)
+
+Yeh section un galtiyon ki list hai jo ek poore review mein mili aur theek hui. Har point mein teen cheezein hain:
+**kya galat tha**, **kyun galat tha** (asli Kubernetes/Helm/ArgoCD kya karta hai), aur **agli baar kaise bachein**.
+Naya lab, mission ya simulator feature likhne se pehle yeh list padho. `node validate.js` in mein se sirf wahi pakadta hai
+jiske liye test likha gaya hai (16.1, 16.2, 16.3) — baaki tumhe khud dekhna hai.
+
+### 16.1 Scheduler ka "pehla reason" order asli order se alag tha (`labs.js` → `fitCheck`)
+
+- **Galti:** board lab nodeSelector → taint → anti-affinity → capacity ke order mein check karta tha.
+- **Asli order** (kube-scheduler ke default Filter plugins): `TaintToleration` → `NodeAffinity` (nodeSelector) →
+  `NodeResourcesFit` (CPU/memory) → `InterPodAffinity` (anti-affinity).
+- **Kyun maayne rakhta hai:** scheduler har node ka **sirf pehla** fail hua reason likhta hai. Tainted node par label bhi
+  galat ho toh asli event `untolerated taint` kehta hai, `didn't match node selector` nahi. Order galat = learner ko
+  woh message dikhta hai jo asli cluster kabhi nahi dega.
+- **Bachav:** `FailedScheduling` ka koi bhi nakli message likhne se pehle har node ke liye isi order mein socho ki
+  pehla fail kaunsa hai. Real lab 05 mein `setup.sh` ab taint **pehle** lagata hai aur pods **baad** mein banata hai;
+  ulta order hone par pehli scheduling attempt taint ke bina hoti thi aur README ka expected message run-to-run badalta tha.
+
+### 16.2 Karpenter simulator har pending pod ke liye alag node bana raha tha (`karpentersim.js`)
+
+- **Galti:** 5 chhote pending pods → 5 NodeClaims. Lesson khud kehta hai "5 chhote pods = 1 node (bin-packing)".
+- **Asli Karpenter:** pending pods ko ek batch window mein jama karta hai aur kam se kam nodes mein pack karta hai.
+- **Bachav:** simulator ka behaviour lesson ke daave se **milao** — ek chhoti script se (jaise validator ka
+  `karpenter: pending pods ek batch mein bin-pack hote hain` test). Agar lesson kuch kehta hai aur simulator kuch aur
+  karta hai, toh learner simulator par bharosa karega.
+- Consolidation ka `<40% CPU aur <=2 pods` wala candidate rule simulator ka shortcut hai, Karpenter ka niyam nahi.
+  Lesson mein kabhi "40%" ko Karpenter ki setting mat likhna.
+
+### 16.3 Helm aur ArgoCD ke do niyam aadhe the (`helmsim.js`, `argosim.js`)
+
+- **Helm:** `helm upgrade <rel> <chart>` **bina kisi `-f`/`--set` ke** pichhli release ki user values dobara lagata hai.
+  Ek bhi value flag aaya → values naye sire se (chart defaults + abhi wali values). `--reset-values` → sirf defaults.
+  Simulator pehle har upgrade par reset karta tha. "Har upgrade par values naye sire se" likhte waqt yeh apvaad saath likho.
+- **ArgoCD:** `argocd app rollback` tab fail hota hai jab auto-sync ON ho — `selfHeal` ho ya na ho. Simulator sirf
+  `selfHeal` par rokta tha. Asli error: `rollback cannot be initiated when auto-sync is enabled`.
+- **Bachav:** kisi tool ka niyam likhne se pehle uska **ulta case** bhi poochho ("aur agar flag na do toh?",
+  "aur agar selfHeal off ho toh?"). Aadha niyam sabse aam conceptual bug hai.
+
+### 16.4 Real labs (`real-labs/`) — commands jo race par nirbhar the
+
+- `kubectl delete pod X` ke turant baad `kubectl wait --for=condition=Ready pod/X` mat likho. Naya pod abhi bana na ho
+  toh `wait` turant `NotFound` se fail hota hai. Controller ke level par ruko: `kubectl rollout status sts/<naam>`
+  (ya `deploy/<naam>`).
+- Expected output mein node ki **ginti** ("2 Insufficient cpu") tabhi likho jab setup ka order use pakka karta ho.
+- "Hamesha / kabhi nahi" wale vaakya ki shart saath likho. Do jagah shart chhooti thi:
+  "Single-replica + PDB = drain kabhi nahi hoga" sirf tab sach hai jab PDB 0 disruption allow kare
+  (`minAvailable: 1` ya `maxUnavailable: 0`). "Quota bhara ho toh rollout hamesha atka" sirf tab jab `maxUnavailable` 0 ho
+  (default 25% chhote Deployment mein round hokar 0 ban jaata hai).
+- Is machine par Docker, kind, kubectl aur helm **nahi** hain. Real labs sirf padh kar review hue hain, asli cluster par
+  dobara nahi chale. Naya real lab ya badlaav "tested" tabhi likho jab sach mein cluster par chalaya ho, aur version likho.
+
+### 16.5 Lab ka design — check karne ki chhoti list
+
+1. Har expected output asli run se ho, ya saaf likha ho ki yeh simulator/model hai.
+2. Jo cheez emulator/simulator nahi karta, woh usi step ke paas likho jahan learner use dekhega — neeche ki "limits" list mein nahi.
+3. Har "galat" option/message asli tool ka asli message ho (flag ka naam, error ka text, column ka order).
+4. Ek command, ek kaam: learner ko ek line paste karke do terminal ka kaam mat karwao.
+5. Simulator mein naya niyam jode toh validator mein us niyam ka ek test bhi jodo (lesson ka daava = test ka assert).

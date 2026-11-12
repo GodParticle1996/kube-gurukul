@@ -107,7 +107,7 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
   - 🎬 **Flow player** — packet ka safar, container ke chaar padav, ya API request ka raasta —
     ek-ek kadam, play/pause, aur beech mein sawaal jinka jawab diye bina flow aage nahi badhta
   - 🧲 **Scheduler board** — pod chuno, har node turant ✅/❌ aur asli `FailedScheduling` wajah
-    dikha deta hai. Asli predicates: nodeSelector → taints → podAntiAffinity → capacity
+    dikha deta hai. Asli predicates, asli order: taints → nodeSelector → capacity → podAntiAffinity
 
 - **Bhoolne ka ilaaj (retention system):**
   - 🧘 **Revision Dojo** — spaced-repetition flashcards (1→3→7→16→35 din intervals);

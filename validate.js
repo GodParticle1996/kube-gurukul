@@ -1169,6 +1169,16 @@ t('helm 4: --rollback-on-failure = --atomic (warning ke saath), --recreate-pods 
   assert(/use --force-replace/.test(run(sim, 'helm upgrade a ./a --force')), 'force rename');
   assert(/v4\./.test(run(sim, 'helm version')), 'version');
 });
+t('helm upgrade values: koi flag nahi = pichhli values; ek bhi --set = naye sire se; --reset-values = defaults', () => {
+  const sim = { cluster: { releases: [], repos: [], charts: { './a': { name: 'a', version: '1', appVersion: '1', defaults: { r: 1, debug: false } } } }, history: [] };
+  run(sim, 'helm install a ./a --set r=10');
+  run(sim, 'helm upgrade a ./a');
+  assert(sim.cluster.releases[0].values.r === 10, 'bina value flag ke upgrade ne pichhli --set value gira di (asli helm use carry karta hai)');
+  run(sim, 'helm upgrade a ./a --set debug=true');
+  assert(sim.cluster.releases[0].values.r === 1 && sim.cluster.releases[0].values.debug === true, 'ek --set aate hi values naye sire se banni chahiye');
+  run(sim, 'helm upgrade a ./a --reset-values');
+  assert(sim.cluster.releases[0].values.debug === false, '--reset-values ko chart defaults lagane chahiye');
+});
 t('karpenter kubectl: asli columns, -o wide, -o yaml (v1 fields), describe, -L labels, top nodes', () => {
   const T = term({ karpenter: { enabled: true, tick: 0, log: [] }, events: [], nodeclaims: [],
     nodes: [{ name: 'ip-1', status: 'Ready', roles: '<none>', age: '1h', version: 'v1.30.2', karpenter: true, nodepool: 'default',
@@ -1276,6 +1286,25 @@ t('stage: abandoned renderer callback cannot overwrite Home or another session',
     current({ firstTry: 1, total: 1 }); current({ firstTry: 1, total: 1 });
     assert(KG.session.firstTry === 1 && KG.session.total === 1, 'current callback remains one-shot');
   } finally { delete KG.renderers['callback-test']; KG.session = previous; KG.clearResume(); }
+});
+t('karpenter: pending pods ek batch mein bin-pack hote hain (5 chhote pods = 1 NodeClaim), aur board asli filter order maanta hai', () => {
+  const pods = n => Array.from({ length: n }, (_, i) => ({ name: 'web-' + i, status: 'Pending', ready: '0/1', requests: { cpu: '500m', memory: '1Gi' } }));
+  const mk = (n, limits) => ({ history: [], cluster: { karpenter: { enabled: true }, nodes: [], nodeclaims: [], pods: pods(n),
+    nodepools: [{ name: 'default', limits, requirements: [{ key: 'karpenter.sh/capacity-type', operator: 'In', values: ['on-demand'] }] }] } });
+  const a = mk(5, { cpu: 100 });
+  KG.karpenter.reconcile(a);
+  assert(a.cluster.nodeclaims.length === 1, '5 pods ke liye ' + a.cluster.nodeclaims.length + ' NodeClaims bane — 1 hona chahiye');
+  assert(a.cluster.nodeclaims[0].cpu >= 2.7, 'NodeClaim paanchon pods + DaemonSet overhead ke liye chhota hai');
+  assert(a.cluster.nodepools[0].used.cpu === a.cluster.nodeclaims[0].cpu, 'NodePool used.cpu resize ke baad galat');
+  KG.karpenter.reconcile(a);
+  assert(a.cluster.nodes.length === 1 && a.cluster.pods.every(p => p.status === 'Running'), 'paanchon pods ek hi node par Running hone chahiye');
+  const b = mk(5, { cpu: 4 });           // limit 4 CPU: ek 4-CPU node ban sakta hai, doosra nahi
+  KG.karpenter.reconcile(b);
+  assert(b.cluster.nodeclaims.reduce((sum, n) => sum + n.cpu, 0) <= 4, 'bin-packing ne NodePool limit tod di');
+  // board: tainted node par label bhi galat ho → asli scheduler "taint" bolta hai (TaintToleration pehle chalta hai)
+  const v = KG.fitCheck({ id: 'p', cpu: 1, mem: 1, nodeSelector: { type: 'gpu' } },
+    { id: 'n', labels: {}, taints: [{ key: 'k', value: 'v', effect: 'NoSchedule' }], cpu: 4, mem: 8 }, {}, []);
+  assert(!v.ok && /taint/.test(v.reason), 'board ka pehla reason taint hona chahiye, mila: ' + v.reason);
 });
 t('karpenter missions: deleting required Pending pods neither wins nor throws', () => {
   let m = KG.findLevel('karpenterbasics').stages.find(s => s.type === 'terminal');

@@ -433,8 +433,12 @@
   /* =============================================================
      LAB 4: BOARD — pod ko node par rakho (asli scheduler predicates)
      -------------------------------------------------------------
-     Yeh mini-scheduler asli kubernetes ke predicates ka order follow
-     karta hai: nodeSelector → taints → podAntiAffinity → capacity.
+     Yeh mini-scheduler asli kube-scheduler ke default Filter plugins ka
+     order follow karta hai: taints (TaintToleration) → nodeSelector
+     (NodeAffinity) → capacity (NodeResourcesFit) → podAntiAffinity
+     (InterPodAffinity). Order isliye maayne rakhta hai ki asli scheduler
+     har node ka sirf PEHLA fail hua reason likhta hai — tainted node par
+     label bhi galat ho, toh event mein "untolerated taint" hi aata hai.
      Pod select karte hi HAR node turant ✅/❌ dikhata hai, aur ❌ ke
      saath wahi wajah likhi hoti hai jo asli FailedScheduling event
      mein aati: "0/N nodes are available: ...".
@@ -450,23 +454,35 @@
 
   /* ek pod ek node par ja sakta hai? → { ok, reason } */
   function fitCheck(pod, node, placement, pods) {
-    /* 1. nodeSelector / required nodeAffinity */
+    /* 1. taints vs tolerations (TaintToleration plugin) */
+    for (const taint of (node.taints || [])) {
+      if (taint.effect === 'PreferNoSchedule') continue;
+      const tolerated = (pod.tolerations || []).some(tol => {
+        if (tol.effect && tol.effect !== taint.effect) return false;   /* effect likha ho toh wahi effect chahiye */
+        if (tol.operator === 'Exists') return !tol.key || tol.key === taint.key;
+        return tol.key === taint.key && (tol.value || '') === (taint.value || '');
+      });
+      if (!tolerated)
+        return { ok: false, reason: `node par taint <code>${taint.key}${taint.value ? '=' + taint.value : ''}:${taint.effect}</code> hai aur pod ke paas uski toleration nahi hai` };
+    }
+    /* 2. nodeSelector / required nodeAffinity (NodeAffinity plugin) */
     const sel = pod.nodeSelector || {};
     for (const key of Object.keys(sel)) {
       if ((node.labels || {})[key] !== sel[key])
         return { ok: false, reason: `node par label <code>${key}=${sel[key]}</code> nahi hai — pod ka nodeSelector match nahi hua` };
     }
-    /* 2. taints vs tolerations */
-    for (const taint of (node.taints || [])) {
-      if (taint.effect === 'PreferNoSchedule') continue;
-      const tolerated = (pod.tolerations || []).some(tol => {
-        if (tol.operator === 'Exists') return !tol.key || tol.key === taint.key;
-        return tol.key === taint.key && tol.value === taint.value;
-      });
-      if (!tolerated)
-        return { ok: false, reason: `node par taint <code>${taint.key}=${taint.value}:${taint.effect}</code> hai aur pod ke paas uski toleration nahi hai` };
-    }
-    /* 3. podAntiAffinity — same spread group ka pod pehle se isi node par? */
+    /* 3. capacity (NodeResourcesFit plugin) */
+    let cpu = node.usedCpu || 0, mem = node.usedMem || 0;
+    Object.entries(placement).forEach(([pid, nid]) => {
+      if (nid !== node.id || pid === pod.id) return;
+      const p = pods.find(x => x.id === pid);
+      if (p) { cpu += p.cpu; mem += p.mem; }
+    });
+    if (cpu + pod.cpu > node.cpu)
+      return { ok: false, reason: `Insufficient cpu — node par ${(node.cpu - cpu).toFixed(1)} CPU bachi hai, pod ${pod.cpu} maang raha hai` };
+    if (mem + pod.mem > node.mem)
+      return { ok: false, reason: `Insufficient memory — node par ${(node.mem - mem).toFixed(1)}Gi bachi hai, pod ${pod.mem}Gi maang raha hai` };
+    /* 4. podAntiAffinity (InterPodAffinity plugin) — same spread group ka pod pehle se isi node par? */
     if (pod.spread) {
       const clash = Object.entries(placement).find(([pid, nid]) => {
         if (pid === pod.id || nid !== node.id) return false;
@@ -478,17 +494,6 @@
         return { ok: false, reason: `podAntiAffinity — <code>${other.name}</code> (same group <code>${pod.spread}</code>) pehle se isi node par hai` };
       }
     }
-    /* 4. capacity */
-    let cpu = node.usedCpu || 0, mem = node.usedMem || 0;
-    Object.entries(placement).forEach(([pid, nid]) => {
-      if (nid !== node.id || pid === pod.id) return;
-      const p = pods.find(x => x.id === pid);
-      if (p) { cpu += p.cpu; mem += p.mem; }
-    });
-    if (cpu + pod.cpu > node.cpu)
-      return { ok: false, reason: `Insufficient cpu — node par ${(node.cpu - cpu).toFixed(1)} CPU bachi hai, pod ${pod.cpu} maang raha hai` };
-    if (mem + pod.mem > node.mem)
-      return { ok: false, reason: `Insufficient memory — node par ${(node.mem - mem).toFixed(1)}Gi bachi hai, pod ${pod.mem}Gi maang raha hai` };
     return { ok: true, reason: 'sab predicates pass — scheduler yahan bind karega' };
   }
   KG.fitCheck = fitCheck;   /* validator solvability sweep ke liye */
@@ -562,7 +567,7 @@
         box.innerHTML =
           `<div class="bd-nname">🖥️ ${n.name}</div>` +
           `<div class="bd-nlabels">${Object.entries(n.labels || {}).map(([a, b]) => `<span class="bd-lab">${a}=${b}</span>`).join('') || '<span class="bd-lab dim">koi label nahi</span>'}</div>` +
-          `<div class="bd-ntaints">${(n.taints || []).map(t => `<span class="bd-taint">🚫 ${t.key}=${t.value}:${t.effect}</span>`).join('') || '<span class="bd-lab dim">koi taint nahi</span>'}</div>` +
+          `<div class="bd-ntaints">${(n.taints || []).map(t => `<span class="bd-taint">🚫 ${t.key}${t.value ? '=' + t.value : ''}:${t.effect}</span>`).join('') || '<span class="bd-lab dim">koi taint nahi</span>'}</div>` +
           `<div class="bd-bar"><span style="width:${Math.min(100, cpu / n.cpu * 100)}%"></span></div>` +
           `<div class="bd-cap">CPU ${cpu}/${n.cpu} · MEM ${mem}/${n.mem}Gi</div>` +
           `<div class="bd-mine">${mine.map(p => `<span class="bd-run">✔ ${p.name}</span>`).join('') || ''}</div>` +

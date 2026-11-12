@@ -159,6 +159,54 @@ KG.karpenter = (function () {
     sim.cluster.nodeclaims = sim.cluster.nodeclaims.filter(nc => nc.nodeName !== node.name);
   }
 
+  /* Custom (non-instance) nodeSelector keys must match the NodePool's own labels. */
+  function customSelectorMismatch(pool, pod) {
+    return selectors(pod).some(r => {
+      if (Object.prototype.hasOwnProperty.call(labels(TYPES[0]), r.key) || r.key === 'karpenter.sh/capacity-type') return false;
+      return !matches(r.key === 'karpenter.sh/nodepool' ? pool.name : (pool.labels || {})[r.key], r);
+    });
+  }
+  /* ---------------------------------------------------------------
+     BATCHING + BIN-PACKING
+     Asli Karpenter pending pods ko ek-ek karke nahi dekhta. Woh ek chhoti
+     batch window mein saare pending pods jama karta hai aur unhe kam se kam
+     naye nodes mein pack karta hai: 5 chhote pods = 1 node, 5 nodes nahi.
+     Yahan: jo NodeClaim abhi launch ho raha hai (Ready: Unknown), pod pehle
+     usme jagah dhoondhta hai. NodeClaim isi reconcile mein bana ho toh uska
+     instance type bada bhi ho sakta hai (EC2 abhi maanga nahi gaya); purane
+     tick ka ho toh sirf bachi hui jagah milti hai.
+     --------------------------------------------------------------- */
+  function joinInflight(sim, k, pool, pod, capacity) {
+    const mine = allowedTypes(pool, pod);
+    for (const nc of sim.cluster.nodeclaims) {
+      if (nc.ready !== 'Unknown' || nc.nodepool !== pool.name || nc.capacity !== capacity) continue;
+      const group = sim.cluster.pods.filter(x => x.status === 'Pending' && x.waitingFor === nc.name);
+      const need = group.concat(pod).reduce((sum, x) => {
+        const q = demand(x); sum.cpu += q.cpu; sum.mem += q.mem; sum.gpu += q.gpu; return sum;
+      }, { cpu: OVERHEAD.cpu, mem: OVERHEAD.mem, gpu: 0 });
+      const big = t => t.cpu >= need.cpu && t.mem >= need.mem && t.gpu >= need.gpu;
+      let type = mine.find(t => t.name === nc.type && big(t));          // jaisa hai waise hi fit?
+      if (!type && nc.bornTick === k.tick) {
+        const used = pool.used || {}, limits = pool.limits || {};
+        type = mine.find(t => big(t) && group.every(x => allowedTypes(pool, x).includes(t)) &&
+          (limits.cpu == null || parseCpu(used.cpu || 0) - nc.cpu + t.cpu <= parseCpu(limits.cpu)) &&
+          (limits.memory == null || parseMem(used.memory || 0) - nc.mem + t.mem <= parseMem(limits.memory)));
+        if (type) {
+          pool.used.cpu = parseCpu(pool.used.cpu || 0) - nc.cpu + type.cpu;
+          pool.used.memory = parseMem(pool.used.memory || 0) - nc.mem + type.mem + 'Gi';
+          nc.type = type.name; nc.cpu = type.cpu; nc.mem = type.mem; nc.gpu = type.gpu;
+          nc.price = capacity === 'spot' ? type.spot : type.od;
+        }
+      }
+      if (!type) continue;
+      pod.waitingFor = nc.name;
+      pod.describe = pod._baseDescribe + '\n\nEvents (latest):\n  Normal  Nominated  karpenter  Pod should schedule on: nodeclaim/' + nc.name;
+      log(sim, `Normal  Nominated  karpenter  Pod should schedule on: nodeclaim/${nc.name}`);
+      return true;
+    }
+    return false;
+  }
+
   /* ---------------------------------------------------------------
      RECONCILE — har terminal command ke baad chalta hai
      --------------------------------------------------------------- */
@@ -245,7 +293,7 @@ KG.karpenter = (function () {
         return;
       }
       const reasons = [];
-      let np, chosen, cap;
+      let np, chosen, cap, joined = false;
       for (const pool of pools) {
         if (!tolerates(p, pool)) {
           const taint = (pool.taints || []).find(t => !tolerates(p, { taints: [t] }));
@@ -255,11 +303,7 @@ KG.karpenter = (function () {
         const types = allowedTypes(pool, p).filter(t => t.cpu >= d.cpu + OVERHEAD.cpu &&
           t.mem >= d.mem + OVERHEAD.mem && t.gpu >= d.gpu);
         const capacity = capacityType(pool, p);
-        const customSelectorMismatch = selectors(p).some(r => {
-          if (Object.prototype.hasOwnProperty.call(labels(TYPES[0]), r.key) || r.key === 'karpenter.sh/capacity-type') return false;
-          return !matches(r.key === 'karpenter.sh/nodepool' ? pool.name : (pool.labels || {})[r.key], r);
-        });
-        if (!types.length || !capacity || customSelectorMismatch) {
+        if (!types.length || !capacity || customSelectorMismatch(pool, p)) {
           const resources = { cpu: String(d.cpu), memory: d.mem + 'Gi' };
           if (d.gpu) resources['nvidia.com/gpu'] = String(d.gpu);
           resources.pods = '1';
@@ -268,6 +312,7 @@ KG.karpenter = (function () {
           reasons.push(`incompatible with nodepool "${pool.name}", daemonset overhead={"cpu":"200m","memory":"240Mi","pods":"5"}, no instance type satisfied resources ${JSON.stringify(resources)} and requirements ${reqs || '<none>'} (no instance type has enough resources or compatible requirements)`);
           continue;
         }
+        if (joinInflight(sim, k, pool, p, capacity)) { joined = true; break; }
         const used = pool.used || {}, limits = pool.limits || {};
         const type = types.find(t => (limits.cpu == null || parseCpu(used.cpu || 0) + t.cpu <= parseCpu(limits.cpu)) &&
           (limits.memory == null || parseMem(used.memory || 0) + t.mem <= parseMem(limits.memory)));
@@ -277,6 +322,7 @@ KG.karpenter = (function () {
         }
         np = pool; chosen = type; cap = capacity; break;
       }
+      if (joined) return;
       if (!np) { fail(reasons.join('; ')); return; }
       const zone = ['ap-south-1a', 'ap-south-1b', 'ap-south-1c'][sim.cluster.nodeclaims.length % 3];
       const id = Math.random().toString(36).slice(2, 7);
@@ -298,7 +344,10 @@ KG.karpenter = (function () {
       p.waitingFor = nc.name;
       p.describe = p._baseDescribe + '\n\nEvents (latest):\n  Normal  Nominated  karpenter  Pod should schedule on: nodeclaim/' + nc.name;
       log(sim, `Normal  Nominated  karpenter  Pod should schedule on: nodeclaim/${nc.name}`);
-      log(sim, `Normal  Launched    ${nc.name}  Launched ${cap} ${chosen.name} in ${zone} ($${nc.price}/hr)`);
+    });
+    sim.cluster.nodeclaims.filter(nc => nc.bornTick === k.tick && !nc._launchLogged).forEach(nc => {
+      nc._launchLogged = true;
+      log(sim, `Normal  Launched    ${nc.name}  Launched ${nc.capacity} ${nc.type} in ${nc.zone} ($${nc.price}/hr)`);
     });
 
     /* 3) Consolidation — khaali ya kam bhare nodes hatao (har node apne NodePool ki policy maanta hai) */
@@ -312,6 +361,11 @@ KG.karpenter = (function () {
         const podsOn = sim.cluster.pods.filter(p => p.node === n.name);
         const blocked = podsOn.some(p => p.doNotDisrupt);
         const empty = podsOn.length === 0;
+        /* Simulator ka saral niyam (asli Karpenter mein aisi koi % hadd NAHI hoti): asli Karpenter node ko
+           tab "underutilized" maanta hai jab uske pods baaki nodes ki khaali jagah mein aa jaayein, ya usse
+           sasta node unhe utha sake. Yahan candidate chunne ke liye <40% CPU aur <=2 pods ka shortcut hai;
+           asli shart (pods doosre node par fit hon) neeche `target` wali line check karti hai. Lesson mein
+           40% ko Karpenter ka niyam mat likhna. */
         const under = !empty && (n.usedCpu / n.cpu) < 0.4 && podsOn.length <= 2;
         const candidate = (empty && (cpol === 'WhenEmpty' || cpol === 'WhenEmptyOrUnderutilized')) ||
           (under && cpol === 'WhenEmptyOrUnderutilized');

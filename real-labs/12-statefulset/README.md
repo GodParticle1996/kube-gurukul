@@ -52,7 +52,7 @@ Service `kv-headless` banao: `clusterIP: None`, `selector: {app: kv}`, port 8080
 ```bash
 kubectl -n lab12 exec kv-0 -- cat /data/boot.log          # 1 line
 kubectl -n lab12 delete pod kv-0                           # "server crash"
-kubectl -n lab12 wait --for=condition=Ready pod/kv-0
+kubectl -n lab12 rollout status sts/kv                     # naya kv-0 Ready hone tak rukta hai
 kubectl -n lab12 exec kv-0 -- cat /data/boot.log          # 2 lines! purani bachi
 ```
 

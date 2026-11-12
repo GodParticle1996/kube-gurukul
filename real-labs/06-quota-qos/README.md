@@ -84,7 +84,7 @@ Phas gaye? → `solution/fixes.yaml`
 ## 🧭 Decision recap — production mein kab kya?
 
 - **Budget kam pad raha hai?** Pehle **right-size** karo (asli usage naapo), phir quota badhwao. Quota badhana budget ka faisla hai, debugging ka nahi.
-- ⚠️ **Rollout + tight quota = deadlock:** RollingUpdate ko **surge** (extra pod) ki jagah chahiye. Quota bilkul bhara ho toh naya pod nahi banta, purana hat nahi sakta → rollout **hamesha ke liye atka**. Quota mein surge jitni headroom rakho (ya `maxSurge: 0, maxUnavailable: 1`).
+- ⚠️ **Rollout + tight quota = deadlock:** RollingUpdate ko **surge** (extra pod) ki jagah chahiye. Quota bilkul bhara ho aur `maxUnavailable` 0 ho toh naya pod nahi banta, purana hat nahi sakta → rollout **hamesha ke liye atka**. (Default `25%` chhote Deployment mein neeche round hokar 0 hi ban jaata hai — 3 replicas ka 25% = 0.) Quota mein surge jitni headroom rakho (ya `maxSurge: 0, maxUnavailable: 1`).
 - **LimitRange defaults** har multi-team namespace mein lagao — "kisi ne resources nahi likhe" wali problem khatam.
 - **QoS:** critical services → Guaranteed (memory request = limit). Batch/best-effort kaam → Burstable/BestEffort chalega.
 

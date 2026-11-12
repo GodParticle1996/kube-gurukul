@@ -61,7 +61,9 @@ kubectl -n lab05 describe pod -l app=report-worker | grep -A1 FailedScheduling
 kubectl describe node gurukul-worker | grep -A6 Allocatable
 ```
 
-👀 **Dikhna chahiye:** `2 Insufficient cpu` — request `"500"` = 500 **poore** CPU cores! (`500m` = aadha core hota.)
+👀 **Dikhna chahiye:** `1 Insufficient cpu` — request `"500"` = 500 **poore** CPU cores! (`500m` = aadha core hota.)
+Baaki do nodes apne **taint** par hi bahar ho gaye (ssd node ka `dedicated`, control-plane ka apna). Scheduler ne
+un par CPU gina hi nahi — upar wala "sirf pehla reason" niyam yahan dikh raha hai. Sirf `gurukul-worker` tak CPU ka check pahuncha.
 
 <details><summary>💡 Hint</summary>
 

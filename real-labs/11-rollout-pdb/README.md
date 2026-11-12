@@ -84,7 +84,7 @@ Phas gaye? → `solution/steps.sh` + `solution/fixed.yaml`
 ## 🧭 Decision recap — production mein kab kya?
 
 - **PDB har important Deployment par** — par `maxUnavailable: 1` (ya %) use karo. `minAvailable = replicas` = maintenance blocker.
-- **Single-replica app + PDB** = drain kabhi nahi hoga. Ya 2+ replicas, ya PDB mat lagao (aur downtime accept karo).
+- **Single-replica app + `minAvailable: 1`** (ya `maxUnavailable: 0`) = drain kabhi nahi hoga. Ya 2+ replicas, ya PDB mat lagao (aur downtime accept karo).
 - **Rollout:** user-facing → `maxUnavailable: 0, maxSurge: 1` (ya 25%). Quota/node tight hai → `maxSurge: 0, maxUnavailable: 1`.
 - **Rollback ka asli tareeka GitOps mein:** `git revert` (warna ArgoCD/Flux wapas galat version la dega). `rollout undo` = emergency button.
 - Bade/risky changes → canary/blue-green (Argo Rollouts) + automated analysis.

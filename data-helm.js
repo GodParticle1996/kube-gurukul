@@ -836,8 +836,10 @@ helm upgrade shop ./shop \\
        <pre>helm install shop ./shop --set replicaCount=10     # rev 1: 10 replicas ✓
 helm upgrade shop ./shop -f values-prod.yaml      # rev 2: replicaCount wapas
                                                   #        default (2)! 😱</pre>
-       <p>Helm har upgrade par values <b>naye sire se</b> compute karta hai (chart defaults
-       + jo tumne AB diya). Purane <code>--set</code> yaad nahi rehte. Isliye production
+       <p>Upgrade mein ek bhi <code>-f</code> ya <code>--set</code> diya, toh Helm values <b>naye sire se</b>
+       compute karta hai (chart defaults + jo tumne AB diya). Purane <code>--set</code> yaad nahi rehte.
+       (Sirf ek apvaad: upgrade mein koi bhi value flag na do, tab Helm pichhli release ki values hi dobara
+       lagata hai.) Isliye production
        mein config <b>files mein</b> rakho (git mein, review ke saath) — <code>--set</code>
        sirf CI ke image tag jaisi ek-do cheezon ke liye.</p>
        <p><b>Jaal 2: --reuse-values</b> — yeh purani values ko base banata hai. Sunne mein

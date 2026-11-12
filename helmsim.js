@@ -421,17 +421,22 @@ KG.helm = (function () {
       if (chart.renderError) { print('err', 'Error: UPGRADE FAILED: ' + chart.renderError); return true; }
       if (f.flags.has('dry-run')) {
         const reuseDry = f.flags.has('reuse-values');
-        const valsDry = deepMerge(reuseDry ? rel.values : (chart.defaults || {}), f.values);
+        const carryDry = !reuseDry && !f.flags.has('reset-values') && !Object.keys(f.values).length;
+        const valsDry = deepMerge(reuseDry ? rel.values : (chart.defaults || {}), carryDry ? (rel.userValues || {}) : f.values);
         print('ok', `Release "${name}" has been upgraded (dry run). Happy Helming!\nNAME: ${name}\nSTATUS: pending-upgrade\nREVISION: ${rel.revision + 1}\nMANIFEST:\n` +
           (chart.render ? chart.render(valsDry, rel) : '(no templates)') + '\n\n(--dry-run: kuch badla NAHI — sirf render karke dikhaya)');
         return true;
       }
       const prev = clone(rel);
       // --reuse-values = purani values base; default = chart defaults + naye -f/--set
+      // Asli helm (pkg/action/upgrade.go reuseValues): koi -f/--set na ho aur --reset-values bhi na ho,
+      // toh pichhli release ki USER-SUPPLIED values dobara lagti hain (naye chart defaults ke upar).
+      // Ek bhi -f/--set aaya → values naye sire se: chart defaults + sirf abhi wali values.
       const reuse = f.flags.has('reuse-values');
-      const userVals = reuse ? deepMerge(rel.userValues || {}, f.values) : f.values;
+      const carry = !reuse && !f.flags.has('reset-values') && !Object.keys(f.values).length;
+      const userVals = reuse ? deepMerge(rel.userValues || {}, f.values) : carry ? clone(rel.userValues || {}) : f.values;
       const base = reuse ? rel.values : (chart.defaults || {});
-      const vals = deepMerge(base, f.values);
+      const vals = deepMerge(base, carry ? userVals : f.values);
       rel.values = vals;
       rel.userValues = clone(userVals);
       rel.revision += 1;

@@ -308,12 +308,13 @@
      ============================================================= */
   KG.renderers.flow = function renderFlow(stage, arena, onDone) {
     let i = -1, firstTry = 0, playing = false, timer = null, waiting = false;
+    const answered = new Set();   /* jis kadam ka sawal ho chuka — "Wapas" jaakar dobara poochha nahi jaata (XP dobara nahi milta) */
     const asks = stage.steps.filter(s => s.ask).length;
     const total = asks || 1;
 
     arena.appendChild(el('div', 'lab-goal',
-      `🎯 <b>KAAM:</b> flow chalao aur beech mein poochhe gaye sawal ka jawab do. ` +
-      `Har kadam kaun kar raha hai — lane ka naam dhyaan se dekho.`));
+      `🎯 <b>KAAM:</b> <b>"Agla kadam"</b> dabao — ek baar mein ek hi kadam khulta hai. ` +
+      `Upar peela dabba batata hai ki yeh kadam <b>kaun</b> kar raha hai. Beech mein sawal aayega; aage ke kadam tab tak chhupe rehte hain.`));
 
     const laneBox = el('div', 'fl-lanes');
     const laneEls = {};
@@ -325,13 +326,14 @@
     });
 
     const stepBox = el('div', 'fl-steps');
-    const detail = el('div', 'fl-detail', '<i>▶ dabao — flow shuru hoga.</i>');
+    const detail = el('div', 'fl-detail', '<i>"Agla kadam" dabao — pehla kadam khulega.</i>');
     const askBox = el('div', 'fl-ask');
     const ctrl = el('div', 'fl-ctrl');
-    const playBtn = el('button', 'btn small', '▶ Chalao');
-    const nextBtn = el('button', 'btn small ghost', '⏭ Agla kadam');
+    const nextBtn = el('button', 'btn', '⏭ Agla kadam');
     const backBtn = el('button', 'btn small ghost', '⏮ Wapas');
-    ctrl.append(playBtn, nextBtn, backBtn);
+    const playBtn = el('button', 'btn small ghost', '▶ Chalao (auto)');
+    const left = el('span', 'fl-left');
+    ctrl.append(nextBtn, backBtn, playBtn, left);
 
     stage.steps.forEach((s, n) => {
       const lane = stage.lanes.find(l => l.id === s.lane);
@@ -340,6 +342,7 @@
         `<span class="fl-who">${lane ? lane.icon + ' ' + lane.label : s.lane}</span>` +
         `<span class="fl-t">${s.t}</span>` +
         (s.ask ? '<span class="fl-q">❓</span>' : '');
+      row.classList.add('future');   /* aage ke kadam chhupe: warna agla kadam hi pichhle sawal ka jawab bata deta hai */
       stepBox.appendChild(row);
     });
 
@@ -351,14 +354,22 @@
       i -= 2; step();
     };
 
+    /* auto-play ki chaal: kadam ka text jitna lamba, utna zyada ruko (3–9 s). Pehle har kadam 1.5 s ka tha — padhne se pehle nikal jaata tha. */
+    const readMs = s => Math.max(3000, Math.min(9000, 1800 + 45 * String((s && (s.detail || s.t)) || '').replace(/<[^>]+>/g, '').length));
+    function tick() {
+      if (arena.isConnected === false) { pause(); return; }   /* learner doosri screen par chala gaya */
+      step();
+      if (playing) timer = setTimeout(tick, readMs(stage.steps[i]));
+    }
     function play() {
       if (!hasTimers) { step(); return; }
       playing = true; playBtn.textContent = '⏸ Rok do';
-      timer = setInterval(step, 1500);
+      tick();
     }
     function pause() {
-      playing = false; playBtn.textContent = '▶ Chalao';
-      stopTimer(timer); timer = null;
+      playing = false; playBtn.textContent = '▶ Chalao (auto)';
+      if (timer && typeof clearTimeout === 'function') clearTimeout(timer);
+      timer = null;
     }
 
     function step() {
@@ -368,20 +379,24 @@
       const s = stage.steps[i];
       stepBox.querySelectorAll('.fl-step').forEach((r, n) => {
         r.classList.remove('now');
+        if (n <= i) r.classList.remove('future'); else r.classList.add('future');
         if (n < i) r.classList.add('past');
         if (n === i) r.classList.add('now');
         if (n > i) r.classList.remove('past');
       });
+      const rest = stage.steps.length - 1 - i;
+      left.textContent = `Kadam ${i + 1} / ${stage.steps.length}` + (rest ? ` · ${rest} baaki` : ' · aakhri kadam');
       Object.values(laneEls).forEach(n => n.classList.remove('active'));
       if (laneEls[s.lane]) laneEls[s.lane].classList.add('active');
       detail.innerHTML = s.detail || s.t;
       const row = stepBox.querySelectorAll('.fl-step')[i];
       if (row) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      if (s.ask) { pause(); ask(s.ask); }
+      if (s.ask && !answered.has(i)) { pause(); ask(s.ask, i); }
     }
 
-    function ask(q) {
+    function ask(q, at) {
       waiting = true;
+      nextBtn.disabled = true;   /* sawal ka jawab diye bina aage nahi — button bujha hua dikhe, "kuch nahi hua" wala bhram na ho */
       let mistake = false;
       askBox.innerHTML = '';
       askBox.appendChild(el('div', 'question', '⏸ ' + q.q));
@@ -393,12 +408,13 @@
           if (btn.disabled) return;
           if (n === q.answer) {
             if (!mistake) { firstTry++; KG.addXP(KG.XP_PER_ITEM); }
+            answered.add(at);
             btn.classList.add('correct');
             choices.querySelectorAll('.choice').forEach(b => b.disabled = true);
             feedback.className = 'feedback good';
             feedback.innerHTML = `💡 ${q.explain}`;
             const go = el('button', 'btn', 'Flow aage chalao →');
-            go.onclick = () => { go.disabled = true; waiting = false; askBox.innerHTML = ''; step(); };
+            go.onclick = () => { go.disabled = true; waiting = false; nextBtn.disabled = false; askBox.innerHTML = ''; step(); };
             askBox.appendChild(go);
             go.scrollIntoView({ behavior: 'smooth', block: 'center' });
           } else {

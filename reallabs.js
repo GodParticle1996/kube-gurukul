@@ -103,6 +103,7 @@ KG.realLabsForLevel = levelId => KG.realLabs.filter(l => (l.levels || []).includ
      ============================================================ */
   window.showRealLabs = function showRealLabs() {
     KG.session = null;
+    if (typeof setRoute === 'function') setRoute('#/labs');
     appEl.innerHTML = '';
     window.scrollTo(0, 0);
     const done = doneSet();
@@ -144,6 +145,7 @@ KG.realLabsForLevel = levelId => KG.realLabs.filter(l => (l.levels || []).includ
      ============================================================ */
   window.showRealLab = function showRealLab(lab) {
     KG.session = null;
+    if (typeof setRoute === 'function') setRoute('#/lab/' + lab.id);
     appEl.innerHTML = '';
     window.scrollTo(0, 0);
     const done = doneSet();

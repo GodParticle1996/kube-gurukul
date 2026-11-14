@@ -1035,7 +1035,7 @@ function term(cluster, extra) {
   return {
     run(cmd) { const before = outEl.children.length; input.value = cmd; input.fire('keydown', { key: 'Enter' });
                return outEl.children.slice(before).filter(c => !c.classList.contains('t-cmd')).map(c => c.textContent).join('\n'); },
-    get done() { return done; }, get won() { return arena.children.some(c => c.classList && c.classList.contains('stage-summary')); }, st, outEl,
+    get done() { return done; }, get won() { return arena.children.some(c => c.classList && c.classList.contains('stage-summary')); }, st, outEl, arena, input,
   };
 }
 console.log('\ndecision dojo + real labs (asli screens, headless):');
@@ -1318,6 +1318,62 @@ t('karpenter missions: deleting required Pending pods neither wins nor throws', 
   ['gpu-trainer', 'huge-job', 'batch-worker'].forEach(name => { T.run('kubectl describe pod ' + name); T.run('kubectl delete pod ' + name); });
   T.run('kubectl get nodeclaims'); T.run('kubectl get pods');
   assert(!T.won, 'Pending Pod Mystery still needs all three workloads');
+});
+/* ---- 2026-11 UX pass: terminal ki madad + flow player (EXTENDING.md §17) ---- */
+t('terminal madad: typo par "kya tumhara matlab", NotFound par maujood naam, describe bina naam ke sab objects', () => {
+  const pods = () => [{ name: 'web-1', ready: '1/1', status: 'Running', restarts: 0, age: '1m' }, { name: 'db-0', ready: '1/1', status: 'Running', restarts: 0, age: '1m' }];
+  const T = term({ pods: pods() });
+  assert(/matlab "kubectl"/.test(T.run('kubctl get pods')), 'galat command-naam par suggestion nahi aaya');
+  assert(/matlab "pods"/.test(T.run('kubectl get pdos')), 'galat resource-kind par suggestion nahi aaya');
+  assert(/Maujood pods: web-1, db-0/.test(T.run('kubectl logs wbe')), 'NotFound par maujood pods ki list nahi aayi');
+  assert(/matlab "kubectl describe"/.test(T.run('kubectl descirbe pod web-1')), 'galat verb par suggestion nahi aaya');
+  const d = T.run('kubectl describe pods');
+  assert(/web-1/.test(d) && /db-0/.test(d), 'kubectl describe pods (bina naam) ko saare pods dikhane chahiye, mila: ' + d);
+});
+t('terminal madad: checklist ka 👉 abhi-wala kaam, "kaam poora" line, aur 🆘 agla command solution se aata hai', () => {
+  const tasks = [{ text: 'Pods dekho', check: s => s.history.includes('kubectl get pods') },
+                 { text: 'Logs dekho', check: s => s.history.some(h => /^kubectl logs/.test(h)) }];
+  const T = term({ pods: [{ name: 'web-1', ready: '1/1', status: 'Running', restarts: 0, age: '1m', logs: 'ok' }] },
+    { tasks, success: KG.allOf(tasks), solution: ['kubectl get pods', 'kubectl logs web-1'] });
+  const ul = T.arena.children[0].children.find(c => c.tag === 'ul');
+  assert(ul.children[0].classList.contains('now') && !ul.children[1].classList.contains('now'), 'shuru mein 👉 pehle kaam par hona chahiye');
+  const o = T.run('k get pods');
+  assert(/Kaam 1\/2 poora: Pods dekho/.test(o) && /Ab kaam 2: Logs dekho/.test(o), 'kaam poora hone ki line nahi aayi: ' + o);
+  assert(ul.children[1].classList.contains('now') && ul.children[0].classList.contains('done'), '👉 doosre kaam par nahi gaya');
+  const nextBtn = T.arena.children[2].children.find(b => /Agla command/.test(b.innerHTML));
+  assert(nextBtn, '🆘 Agla command button nahi mila');
+  nextBtn.click();
+  assert(T.input.value === 'kubectl logs web-1', 'agla command galat: ' + T.input.value);
+  const o2 = T.run('kubectl scale deploy web --replicas=2');
+  assert(/kubectl get pods/.test(o2) && /kubectl logs/.test(o2), 'unscripted verb par mission ke commands ki list nahi aayi: ' + o2);
+  T.run('kubectl logs web-1');
+  assert(T.won, 'mission poora nahi hua');
+  assert(T.done === null || T.done.firstTry === 0, '🆘 use karne par firstTry 0 hona chahiye');
+});
+t('terminal madad: command ka roop galat ho toh simulator sahi roop batata hai (strict regex wali deewar)', () => {
+  const T = term({ deployments: [{ name: 'web', ready: '1/1', upToDate: 1, available: 1, age: '1d' }] },
+    { responses: [{ re: /^kubectl rollout undo deployment\/web$/, out: 'deployment.apps/web rolled back' }],
+      solution: ['kubectl rollout undo deployment/web'] });
+  const o = T.run('kubectl rollout undo deploy web');
+  assert(/kubectl rollout undo deployment\/web/.test(o), 'sahi roop nahi bataya: ' + o);
+  assert(!/kubectl rollout undo deployment\/web/.test(T.run('kubectl rollout restart deploy web')), 'alag sub-command (restart) par undo ka jawab leak hua');
+});
+t('flow player: "Wapas" jaakar wahi sawal dobara nahi poochha jaata (XP/firstTry dobara nahi badhta)', () => {
+  const st = { type: 'flow', lanes: [{ id: 'a', label: 'A', icon: 'x' }], summary: 's',
+    steps: [{ lane: 'a', t: 'one' }, { lane: 'a', t: 'two', ask: { q: 'q?', choices: ['right', 'wrong'], answer: 0, explain: 'e' } }, { lane: 'a', t: 'three' }] };
+  const arena = document.createElement('div'); let done = null;
+  KG.state = KG.defaultState(); KG.session = null;
+  KG.renderers.flow(st, arena, r => { done = r; });
+  const btn = re => walk(arena).find(x => x.classList && x.classList.contains('btn') && re.test(x.innerHTML || x.textContent));
+  const answer = () => walk(arena).filter(x => x.classList && x.classList.contains('choice') && x.innerHTML === 'right' && !x.disabled).forEach(x => x.click());
+  btn(/Agla kadam/).click(); btn(/Agla kadam/).click();
+  assert(btn(/Agla kadam/).disabled, 'sawal ke dauraan "Agla kadam" bujha hua hona chahiye');
+  answer(); btn(/aage chalao/).click();            // → kadam 3
+  btn(/Wapas/).click();                             // → kadam 2 (sawal ho chuka)
+  assert(!walk(arena).some(x => x.classList && x.classList.contains('choice') && !x.disabled), 'Wapas par sawal dobara khul gaya');
+  btn(/Agla kadam/).click(); btn(/Agla kadam/).click();
+  btn(/Aage badho/).click();
+  assert(done && done.firstTry === 1 && done.total === 1, 'flow ka score galat: ' + JSON.stringify(done));
 });
 t('har terminal mission apne solution: [...] se poora hota hai (asli renderer, headless)', () => {
   const missing = []; let n = 0;

@@ -22,9 +22,21 @@ const RANKS = [
 /* Tracks sequentially unlock hote hain: Beginner → Intermediate → Advanced.
    Sirf `alwaysUnlocked: true` wale side-tracks (jaise Helm) kabhi bhi khel sakte ho.
    `levels` lazily resolve hote hain KG.levelSets se (data-*.js bharti hain). */
+/* Home screen par tracks in groups mein dikhte hain (isi kram mein). Har track ka `group` yahan ki ek id hai.
+   Naya group = yahan ek entry. Naye track mein `group` na do toh woh pehle group mein jaata hai. */
+KG.trackGroups = [
+  { id: 'main',     title: '🛤️ Mukhya raasta — isi kram mein',
+    sub: 'Beginner → Intermediate → Advanced. Har track pichhla track poora hone par khulta hai.' },
+  { id: 'scenario', title: '🩺 Scenario practice — toota hua cluster theek karo',
+    sub: 'Beginner track ke baad kabhi bhi. Interview ke "yeh toota hai, kaise dhoondhoge?" sawaal yahin se aate hain.' },
+  { id: 'tools',    title: '🧰 Tools — Helm, ArgoCD, Karpenter',
+    sub: 'Kabhi bhi khelo. Har track ek tool ko asli terminal ke saath sikhata hai.' },
+];
+
 KG.tracks = [
   {
     id: 'beginner',
+    group: 'main',
     icon: '🌱',
     name: 'Beginner — Shishya Path',
     blurb: 'Docker se Kubernetes tak ka safar — cluster architecture (API Server, etcd, Scheduler…), Pods, Deployments, Services, ConfigMaps. Yahan se shuruaat!',
@@ -35,6 +47,7 @@ KG.tracks = [
   },
   {
     id: 'intermediate',
+    group: 'main',
     icon: '🔥',
     name: 'Intermediate — Sadhak Path',
     blurb: 'Production ki asli duniya — Scheduler, QoS & evictions, Probes, StatefulSets, Storage, Ingress, NetworkPolicies, Autoscaling. Jahan outages hote hain, wahan ke hathiyaar.',
@@ -45,6 +58,7 @@ KG.tracks = [
   },
   {
     id: 'advanced',
+    group: 'main',
     icon: '🚀',
     name: 'Advanced — Guru Path',
     blurb: 'Senior engineer ka shastra — RBAC, Pod Security, Vault/ESO, Prometheus/Grafana, Helm & Kustomize, Operators, ArgoCD GitOps, Istio service mesh.',
@@ -55,6 +69,7 @@ KG.tracks = [
   },
   {
     id: 'helm',
+    group: 'tools',
     icon: '⛵',
     name: 'Helm Gurukul',
     blurb: 'Helm ka poora shastra — chart anatomy, templating jaadu, values ka khel, subcharts & umbrella, hooks/tests/rollback, aur chart publish + GitOps. Har level mein asli `helm` terminal!',
@@ -66,6 +81,7 @@ KG.tracks = [
   },
   {
     id: 'argocd',
+    group: 'tools',
     icon: '🔄',
     name: 'ArgoCD Gurukul',
     blurb: 'GitOps ka poora shastra — Application, sync policies (prune/selfHeal), sync waves & hooks, App-of-Apps + ApplicationSets, Projects/RBAC, aur Argo Rollouts se canary. Asli `argocd` terminal ke saath!',
@@ -77,6 +93,7 @@ KG.tracks = [
   },
   {
     id: 'karpenter',
+    group: 'tools',
     icon: '🌲',
     name: 'Karpenter Gurukul',
     blurb: 'EKS pe nodes ka asli khel — NodePool + EC2NodeClass, just-in-time provisioning, consolidation se paisa bachana, spot interruption, drift aur disruption budgets. Node controller live simulate hota hai!',
@@ -88,6 +105,7 @@ KG.tracks = [
   },
   {
     id: 'kodekloud',
+    group: 'scenario',
     icon: '🩺',
     name: 'KodeKloud Gurukul — Scenario Path',
     blurb: 'Sirf scenario. Har level ek toota hua cluster deta hai aur poochta hai: kya toota, kaise pata chala, ab kya karoge? ImagePullBackOff se lekar etcd restore aur seccomp tak — KodeKloud ke troubleshooting, CKA aur CKS scenarios se banaya gaya.',

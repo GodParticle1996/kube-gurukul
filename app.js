@@ -7,6 +7,42 @@
 const appEl = document.getElementById('app');
 const topbarEl = document.getElementById('topbar');
 
+/* ---------------- routing: har screen ka apna #hash ----------------
+   Browser ka Back button ab app ke andar pichhli screen par le jaata hai, aur reload usi screen par rehta hai.
+   Screen khud setRoute('#/…') bulati hai; Back/Forward par route() sahi screen kholta hai.
+   Level ke andar ka challenge '#/play/<level>' hai — Back dabane par level ka intro khulta hai (checkpoint save rehta hai). */
+function setRoute(hash) {
+  if (typeof location === 'undefined' || typeof history === 'undefined') return;   // headless validator
+  if (location.hash === hash || (!location.hash && hash === '#/')) return;
+  // Back/Forward ke dauraan (inRoute) naya history entry nahi banate — warna Back dabane par history aage badh jaati
+  try { history[inRoute ? 'replaceState' : 'pushState'](null, '', hash); } catch (e) { /* file:// par kuch browsers mana karte hain — route ke bina bhi app chalta hai */ }
+}
+let inRoute = false;
+function route() {
+  inRoute = true;
+  try { routeTo(); } finally { inRoute = false; }
+}
+function routeTo() {
+  const h = (typeof location !== 'undefined' && location.hash) || '';
+  const m = h.match(/^#\/(track|level|play|tree|lab)\/(.+)$/);
+  const id = m ? decodeURIComponent(m[2]) : '';
+  if (m && m[1] === 'track') { const t = KG.tracks.find(x => x.id === id); if (t && KG.trackUnlocked(t)) return showTrack(t); }
+  if (m && (m[1] === 'level' || m[1] === 'play')) { const l = KG.findLevel(id); if (l && levelUnlocked(l)) return showIntro(l); }
+  if (m && m[1] === 'tree' && KG.findDecision) { const t = KG.findDecision(id); if (t) return showDecisionTree(t); }
+  if (m && m[1] === 'lab') { const l = (KG.realLabs || []).find(x => x.id === id); if (l) return showRealLab(l); }
+  if (h === '#/dojo') return showDojo();
+  if (h === '#/decisions') return showDecisionDojo();
+  if (h === '#/labs') return showRealLabs();
+  showHome();
+}
+/* level khula hai? (track khula ho, aur level pehla / complete / pichhla complete ho) */
+function levelUnlocked(level) {
+  const track = KG.trackOf(level);
+  if (!track || !KG.trackUnlocked(track)) return false;
+  const levels = KG.levelsOf(track), i = levels.indexOf(level);
+  return i === 0 || KG.state.completed.includes(level.id) || KG.state.completed.includes(levels[i - 1].id);
+}
+
 /* ---------------- topbar ---------------- */
 function renderTopbar() {
   const rank = KG.currentRank();
@@ -41,6 +77,7 @@ function diagramFor(id, hero) {
    ============================================================ */
 function showHome() {
   KG.session = null;
+  setRoute('#/');
   renderTopbar();
   appEl.innerHTML = '';
 
@@ -64,6 +101,22 @@ function showHome() {
       <div class="rs-go">Chalo →</div>`);
     card.onclick = () => resumeLevel(res);
     appEl.appendChild(card);
+  } else {
+    // 👉 koi adhoora level nahi → saaf batao ki agla kadam kaun sa level hai (dhoondhna na pade)
+    const nl = nextLevel();
+    if (nl) {
+      const tr = KG.trackOf(nl), ls = KG.levelsOf(tr);
+      const fresh = !KG.state.completed.length;
+      const card = el('section', 'resume-card clickable nextup', `
+        <div class="rs-icon">👉</div>
+        <div class="rs-body">
+          <div class="rs-title">${fresh ? 'Yahan se shuru karo' : 'Tumhara agla level'}: ${nl.icon} ${nl.title}</div>
+          <div class="rs-sub">${tr.icon} ${tr.name} · Level ${ls.indexOf(nl) + 1} / ${ls.length} · ${allStages(nl).length} challenges</div>
+        </div>
+        <div class="rs-go">Kholo →</div>`);
+      card.onclick = () => showIntro(nl);
+      appEl.appendChild(card);
+    }
   }
 
   // ⚡ mood picker — "aaj kitni energy hai?" ek click mein sahi size ka kaam
@@ -136,24 +189,35 @@ function showHome() {
     </div>`));
   appEl.appendChild(strip);
 
-  // tracks
-  const map = el('section', 'trackmap');
-  KG.tracks.forEach(track => {
-    const p = KG.trackProgress(track);
-    const unlocked = KG.trackUnlocked(track);
-    const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
-    const card = el('div', 'trackcard' + (p.complete ? ' done' : '') + (unlocked ? '' : ' locked'));
-    card.innerHTML = `
-      <div class="tk-icon">${track.icon}</div>
-      <div class="tk-name">${track.name}</div>
-      <div class="tk-blurb">${track.blurb}</div>
-      <div class="tk-bar"><div class="tk-fill" style="width:${pct}%"></div></div>
-      <div class="tk-prog">${p.done}/${p.total} levels${p.complete ? ' · ✅ complete' : ''}</div>
-      <div class="tk-go">${unlocked ? (p.done ? 'Aage badho →' : 'Shuru karo →') : '🔒 Pehle pichla track complete karo'}</div>`;
-    if (unlocked) card.onclick = () => showTrack(track);
-    map.appendChild(card);
+  // tracks — group ke hisaab se (KG.trackGroups, data-core.js). Har group ka ek heading: kaun sa track kab khelna hai.
+  const here = nextLevel();
+  const hereTrack = here ? KG.trackOf(here) : null;
+  const groups = (KG.trackGroups && KG.trackGroups.length) ? KG.trackGroups : [{ id: null, title: '', sub: '' }];
+  groups.forEach(g => {
+    const tracks = KG.tracks.filter(t => g.id == null || (t.group || groups[0].id) === g.id);
+    if (!tracks.length) return;
+    if (g.title) appEl.appendChild(el('div', 'group-head', `<h3>${g.title}</h3><p>${g.sub || ''}</p>`));
+    const map = el('section', 'trackmap');
+    tracks.forEach(track => {
+      const p = KG.trackProgress(track);
+      const unlocked = KG.trackUnlocked(track);
+      const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+      const nextIn = KG.levelsOf(track).find(l => !KG.state.completed.includes(l.id));
+      const card = el('div', 'trackcard' + (p.complete ? ' done' : '') + (unlocked ? '' : ' locked') + (track === hereTrack ? ' here' : ''));
+      card.innerHTML = `
+        ${track === hereTrack ? '<div class="tk-here">📍 Tum yahan ho</div>' : ''}
+        <div class="tk-icon">${track.icon}</div>
+        <div class="tk-name">${track.name}</div>
+        <div class="tk-blurb">${track.blurb}</div>
+        <div class="tk-bar"><div class="tk-fill" style="width:${pct}%"></div></div>
+        <div class="tk-prog">${p.done}/${p.total} levels${p.complete ? ' · ✅ complete' : ''}</div>
+        ${unlocked && nextIn ? `<div class="tk-next">Agla level: ${nextIn.icon} ${nextIn.title}</div>` : ''}
+        <div class="tk-go">${unlocked ? (p.complete ? 'Dobara dekho →' : p.done ? 'Aage badho →' : 'Shuru karo →') : '🔒 Pehle pichla track complete karo'}</div>`;
+      if (unlocked) card.onclick = () => showTrack(track);
+      map.appendChild(card);
+    });
+    appEl.appendChild(map);
   });
-  appEl.appendChild(map);
 
   const foot = el('div', 'home-foot');
   const reset = el('button', 'btn ghost small', '↺ Saara progress reset karo');
@@ -198,6 +262,7 @@ function moodDeep() {
    ============================================================ */
 function showTrack(track) {
   KG.session = null;
+  setRoute('#/track/' + track.id);
   appEl.innerHTML = '';
   window.scrollTo(0, 0);
 
@@ -242,6 +307,8 @@ function showTrack(track) {
    LEVEL INTRO — objectives + lesson
    ============================================================ */
 function showIntro(level) {
+  KG.session = null;
+  setRoute('#/level/' + level.id);
   appEl.innerHTML = '';
   const track = KG.trackOf(level);
   const levels = KG.levelsOf(track);
@@ -280,7 +347,7 @@ function showIntro(level) {
   const hero = diagramFor(level.id, true);
   if (hero) wrap.appendChild(hero);
 
-  level.lesson.forEach(html => wrap.appendChild(el('div', 'lesson-card', html)));
+  wrap.appendChild(lessonPager(level.lesson || []));
 
   const totalStages = allStages(level).length;
   const bonusCount = level.stages.filter(s => s.bonus).length;
@@ -320,6 +387,41 @@ function showIntro(level) {
   wrap.appendChild(row);
   appEl.appendChild(wrap);
   window.scrollTo(0, 0);
+}
+
+/* 📖 lesson pager — ek baar mein EK lesson card (pehle saare cards ek saath aate the: 2500px ki deewar).
+   "Saare cards ek saath" wali pasand KG.state.lessonAll mein yaad rehti hai. */
+function lessonPager(cards) {
+  const box = el('div', 'lesson-pager');
+  let i = 0;
+  function paint() {
+    box.innerHTML = '';
+    const all = cards.length < 2 || KG.state.lessonAll;
+    if (cards.length > 1) {
+      const head = el('div', 'lp-head');
+      head.appendChild(el('span', 'lp-count', all ? `📖 Lesson — ${cards.length} cards` : `📖 Lesson card ${i + 1} / ${cards.length}`));
+      if (!all) head.appendChild(el('span', 'lp-dots', cards.map((_, n) => `<i class="${n < i ? 'seen' : n === i ? 'on' : ''}"></i>`).join('')));
+      const mode = el('button', 'lp-mode', all ? 'Ek-ek card dikhao' : 'Saare cards ek saath');
+      mode.onclick = () => { KG.state.lessonAll = !all; KG.saveState(); paint(); };
+      head.appendChild(mode);
+      box.appendChild(head);
+    }
+    if (all) { cards.forEach(html => box.appendChild(el('div', 'lesson-card', html))); return; }
+    box.appendChild(el('div', 'lesson-card pop', cards[i]));
+    const nav = el('div', 'lp-nav');
+    const prev = el('button', 'btn small ghost', '← Pichla card');
+    prev.disabled = i === 0;
+    prev.onclick = () => { i--; paint(); box.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    nav.appendChild(prev);
+    if (i + 1 < cards.length) {
+      const next = el('button', 'btn', `Agla card (${i + 2}/${cards.length}) →`);
+      next.onclick = () => { i++; paint(); box.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+      nav.appendChild(next);
+    } else nav.appendChild(el('span', 'lp-end', '✅ Lesson poora — ab neeche <b>Shuru karo</b> dabao.'));
+    box.appendChild(nav);
+  }
+  paint();
+  return box;
 }
 
 /* ▶ resume — checkpoint se session wapas banao (stage list badal gayi ho toh clamp) */
@@ -401,12 +503,21 @@ function runStage() {
   const stage = stages[stageIdx];
   appEl.innerHTML = '';
   window.scrollTo(0, 0);
+  setRoute('#/play/' + level.id);
   KG.saveResume(KG.session, stageIdx);   // beech mein chhoda toh agli baar isi challenge se
 
   const isIv = stage.type === 'interview';
   const wrap = el('section', 'panel' + (stage.bonus ? ' bonus-panel' : '') + (isIv ? ' iv-panel' : ''));
-  wrap.appendChild(el('div', 'crumb',
+  // upar ki patti: kahan ho (level + challenge N/M + pips) aur bahar nikalne ka raasta (pehle sirf logo par click se nikal sakte the)
+  const bar = el('div', 'stage-bar');
+  bar.appendChild(el('div', 'crumb',
     `${level.icon} ${level.title} — challenge ${stageIdx + 1}/${stages.length}`));
+  bar.appendChild(el('div', 'stage-pips', stages.map((x, n) =>
+    `<i class="${n < stageIdx ? 'done' : n === stageIdx ? 'on' : ''}" title="Challenge ${n + 1}: ${String(x.title || '').replace(/<[^>]+>/g, '').replace(/"/g, '&quot;')}"></i>`).join('')));
+  const leave = el('button', 'stage-leave', '✕ Level se bahar (progress save hai)');
+  leave.onclick = () => showIntro(level);
+  bar.appendChild(leave);
+  wrap.appendChild(bar);
   if (stage.bonus) wrap.appendChild(el('div', 'bonus-banner', '🎁 BONUS ROUND — Good to Know'));
   if (isIv) wrap.appendChild(el('div', 'iv-banner', '🎤 INTERVIEW ROUND'));
   wrap.appendChild(el('h2', 'stage-h', stage.title));
@@ -619,6 +730,7 @@ function levelComplete() {
    ============================================================ */
 function showDojo() {
   KG.session = null;
+  setRoute('#/dojo');
   appEl.innerHTML = '';
   window.scrollTo(0, 0);
 
@@ -723,4 +835,5 @@ function showCertificate(track) {
 
 /* ---------------- boot ---------------- */
 renderTopbar();
-showHome();
+route();
+if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('popstate', route);

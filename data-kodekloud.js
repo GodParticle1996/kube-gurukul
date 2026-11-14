@@ -1130,7 +1130,7 @@ kubectl describe pod typo2 | grep -A3 "State:"    # Reason: StartError, Exit Cod
         {
           type: 'flow',
           title: '🎬 Flow: pod spec se chalte hue container tak — kahan-kahan toot sakta hai',
-          instructions: '▶ dabao aur poora safar dekho. Har padav par kaun kaam kar raha hai, lane highlight se dikhega. Beech mein teen sawal aayenge.',
+          instructions: '"Agla kadam" dabao aur poora safar ek-ek kadam dekho. Har padav par kaun kaam kar raha hai, lane highlight se dikhega. Beech mein teen sawal aayenge.',
           lanes: [
             { id: 'sched', label: 'Scheduler', icon: '⚖️' },
             { id: 'kubelet', label: 'kubelet', icon: '🤖' },
@@ -2552,7 +2552,7 @@ kubectl delete deploy blue green; kubectl delete svc blue-svc</pre>`,
         {
           type: 'flow',
           title: '🎬 Flow: naye pod mein environment variables kahan-kahan se aate hain',
-          instructions: '▶ dabao. Dekho kubelet ek pod ka environment kaise jodta hai — aur staging namespace mein ek aisa variable kaise aa gaya jo kisi ne likha hi nahi tha.',
+          instructions: '"Agla kadam" dabao. Dekho kubelet ek pod ka environment kaise jodta hai — aur staging namespace mein ek aisa variable kaise aa gaya jo kisi ne likha hi nahi tha.',
           lanes: [
             { id: 'api', label: 'API server', icon: '🏛️' },
             { id: 'kubelet', label: 'kubelet', icon: '🤖' },
@@ -3073,7 +3073,7 @@ options ndots:5</pre>
         {
           type: 'flow',
           title: '🎬 Flow: `curl http://payments` — poora raasta, ek-ek kadam',
-          instructions: '▶ dabao. Har kadam par kaun kaam kar raha hai (application, CoreDNS, kube-proxy, CNI) — lane se dikhega. Teen sawal beech mein aayenge.',
+          instructions: '"Agla kadam" dabao. Har kadam par kaun kaam kar raha hai (application, CoreDNS, kube-proxy, CNI) — lane se dikhega. Teen sawal beech mein aayenge.',
           lanes: [
             { id: 'app', label: 'App container', icon: '🏃' },
             { id: 'dns', label: 'CoreDNS', icon: '📖' },

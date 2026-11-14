@@ -416,8 +416,16 @@ KG.renderers.hotspot = function renderHotspot(stage, arena, onDone) {
       feedback.innerHTML = `✅ ${q.explain}`;
       locked = true;
       qi++;
-      if (qi < stage.questions.length) setTimeout(showQ, 1400);
-      else setTimeout(() => onDone({ firstTry, total: stage.questions.length }), 900);
+      /* pehle 1.4 s baad sawal khud badal jaata tha — explanation padhne ka waqt nahi milta tha. Ab learner khud aage badhta hai. */
+      const last = qi >= stage.questions.length;
+      const nx = el('button', 'btn', last ? 'Ho gaya ✓' : 'Agla sawal →');
+      nx.onclick = () => {
+        nx.disabled = true; nx.remove();
+        if (last) onDone({ firstTry, total: stage.questions.length });
+        else { feedback.className = 'feedback'; feedback.innerHTML = ''; showQ(); }
+      };
+      wrap.appendChild(nx);
+      nx.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
       if (!mistake) KG.noteMistake(q.q, q.explain);
       mistake = true;

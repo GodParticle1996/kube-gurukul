@@ -122,6 +122,7 @@ KG.decisionsForLevel = levelId => KG.decisions.filter(t => (t.levels || []).incl
      ============================================================ */
   window.showDecisionDojo = function showDecisionDojo() {
     KG.session = null;
+    if (typeof setRoute === 'function') setRoute('#/decisions');
     appEl.innerHTML = '';
     window.scrollTo(0, 0);
     const wrap = el('section', 'panel');
@@ -165,6 +166,7 @@ KG.decisionsForLevel = levelId => KG.decisions.filter(t => (t.levels || []).incl
      ============================================================ */
   window.showDecisionTree = function showDecisionTree(tree) {
     KG.session = null;
+    if (typeof setRoute === 'function') setRoute('#/tree/' + tree.id);
     appEl.innerHTML = '';
     window.scrollTo(0, 0);
     const wrap = el('section', 'panel');

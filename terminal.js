@@ -65,17 +65,60 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     </div>
     <div class="term-out"></div>
     <div class="term-in"><span class="ps1">$</span><input type="text" autocomplete="off"
-      spellcheck="false" placeholder="kubectl get pods   (madad ke liye: help)"></div>`;
+      spellcheck="false" placeholder="kubectl get pods   (madad: help · Tab = naam poora)"></div>`;
   const out = term.querySelector('.term-out');
   const input = term.querySelector('input');
+
+  /* mission ka solution, ek-ek command mein toda hua (a && b → a, b) — "agla command", command chips aur
+     "is roop mein likho" wale tips isi se bante hain */
+  const normCmd = c => String(c).replace(/\s+/g, ' ').trim().replace(/^sudo\s+/, '').replace(/^k(?= |$)/, 'kubectl');
+  const solFlat = (stage.solution || []).flatMap(c => splitTop(String(c).replace(/\s+/g, ' ').trim(), ['&&', ';']).map(x => normCmd(x.text)));
+  /* command ka "dhaancha": kubectl get pods web-1 -o wide → "kubectl get pods " (naam aur flags nahi) */
+  function shapeOf(cmd) {
+    const t = normCmd(cmd).split(' ');
+    if (/^(bash|sh|cat)$/.test(t[0])) return t[0] + ' ';
+    if (!['kubectl', 'helm', 'argocd'].includes(t[0])) return t[0] + (t.length > 1 ? ' ' : '');
+    if (t[0] === 'kubectl' && t[1] === 'apply') return 'kubectl apply -f ';
+    let n = 2;
+    if (/^(kubectl (rollout|auth|config|get|describe|top|delete|create|set)|helm (repo|dependency|get|show|search|diff)|argocd (app|appset|proj|cluster))$/.test(t.slice(0, 2).join(' '))) n = 3;
+    if (t[1] === 'argo' && t[2] === 'rollouts') n = 4;
+    n = Math.min(n, t.length);
+    return t.slice(0, n).join(' ') + (t.length > n ? ' ' : '');
+  }
+  const shapes = [...new Set(solFlat.map(shapeOf))].sort();
 
   const btns = el('div', 'term-btns');
   const hintBtn = el('button', 'btn small ghost', `💡 Hint (−${KG.HINT_COST} XP)`);
   hintBtn.onclick = () => giveHint();
   btns.appendChild(hintBtn);
+  /* 🧰 free madad: is mission mein kaun se commands kaam aate hain (sirf dhaancha — naam/flags learner khud bharta hai) */
+  const palette = el('div', 'term-palette');
+  palette.style.display = 'none';
+  if (shapes.length) {
+    const palBtn = el('button', 'btn small ghost', '🧰 Is mission ke commands (free)');
+    palBtn.onclick = () => {
+      const show = palette.style.display === 'none';
+      palette.style.display = show ? '' : 'none';
+      palBtn.textContent = show ? '🧰 Commands chhupao' : '🧰 Is mission ke commands (free)';
+    };
+    btns.appendChild(palBtn);
+    palette.appendChild(el('div', 'tp-note', 'Yeh commands is mission mein kaam aate hain (kram alag hai). Chip dabao → command neeche input mein aa jayega. <code>…</code> ki jagah naam khud likho; <b>Tab</b> dabane se naam poora ho jaata hai.'));
+    const row = el('div', 'tp-row');
+    shapes.concat(Object.keys(sim.files).length && !shapes.includes('ls') ? ['ls'] : []).forEach(sh => {
+      const chip = el('button', 'tp-chip');
+      chip.textContent = sh.trim() + (/ $/.test(sh) ? ' …' : '');
+      chip.onclick = () => { input.value = sh; input.focus(); };
+      row.appendChild(chip);
+    });
+    palette.appendChild(row);
+    /* 🆘 poora atak gaye? solution ka agla command dikhao (mehenga hint) */
+    const nextBtn = el('button', 'btn small ghost', `🆘 Agla command dikhao (−${KG.HINT_COST * 2} XP)`);
+    nextBtn.onclick = () => showNextCommand();
+    btns.appendChild(nextBtn);
+  }
 
-  arena.append(goalBox, term, btns);
-  print('sys', `Mock cluster ready. Commands type karo — 'help' se list milegi.`);
+  arena.append(goalBox, term, btns, palette);
+  print('sys', `Mock cluster ready. Commands type karo — 'help' se list milegi. Tab = naam poora karo.`);
   setTimeout(() => input.focus(), 100);
 
   const cmdHistory = [];
@@ -85,6 +128,9 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       const raw = input.value.trim();
       input.value = '';
       if (raw) { cmdHistory.push(raw); histIdx = cmdHistory.length; run(raw); }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      complete();
     } else if (e.key === 'ArrowUp') {
       if (histIdx > 0) { histIdx--; input.value = cmdHistory[histIdx] || ''; }
       e.preventDefault();
@@ -170,6 +216,97 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     if (sim.hintsUsed >= hints.length) { print('hint', '💡 Aur hints nahi hain — tum kar sakte ho!'); return; }
     print('hint', `💡 Hint ${sim.hintsUsed + 1}: ${hints[sim.hintsUsed]}`);
     sim.hintsUsed++;
+  }
+
+  /* 🆘 solution ka pehla command jo learner ne abhi tak (kram mein) nahi chalaya */
+  function nextSolution() {
+    let p = 0;
+    for (const h of sim.history) if (p < solFlat.length && solFlat[p] === h) p++;
+    return p < solFlat.length ? solFlat[p] : null;
+  }
+  function showNextCommand() {
+    if (sim.done) return;
+    const cmd = nextSolution();
+    if (!cmd) { print('hint', '🆘 Solution ke saare commands chal chuke hain — checklist mein jo kaam ⬜ hai use dobara padho.'); return; }
+    sim.hintsUsed += 2;
+    const todo = (stage.tasks || []).find(t => { try { return !t.check(sim); } catch (e) { return true; } });
+    print('hint', `🆘 Agla command: ${cmd}` + (todo ? `\n   (kaam: ${plain(todo.text)})` : '') + '\n   Command input mein rakh diya hai — Enter dabao.');
+    input.value = cmd;
+    input.focus();
+  }
+  const plain = html => String(html).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const tip = text => print('hint', '💡 ' + text);
+
+  /* typo? sabse milta-julta shabd (edit distance) — "kya tumhara matlab … tha?" */
+  function closest(word, cands) {
+    if (!word) return null;
+    const dist = (a, b) => {
+      const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+      for (let j = 1; j <= b.length; j++) d[0][j] = j;
+      for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+          i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1] ? d[i - 2][j - 2] + 1 : Infinity);
+      return d[a.length][b.length];
+    };
+    let best = null, bd = Infinity;
+    [...new Set(cands)].forEach(c => { const x = dist(word, c); if (x < bd) { bd = x; best = c; } });
+    return best && best !== word && bd <= (word.length <= 4 ? 1 : 2) ? best : null;
+  }
+  const CMDS = ['kubectl', 'helm', 'argocd', 'ls', 'cat', 'bash', 'help', 'hint', 'clear'];
+  const VERBS = ['get', 'describe', 'logs', 'exec', 'apply', 'delete', 'top'];
+  /* object nahi mila → batao ki us kind ke kaun se naam maujood hain */
+  function notFoundTip(kind, name) {
+    const names = list(kind).map(r => r && r.name).filter(Boolean);
+    if (!names.length) { tip(`Is cluster mein koi ${kind} hai hi nahi.`); return; }
+    const near = closest(name, names);
+    tip((near ? `Kya tumhara matlab "${near}" tha? ` : '') + `Maujood ${kind}: ${names.slice(0, 8).join(', ')}${names.length > 8 ? ', …' : ''}  (Tab se naam poora hota hai)`);
+  }
+  /* command asli hai par is mission mein is roop mein scripted nahi → saaf batao ki kya chalega */
+  function notScripted(norm, what) {
+    const same = solFlat.filter(c => shapeOf(c) === shapeOf(norm) && c !== norm);
+    if (same.length) {
+      print('err', `Simulator '${what}' ko is roop mein nahi samajh paaya. Yeh simulator ki seema hai — tumhara idea sahi disha mein hai.`);
+      tip(`Is mission mein yeh roop chalta hai:  ${same[0]}`);
+      return;
+    }
+    print('err', `Is mission mein '${what}' ki zaroorat nahi hai (scripted nahi hai).`);
+    if (shapes.length) tip(`Is mission mein kaam aane wale commands: ${shapes.map(x => x.trim()).join('  ·  ')}`);
+  }
+
+  /* ---------- Tab completion: verb → kind → object ka naam / file ka naam ---------- */
+  const KIND_WORD = { pods: 'pods', deployments: 'deployments', services: 'services', nodes: 'nodes', configmaps: 'configmaps',
+    secrets: 'secrets', endpoints: 'endpoints', events: 'events', statefulsets: 'statefulsets', daemonsets: 'daemonsets',
+    ingresses: 'ingress', networkpolicies: 'networkpolicies', hpas: 'hpa', pvcs: 'pvc', pvs: 'pv', nodepools: 'nodepools',
+    nodeclaims: 'nodeclaims', ec2nodeclasses: 'ec2nodeclasses', apps: 'applications', appsets: 'applicationsets', rollouts: 'rollouts' };
+  function complete() {
+    const m = input.value.match(/^(.*?)(\S*)$/);
+    const head = m[1]; let last = m[2];
+    const toks = head.trim().replace(/^sudo\s+/, '').split(/\s+/).filter(Boolean);
+    if (toks[0] === 'k') toks[0] = 'kubectl';
+    const prevTok = toks[toks.length - 1];
+    const files = Object.keys(sim.files).concat(Object.keys(sim.saved || {}));
+    const namesOf = kind => list(kind).map(r => r && r.name).filter(x => typeof x === 'string');
+    const allNames = () => Object.keys(sim.cluster).flatMap(k => Array.isArray(sim.cluster[k]) ? namesOf(k) : []);
+    const solAt = n => solFlat.map(c => c.split(' ')).filter(t => t.length > n && t.slice(0, n).join(' ') === toks.join(' ')).map(t => t[n]);
+    let cands, prefix = '';
+    const sl = last.match(/^([a-z0-9]+)\/(.*)$/);
+    if (sl && RES_ALIAS[sl[1]]) { cands = namesOf(RES_ALIAS[sl[1]]); prefix = sl[1] + '/'; last = sl[2]; }
+    else if (!toks.length) cands = CMDS;
+    else if (prevTok === '-f' || prevTok === '--filename' || (/^(cat|bash|sh)$/.test(toks[0]) && toks.length === 1)) cands = files;
+    else if (toks[0] === 'kubectl' && toks.length === 1) cands = VERBS.concat(solAt(1));
+    else if (toks[0] === 'kubectl' && toks.length === 2 && /^(get|describe|delete|top|scale|edit|label|annotate|patch)$/.test(toks[1]))
+      cands = Object.keys(KIND_WORD).filter(k => list(k).length).map(k => KIND_WORD[k]);
+    else if (toks[0] === 'kubectl' && /^(logs|exec|debug|attach|port-forward|cp)$/.test(toks[1])) cands = namesOf('pods');
+    else if (toks[0] === 'kubectl' && toks.length >= 3 && RES_ALIAS[toks[2]] && RES_ALIAS[toks[2]] !== 'all') cands = namesOf(RES_ALIAS[toks[2]]);
+    else if ((toks[0] === 'helm' || toks[0] === 'argocd') && toks.length <= 2 && solAt(toks.length).length && !last.startsWith('-')) cands = solAt(toks.length).filter(x => /^[a-z-]+$/.test(x));
+    else cands = allNames().concat(files);
+    const hits = [...new Set(cands)].filter(c => c.startsWith(last)).sort();
+    if (!hits.length) return;
+    if (hits.length === 1) { input.value = head + prefix + hits[0] + ' '; return; }
+    let common = hits[0];
+    hits.forEach(h => { while (!h.startsWith(common)) common = common.slice(0, -1); });
+    if (common.length > last.length) input.value = head + prefix + common;
+    else print('sys', hits.join('   '));
   }
 
   /* ---------- resource lookup ---------- */
@@ -313,6 +450,11 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     return table(rows);
   }
 
+  function kindTip(word) {
+    const near = closest(word, Object.keys(RES_ALIAS));
+    const here = Object.keys(KIND_WORD).filter(k => list(k).length).map(k => KIND_WORD[k]);
+    tip((near ? `Kya tumhara matlab "${near}" tha? ` : '') + (here.length ? `Is cluster mein yeh kinds hain: ${here.join(', ')}` : ''));
+  }
   function describePod(p) {
     if (p.describe) return p.describe;
     let s = `Name:         ${p.name}\nNamespace:    ${p.ns || 'default'}\nNode:         ${p.node || '<none>'}\nStatus:       ${p.status}\nIP:           ${p.ip || '<none>'}\nRestarts:     ${p.restarts}`;
@@ -320,20 +462,32 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     return s;
   }
 
+  /* ---------- checklist: ✅ ho chuke kaam, 👉 abhi wala kaam ---------- */
+  const taskOk = [];
+  function paintTasks(announce) {
+    if (!stage.tasks) return;
+    // checklist ABHI ki state dikhaye: koi kaam bigad gaya toh tick hat jaata hai
+    // (success = KG.allOf(tasks) — sab ek saath sach hone chahiye)
+    let now = -1, fresh = false;
+    stage.tasks.forEach((t, i) => {
+      let ok = false;
+      try { ok = !!(t.check && t.check(sim)); } catch (e) { ok = false; }
+      const li = taskList.children[i];
+      if (li) { if (ok) li.classList.add('done'); else li.classList.remove('done'); li.classList.remove('now'); }
+      if (!ok && now < 0) now = i;
+      if (announce && ok && !taskOk[i]) { fresh = true; print('task', `✅ Kaam ${i + 1}/${stage.tasks.length} poora: ${plain(t.text)}`); }
+      taskOk[i] = ok;
+    });
+    if (now >= 0 && taskList.children[now]) taskList.children[now].classList.add('now');
+    if (fresh && now >= 0) print('task', `👉 Ab kaam ${now + 1}: ${plain(stage.tasks[now].text)}`);
+  }
+  paintTasks(false);
+
   /* ---------- checks after every command ---------- */
   function refresh() {
     // Karpenter ek controller hai — har command ke baad reconcile hota hai
     if (sim.cluster.karpenter && typeof KG.karpenter === 'object') KG.karpenter.reconcile(sim);
-    if (stage.tasks) {
-      // checklist ABHI ki state dikhaye: koi kaam bigad gaya toh tick hat jaata hai
-      // (success = KG.allOf(tasks) — sab ek saath sach hone chahiye)
-      stage.tasks.forEach((t, i) => {
-        let ok = false;
-        try { ok = !!(t.check && t.check(sim)); } catch (e) { ok = false; }
-        const li = taskList.children[i];
-        if (li) { if (ok) li.classList.add('done'); else li.classList.remove('done'); }
-      });
-    }
+    paintTasks(true);
     if (!sim.done && stage.success && stage.success(sim)) {
       sim.done = true;
       input.disabled = true;
@@ -477,7 +631,9 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     if (toks[0] === 'argocd' && typeof KG.argo === 'function') { KG.argo(sim, toks, print); return; }
     if (toks[0] === 'kubectl' && toks[1] === 'argo' && typeof KG.argo === 'function') { KG.argo(sim, toks, print); return; }
     if (toks[0] !== 'kubectl') {
-      print('err', `bash: ${toks[0]}: command not found — yahan sirf kubectl chalta hai 🙂 ('help' try karo)`);
+      print('err', `bash: ${toks[0]}: command not found — yahan kubectl${typeof KG.helm === 'function' ? ', helm, argocd' : ''} aur ls/cat/bash chalte hain ('help' try karo)`);
+      const near = closest(toks[0], CMDS);
+      if (near) tip(`Kya tumhara matlab "${near}" tha?  →  ${[near].concat(toks.slice(1)).join(' ')}`);
       return;
     }
     // API server down (etcd toota, certificate expire) → kubectl ka har command wahin atakta hai
@@ -516,7 +672,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       const blocks = [];
       for (const r of kinds) {
         const kind = RES_ALIAS[r];
-        if (!kind) { print('err', `error: the server doesn't have a resource type "${r}"`); return; }
+        if (!kind) { print('err', `error: the server doesn't have a resource type "${r}"`); kindTip(r); return; }
         const pick = items => {
           if (!names.length) return items;
           return names.map(n => items.find(x => x.name === n) || items.find(x => (x.name || '').startsWith(n))).filter(Boolean);
@@ -526,7 +682,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
         if (names.length && kind !== 'all' && kind !== 'events') {
           const found = pick(list(kind));
           const missing = names.filter(n => !found.some(x => x.name === n || (x.name || '').startsWith(n)));
-          if (missing.length) { print('err', `Error from server (NotFound): ${kind} "${missing[0]}" not found`); return; }
+          if (missing.length) { print('err', `Error from server (NotFound): ${kind} "${missing[0]}" not found`); notFoundTip(kind, missing[0]); return; }
         }
         let text;
         // -o yaml: Karpenter CRs ka asli-jaisa YAML (baaki kinds ka poora spec simulator mein nahi hai)
@@ -566,13 +722,21 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       let res = args[0], name = args[1];
       if (res && res.includes('/')) { const [a, b] = res.split('/'); res = a; name = b; }
       const kind = RES_ALIAS[res];
-      if (!kind) { print('err', `error: the server doesn't have a resource type "${res || ''}"`); return; }
-      if (!name && list(kind).length === 1) name = list(kind)[0].name;   // kubectl describe <kind> = sab dikhata hai
+      if (!kind) { print('err', `error: the server doesn't have a resource type "${res || ''}"`); kindTip(res); return; }
+      const descOne = obj => {
+        const kd = ['nodepools', 'nodeclaims', 'ec2nodeclasses'].includes(kind) && KG.karpenter && KG.karpenter.describe
+          ? KG.karpenter.describe(sim, kind, obj) : null;
+        return kind === 'pods' ? describePod(obj) : (obj.describe || kd || `Name: ${obj.name}\n(describe output is mission mein limited hai)`);
+      };
+      // asli kubectl: naam na do toh us kind ke SAARE objects describe hote hain
+      if (!name) {
+        if (!list(kind).length) { print('ok', 'No resources found in default namespace.'); return; }
+        print('ok', list(kind).map(descOne).join('\n\n\n'));
+        return;
+      }
       const obj = find(kind, name);
-      if (!obj) { print('err', `Error from server (NotFound): ${kind} "${name || ''}" not found`); return; }
-      const kd = ['nodepools', 'nodeclaims', 'ec2nodeclasses'].includes(kind) && KG.karpenter && KG.karpenter.describe
-        ? KG.karpenter.describe(sim, kind, obj) : null;
-      print('ok', kind === 'pods' ? describePod(obj) : (obj.describe || kd || `Name: ${obj.name}\n(describe output is mission mein limited hai)`));
+      if (!obj) { print('err', `Error from server (NotFound): ${kind} "${name || ''}" not found`); notFoundTip(kind, name); return; }
+      print('ok', descOne(obj));
       return;
     }
 
@@ -580,7 +744,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       const args = positional(toks.slice(2), ['-c', '--container', '-l', '--selector', '--tail', '--since', '--since-time']);
       const want = podName(args[0]);
       const p = find('pods', want);
-      if (!p) { print('err', `Error from server (NotFound): pods "${want || ''}" not found`); return; }
+      if (!p) { print('err', `Error from server (NotFound): pods "${want || ''}" not found`); notFoundTip('pods', want); return; }
       const cname = p.container || p.name.replace(/(-[a-z0-9]{6,10})?-[a-z0-9]{5}$/, '');
       // asli kubelet: --previous sirf tab jab container kam se kam ek baar mar ke restart hua ho
       if (prev && !p.prevLogs && !p.restarts) {
@@ -607,17 +771,17 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     if (verb === 'delete') {
       const args = positional(toks.slice(2), ['--grace-period', '-l', '--selector', '--cascade', '-f', '--filename']);
       if (toks.includes('-f') || toks.includes('--filename')) {
-        print('err', `Is mission mein 'delete -f' scripted nahi hai — goal padho ('hint' bhi le sakte ho)`);
+        notScripted(norm, 'kubectl delete -f');
         return;
       }
       let res = args[0], names = args.slice(1);
       if (res && res.includes('/')) { const [a, b] = res.split('/'); res = a; names = [b, ...names]; }
       const kind = RES_ALIAS[res];
-      if (kind !== 'pods') { print('err', 'Is mission mein sirf pods delete kar sakte ho.'); return; }
+      if (kind !== 'pods') { notScripted(norm, `kubectl delete ${res || ''}`.trim()); return; }
       if (!names.length) { print('err', 'error: resource(s) were provided, but no name was specified'); return; }
       for (const n of names) {
         const p = find('pods', n);
-        if (!p) { print('err', `Error from server (NotFound): pods "${n}" not found`); continue; }
+        if (!p) { print('err', `Error from server (NotFound): pods "${n}" not found`); notFoundTip('pods', n); continue; }
         const pods = list('pods');
         pods.splice(pods.indexOf(p), 1);
         print('ok', `pod "${p.name}" deleted`);
@@ -637,7 +801,12 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       if (!fname) { print('err', 'error: must specify -f <file>'); return; }
       fname = fname.replace(/^\.\//, '');
       const f = sim.files[fname];
-      if (!f) { print('err', `error: the path "${fname}" does not exist ('ls' se files dekho)`); return; }
+      if (!f) {
+        print('err', `error: the path "${fname}" does not exist`);
+        const fl = Object.keys(sim.files);
+        tip(fl.length ? `Is mission ki files: ${fl.join(', ')}` : 'Is mission mein koi file nahi hai — fix kisi aur command se hoga.');
+        return;
+      }
       if (/\.sh$/.test(fname)) { print('err', `error: error parsing ${fname}: error converting YAML to JSON — yeh shell script hai, manifest nahi. Chalane ke liye: bash ${fname}`); return; }
       const msg = f.apply(sim);
       print('ok', msg || `${fname} applied`);
@@ -650,7 +819,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       const args = positional(toks.slice(2, ddi > -1 ? ddi : undefined), ['-c', '--container']);
       const want = podName(args[0]);
       const p = find('pods', want);
-      if (!p) { print('err', `Error from server (NotFound): pods "${want || ''}" not found`); return; }
+      if (!p) { print('err', `Error from server (NotFound): pods "${want || ''}" not found`); notFoundTip('pods', want); return; }
       const cmd = ddi > -1 ? toks.slice(ddi + 1).join(' ') : '';
       if (!cmd) { print('err', 'error: you must specify a command after --  (e.g. kubectl exec ' + p.name + ' -- ls)'); return; }
       const outText = p.exec && p.exec[cmd];
@@ -697,11 +866,10 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       'uncordon', 'drain', 'taint', 'expose', 'run', 'port-forward', 'auth', 'config', 'cp', 'explain',
       'api-resources', 'api-versions', 'cluster-info', 'wait', 'debug', 'replace', 'autoscale', 'certificate',
       'attach', 'proxy', 'kustomize', 'diff', 'events'];
-    if (REAL_VERBS.includes(verb)) {
-      print('err', `Is mission mein 'kubectl ${verb}' scripted nahi hai — mission ka goal padho, koi aur raasta hai. ('hint' bhi le sakte ho)`);
-      return;
-    }
+    if (REAL_VERBS.includes(verb)) { notScripted(norm, `kubectl ${verb}`); return; }
 
     print('err', `error: unknown command "${verb}" for "kubectl" ('help' se supported commands dekho)`);
+    const nearVerb = closest(verb, VERBS.concat(REAL_VERBS));
+    if (nearVerb) tip(`Kya tumhara matlab "kubectl ${nearVerb}" tha?`);
   }
 };

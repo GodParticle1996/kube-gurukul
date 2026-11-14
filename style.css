@@ -1260,3 +1260,49 @@ button:focus:not(:focus-visible) { outline: none; }
   .dd-yaml, .rl-cmd-pre { font-size: .78rem; }      /* YAML/commands: indentation matter karti hai → wrap nahi, scroll */
   .dd-scroll-hint { display: block; }
 }
+
+
+/* ---------- 2026-11 UX pass: terminal madad, flow ke chhupe kadam, lesson pager, raasta ---------- */
+.term-tasks li.now { color: var(--text); font-weight: 600; background: #ffb34714; border-radius: 6px; padding-left: 6px; margin-left: -6px; }
+.term-tasks li.now::before { content: '👉 '; }
+.term-out .t-task { color: var(--good); font-weight: 600; }
+.term-palette { margin-top: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.tp-note { font-size: .84rem; color: var(--muted); line-height: 1.55; margin-bottom: 10px; }
+.tp-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.tp-chip {
+  background: #05080f; border: 1px solid var(--border); color: #a8e6cf; border-radius: 8px; padding: 6px 10px;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: .82rem; cursor: pointer;
+}
+.tp-chip:hover { border-color: var(--accent); color: var(--text); }
+.fl-step.future { display: none; }
+.fl-left { align-self: center; font-size: .82rem; color: var(--muted); margin-left: auto; }
+
+.resume-card.nextup { border-color: #34d39966; }
+.group-head { margin: 26px 0 0; }
+.group-head h3 { margin: 0 0 4px; font-size: 1.08rem; }
+.group-head p { margin: 0; color: var(--muted); font-size: .88rem; line-height: 1.5; }
+.trackcard { position: relative; }
+.trackcard.here { border-color: #ffb34799; box-shadow: 0 0 0 2px #ffb34722; }
+.tk-here { position: absolute; top: 12px; right: 12px; font-size: .72rem; font-weight: 700; color: var(--gold);
+  background: #ffb3471a; border: 1px solid #ffb34766; border-radius: 20px; padding: 2px 9px; }
+.tk-next { font-size: .82rem; color: var(--text); margin: 6px 0 2px; line-height: 1.4; }
+.lesson-pager { margin: 14px 0; }
+.lp-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.lp-count { font-size: .8rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--accent); }
+.lp-dots { display: flex; gap: 6px; }
+.lp-dots i { width: 22px; height: 5px; border-radius: 3px; background: var(--border); display: block; }
+.lp-dots i.seen { background: #34d39988; }
+.lp-dots i.on { background: var(--accent); }
+.lp-mode { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: .8rem; cursor: pointer; text-decoration: underline; }
+.lp-mode:hover { color: var(--text); }
+.lp-nav { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+.lp-end { font-size: .9rem; color: var(--good); }
+.stage-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.stage-bar .crumb { margin-bottom: 0; }
+.stage-pips { display: flex; gap: 5px; }
+.stage-pips i { width: 18px; height: 5px; border-radius: 3px; background: var(--border); display: block; }
+.stage-pips i.done { background: var(--good); }
+.stage-pips i.on { background: var(--gold); }
+.stage-leave { margin-left: auto; background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 8px;
+  padding: 4px 10px; font-size: .76rem; cursor: pointer; }
+.stage-leave:hover { color: var(--text); border-color: var(--muted); }

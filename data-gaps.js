@@ -395,7 +395,7 @@ spec:
       {
         type: 'flow',
         title: '🎬 Flow: kubectl apply se etcd tak — har darwaza',
-        instructions: '▶ dabao. Har padav par kaun rok sakta hai, lane se dikhega. Teen sawal beech mein aayenge.',
+        instructions: '"Agla kadam" dabao. Har padav par kaun rok sakta hai, lane se dikhega. Teen sawal beech mein aayenge.',
         lanes: [
           { id: 'client', label: 'kubectl', icon: '💻' },
           { id: 'authn', label: 'Authentication', icon: '🪪' },

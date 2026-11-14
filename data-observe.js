@@ -1030,11 +1030,415 @@ pay-api   Deployment/pay-api   &lt;unknown&gt;/60%   2</pre>
 kubectl describe hpa &lt;naam&gt;             # Events padho
 kubectl top pods                        # metrics-server chal raha hai?</pre>`,
     cards: [
+      /* (KEDA aur boss level is file ke aakhir mein alag registerLevels call mein hain) */
       { front: 'HPA ka formula?', back: '<code>desired = ceil(abhi ke replicas × abhi ka metric ÷ target metric)</code>. Har 15 s. Jaise ceil(2 × 150 ÷ 60) = 5.' },
       { front: 'HPA ka "CPU 60%" kis ka 60% hai?', back: 'Pod ki <b>CPU request</b> ka. Request na ho → <code>&lt;unknown&gt;</code> → HPA kuch nahi karta.' },
       { front: 'TARGETS <code>&lt;unknown&gt;</code> ki do aam wajah?', back: '(1) metrics-server nahi chal raha (<code>kubectl top</code> fail). (2) container mein CPU request nahi ("missing request for cpu"). <code>kubectl describe hpa</code> ke Events dekho.' },
       { front: 'HPA scale-down mein 5 minute kyun leta hai?', back: 'Stabilization window (default 300 s): pichhle 5 min ka sabse bada jawab maana jaata hai, taaki pods upar-neeche na jhoolen.' },
       { front: 'HPA + GitOps ka jaal?', back: 'Deployment ke YAML mein <code>replicas</code> likha ho toh ArgoCD har sync par HPA ka number mita deta hai. Hal: replicas ko YAML se hatao.' },
+    ],
+  },
+]);
+
+/* ------------------------------------------------------------------ */
+/* LEVEL 5 — KEDA (+ VPA, kaun sa autoscaler kab)                      */
+/* ------------------------------------------------------------------ */
+VISUALS['as-keda'] = {
+  t: 'KEDA — queue ki lambai se scale, khaali ho toh zero',
+  scene: {
+    intro: '<b>Sawal:</b> <code>notify</code> worker ki queue mein 30,000 SMS pade hain, par worker ka CPU sirf 20% hai. CPU wala HPA kuch nahi karega. Phir kaun scale karega?',
+    aria: 'KEDA ka kaam: ScaledObject, queue ginna, zero se ek, HPA ko number dena, wapas zero — 7 kadam',
+    nodes: [
+      { id: 'so', col: 0, row: 0, icon: '📝', label: 'ScaledObject', sub: 'queueLength: 100', tone: 'gold', about: 'Tumhara likha hua niyam: "notify ko is SQS queue ke hisaab se scale karo; har pod ke hisse 100 messages".' },
+      { id: 'keda', col: 1, row: 0, icon: '⚡', label: 'KEDA', sub: 'queue ginta hai', tone: 'accent', about: 'KEDA cluster ke andar chalta hai. KEDA bahar ke srot (SQS, Kafka, Prometheus…) se number padhta hai.' },
+      { id: 'sqs', col: 2, row: 0, icon: '📬', label: 'SQS queue', sub: '0 messages', about: 'notify ke bhejne wale SMS yahan line mein lagte hain. Queue cluster ke bahar hai (AWS).' },
+      { id: 'hpa', col: 0, row: 1, icon: '⚖️', label: 'HPA (KEDA ka banaya)', sub: 'keda-hpa-notify', about: 'KEDA tumhare liye ek HPA khud banata hai. 1 se N tak ka scale wahi purana HPA formula karta hai.' },
+      { id: 'dep', col: 1, row: 1, icon: '🚀', label: 'Deployment: notify', sub: 'replicas: 0', about: 'Raat ko queue khaali hai, toh notify ke 0 pods hain. 0 pods = ₹0.' },
+      { id: 'pods', col: 2, row: 1, icon: '📦', label: 'notify pods', sub: 'koi nahi', tone: 'muted' },
+    ],
+    steps: [
+      { from: 'so', to: 'keda', label: 'niyam', tone: 'gold', say: 'Tum ek <b>ScaledObject</b> likhte ho. <b>KEDA</b> ScaledObject padhta hai: kaun sa Deployment, kaun si queue, har pod ke hisse kitne messages.' },
+      { from: 'keda', to: 'sqs', label: 'kitne messages?', say: '<b>KEDA</b> har 30 second mein <b>SQS queue</b> se poochhta hai: "kitne messages pade hain?" Abhi 0. Isliye notify ke 0 pods hain.' },
+      { at: ['sqs'], set: { sqs: { sub: '30,000 messages', tone: 'bad' } }, say: 'Diwali offer shuru hua. <b>SQS queue</b> mein achanak 30,000 SMS aa gaye.' },
+      { from: 'keda', to: 'dep', label: '0 → 1', tone: 'good', set: { dep: { sub: 'replicas: 1' }, pods: { sub: '1 pod', tone: 'good' } }, say: '<b>KEDA</b> ko queue mein messages dikhte hain. KEDA khud <b>Deployment: notify</b> ko 0 se 1 par le jaata hai. (HPA 0 pods se shuru nahi kar sakta — 0 se 1 ka kaam KEDA ka hai.)' },
+      { from: 'keda', to: 'hpa', label: 'queue = 30,000', say: '<b>KEDA</b> queue ki lambai <b>HPA (KEDA ka banaya)</b> ko deta hai, ek "external metric" ki tarah. Ab HPA ke paas CPU ki jagah queue ka number hai.' },
+      { from: 'hpa', to: 'dep', label: 'replicas: 20', tone: 'good', set: { dep: { sub: 'replicas: 20' }, pods: { sub: '20 pods', tone: 'good' } }, say: '<b>HPA (KEDA ka banaya)</b> wahi formula lagata hai: 30,000 ÷ 100 = 300 pods. Par ScaledObject mein <code>maxReplicaCount: 20</code> hai, toh HPA 20 par rukta hai. 20 pods queue khaali karne lagte hain.' },
+      { at: ['keda', 'sqs'], set: { sqs: { sub: '0 messages', tone: '' }, dep: { sub: 'replicas: 0' }, pods: { sub: 'koi nahi', tone: 'muted' } }, say: 'Queue khaali ho gayi. <b>KEDA</b> 5 minute rukta hai (cooldownPeriod), phir notify ko wapas 0 par le jaata hai. Jab kaam nahi, tab pods nahi.' },
+    ],
+  },
+};
+
+/* ------------------------------------------------------------------ */
+/* LEVEL 6 — BOSS                                                      */
+/* ------------------------------------------------------------------ */
+VISUALS['ob-boss'] = {
+  t: 'Ghatna ka chakkar — pata chalna, dhoondhna, sambhalna',
+  scene: {
+    intro: 'Is track ke saare auzaar ek ghatna mein isi kram mein kaam aate hain.',
+    aria: 'ghatna ke waqt auzaaron ka kram: alert, metric, trace, log, autoscaler — 5 kadam',
+    nodes: [
+      { id: 'alert', col: 0, row: 0, icon: '📟', label: 'Alert', sub: 'burn rate + for', tone: 'bad', about: 'Sirf user ke dard par page. Burn rate batata hai kitna bura, "for" batata hai kitni der se.' },
+      { id: 'metric', col: 1, row: 0, icon: '📊', label: 'Metric', sub: 'KYA gadbad hai', tone: 'accent', about: 'Traffic, errors, latency, saturation. Daayra chhota karta hai: kaun sa endpoint, kab se.' },
+      { id: 'trace', col: 2, row: 0, icon: '🧵', label: 'Trace', sub: 'KAHAN — kis service mein', about: 'Ek request ka poora raasta. Jis span ka apna samay zyada, wahi doshi.' },
+      { id: 'log', col: 2, row: 1, icon: '📜', label: 'Log', sub: 'KYUN — kya likha tha', about: 'Usi service ke logs, usi trace_id se.' },
+      { id: 'scale', col: 1, row: 1, icon: '⚖️', label: 'HPA / KEDA', sub: 'load sambhalo', tone: 'good', about: 'HPA: CPU jaise number par. KEDA: queue jaise bahar ke number par, zero tak.' },
+    ],
+    steps: [
+      { at: ['alert'], say: '<b>Alert</b> tabhi bajta hai jab user ko dard ho: errors ya latency, waade (SLO) ke muqable mein. CPU 85% par nahi.' },
+      { from: 'alert', to: 'metric', label: 'dashboard kholo', say: '<b>Metric</b> se daayra chhota karo: kaun sa endpoint, kab se, traffic kitna, pods kitne bhare. Restart se pehle <b>dekho</b>.' },
+      { from: 'metric', to: 'trace', label: 'exemplar', say: '<b>Trace</b> batati hai ki samay ya error raaste ki kis service mein hai. Sabse lamba span nahi — sabse zyada <b>apna samay</b> wala span.' },
+      { from: 'trace', to: 'log', label: 'trace_id', say: '<b>Log</b> mein usi trace_id ko dhoondho. Wajah aksar ek hi line mein likhi hoti hai.' },
+      { from: 'log', to: 'scale', label: 'load ya bug?', tone: 'good', say: 'Wajah <b>load</b> hai toh <b>HPA / KEDA</b> ko dekho: TARGETS mein number hai ya <code>&lt;unknown&gt;</code>? replicas chhat (max) par atke hain? Wajah <b>bug</b> hai toh rollback. Dono mein fark karna hi is track ka hunar hai.' },
+    ],
+  },
+};
+
+KG.registerLevels('observe', [
+  /* ================================================================== */
+  {
+    id: 'as-keda',
+    icon: '⚡',
+    title: 'KEDA — queue ke hisaab se scale, aur kaun sa autoscaler kab',
+    badge: 'Queue Kotwal',
+    objectives: [
+      'Worker ke liye CPU <b>galat</b> signal kyun hai',
+      'KEDA: <code>ScaledObject</code>, queue ki lambai, aur <b>zero tak</b> scale',
+      'VPA: pod ka <b>size</b> badalna (replicas nahi)',
+      'Chaar autoscalers mein se sahi chunna: HPA, KEDA, VPA, Karpenter',
+    ],
+    lesson: [
+      `<h3>📬 Problem: line lambi hai, par worker "vyast" nahi dikhta</h3>
+       <p>ChaiPay ka <code>notify</code> worker SQS queue se SMS uthata hai aur SMS provider ko bhejta hai.</p>
+       <p>Diwali offer par queue mein <b>30,000</b> SMS jama ho gaye. <code>notify</code> ke 2 pods hain. HPA laga hai (CPU 60%). Par HPA <b>kuch nahi karta</b>. Kyun?</p>
+       <p><b>Kyunki notify ka CPU sirf 20% hai.</b> Worker ka zyadatar samay SMS provider ke jawab ke <i>intezaar</i> mein jaata hai. Intezaar mein CPU nahi lagta.</p>
+       <p><b>Asli baat:</b> CPU batata hai "pod kitna mehnat kar raha hai". Worker ke liye sahi sawal hai "<b>kitna kaam pada hai</b>" — yaani queue ki lambai.
+       Galat number par scale karoge toh sahi waqt par kuch nahi hoga.</p>`,
+      `<h3>⚡ KEDA: bahar ke number se scale</h3>
+       <p><b>KEDA</b> cluster ka ek add-on hai. KEDA bahar ke srot (SQS, Kafka, Prometheus ka koi query, ghadi) se number padhta hai.</p>
+       <pre>apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: notify
+spec:
+  scaleTargetRef:
+    name: notify              # kaun sa Deployment
+  minReplicaCount: 0          # kaam nahi → 0 pods
+  maxReplicaCount: 20         # chhat
+  triggers:
+    - type: aws-sqs-queue
+      metadata:
+        queueURL: https://sqs.ap-south-1.amazonaws.com/…/notify
+        queueLength: "100"    # har pod ke hisse 100 messages</pre>
+       <p><b>KEDA do kaam karta hai:</b></p>
+       <ul>
+         <li><b>0 ↔ 1:</b> queue mein kuch aaya → KEDA khud pehla pod chalata hai. Queue khaali → 5 minute baad wapas 0.</li>
+         <li><b>1 ↔ N:</b> KEDA ek HPA bana deta hai aur use queue ka number deta hai. Hisaab wahi HPA ka formula: <code>30,000 ÷ 100 = 300</code> → chhat 20.</li>
+       </ul>`,
+      `<h3>🧭 Chaar autoscalers — har ek ka alag sawal</h3>
+       <table>
+         <tr><th>Autoscaler</th><th>Kya badalta hai</th><th>Kab</th></tr>
+         <tr><td><b>HPA</b></td><td>Pods ki <b>ginti</b></td><td>Web/API: load badhe toh CPU badhta hai</td></tr>
+         <tr><td><b>KEDA</b></td><td>Pods ki <b>ginti</b> (zero tak)</td><td>Worker: kaam queue/event mein pada hai</td></tr>
+         <tr><td><b>VPA</b></td><td>Ek pod ka <b>size</b> (requests)</td><td>App jise zyada pods nahi, bada pod chahiye; ya sirf sahi naap ki salaah</td></tr>
+         <tr><td><b>Karpenter</b> / Cluster Autoscaler</td><td><b>Nodes</b> ki ginti</td><td>Pods Pending hain kyunki nodes par jagah nahi</td></tr>
+       </table>
+       <p><b>VPA</b> pichhle usage ko dekh kar batata hai ki requests kitni honi chahiye. <code>updateMode: "Off"</code> mein VPA sirf <b>salaah</b> deta hai
+       (<code>kubectl describe vpa</code>) — yahi sabse surakshit shuruaat hai. Doosre modes mein VPA pod ko naye size ke saath dobara banata hai.</p>
+       <p><b>Jaal:</b> ek hi Deployment par HPA (CPU) aur VPA (CPU) dono mat lagao. HPA "CPU zyada hai, pods badhao" kehta hai;
+       VPA "CPU zyada hai, request badhao" kehta hai — aur request badhte hi HPA ka % gir jaata hai. Dono ek doosre ko kaat-te hain.</p>`,
+    ],
+    stages: [
+      {
+        type: 'bins',
+        title: 'Kaun sa autoscaler?',
+        instructions: 'Har haalat mein poochho: yahan kya badalna hai — pods ki ginti, pod ka size, ya nodes? Aur sahi number kaun sa hai?',
+        bins: [
+          { id: 'hpa', label: '⚖️ HPA (CPU par ginti)' },
+          { id: 'keda', label: '⚡ KEDA (event par ginti)' },
+          { id: 'vpa', label: '📏 VPA (pod ka size)' },
+          { id: 'node', label: '🌲 Karpenter (nodes)' },
+        ],
+        items: [
+          { text: 'pay-api: traffic badhne par har pod ka CPU badhta hai', bin: 'hpa', explain: 'Load aur CPU saath chalte hain. HPA ka seedha case.' },
+          { text: 'notify worker: queue mein 30,000 SMS, par CPU 20%', bin: 'keda', explain: 'Kaam queue mein pada hai, CPU mein nahi dikhta. KEDA queue ki lambai par scale karta hai.' },
+          { text: 'Raat ko report banane wala worker din bhar khaali baitha rehta hai', bin: 'keda', explain: 'KEDA hi zero tak scale kar sakta hai. Din mein 0 pods, kaam aaye toh pods.' },
+          { text: 'ledger (1 replica wala database) ko kitni memory request deni chahiye, pata nahi', bin: 'vpa', explain: 'Ginti nahi, size ka sawal hai. VPA "Off" mode mein usage dekh kar request ki salaah deta hai.' },
+          { text: '6 pods Pending hain: "0/5 nodes are available: Insufficient cpu"', bin: 'node', explain: 'Pods ki ginti sahi hai, nodes par jagah nahi. Karpenter naya node laata hai.' },
+          { text: 'Kafka consumer: topic par lag 2 lakh messages tak pahunch gaya', bin: 'keda', explain: 'Consumer lag ek bahar ka number hai. KEDA ka kafka trigger lag par scale karta hai.' },
+        ],
+      },
+      {
+        type: 'slider',
+        title: '🎚️ Lab: Diwali ki queue 20 minute mein khaali karo',
+        instructions: 'Teen knob ghumao. KEDA ka hisaab har badlaav par dobara chalta hai.',
+        scenario: `<b>notify</b> ki SQS queue mein <b>30,000 SMS</b> pade hain. Offer 20 minute mein khatam hoga.
+          <ul><li>Ek notify pod <b>150 SMS/minute</b> bhej sakta hai</li>
+          <li>SMS provider ki seema: <b>3,000 SMS/minute</b> — isse zyada bheja toh provider mana kar dega</li>
+          <li>Raat ko queue khaali rehti hai</li></ul>`,
+        goal: 'ScaledObject aisa banao ki: queue 20 minute ke andar khaali ho, SMS provider ki seema (3,000/minute) na toote, aur raat ko khaali queue par 0 pods chalen.',
+        knobs: [
+          { id: 'max', label: 'maxReplicaCount', min: 1, max: 60, step: 1, value: 5, unit: ' pods' },
+          { id: 'ql', label: 'queueLength (har pod ke hisse)', min: 50, max: 1000, step: 50, value: 50, unit: ' msg' },
+          { id: 'min', label: 'minReplicaCount', min: 0, max: 5, step: 1, value: 2, unit: ' pods' },
+        ],
+        readouts: k => {
+          const want = Math.ceil(30000 / k.ql), pods = Math.max(k.min, Math.min(k.max, want)), rate = pods * 150, mins = 30000 / rate;
+          return [
+            { label: 'KEDA ka hisaab', value: `ceil(30000 ÷ ${k.ql}) = ${want}`, state: 'neutral', hint: 'queue ki lambai ÷ queueLength' },
+            { label: 'Asal mein pods', value: pods + (want > k.max ? ' (chhat)' : ''), state: 'neutral', hint: want > k.max ? `maxReplicaCount ${k.max} ne roka` : 'chhat se neeche' },
+            { label: 'Queue khaali hone ka samay', value: mins.toFixed(1) + ' min', state: mins <= 20 ? 'good' : 'bad', hint: `30,000 ÷ (${pods} pods × 150/min)` },
+            { label: 'SMS provider par load', value: rate.toLocaleString('en-IN') + '/min', state: rate <= 3000 ? 'good' : 'bad', hint: rate <= 3000 ? 'seema 3,000/min ke andar' : 'seema paar — provider SMS lautayega' },
+            { label: 'Raat ko (queue khaali)', value: k.min + ' pods', state: k.min === 0 ? 'good' : 'bad', hint: k.min === 0 ? 'kaam nahi → pods nahi → ₹0' : 'khaali baithe pods ka paisa' },
+          ];
+        },
+        bars: k => {
+          const pods = Math.max(k.min, Math.min(k.max, Math.ceil(30000 / k.ql))), rate = pods * 150;
+          return [{ label: 'Provider ki seema', pct: Math.min(100, rate / 60), state: rate <= 3000 ? 'good' : 'bad', cap: rate.toLocaleString('en-IN') + ' / 3,000' }];
+        },
+        verdict: k => {
+          const pods = Math.max(k.min, Math.min(k.max, Math.ceil(30000 / k.ql))), rate = pods * 150, mins = 30000 / rate;
+          if (rate > 3000) return { ok: false, text: `${pods} pods ${rate.toLocaleString('en-IN')} SMS/minute bhej rahe hain. SMS provider 3,000 ke baad mana kar dega — zyada pods se kaam tez nahi, toota hua hoga.` };
+          if (mins > 20) return { ok: false, text: `Sirf ${pods} pods hain. Queue ${mins.toFixed(0)} minute mein khaali hogi — offer tab tak khatam.` };
+          if (k.min !== 0) return { ok: false, text: 'Din ka kaam theek hai. Par raat ko queue khaali hone par bhi pods chalte rahenge. KEDA ka faayda zero tak jaana hai.' };
+          return { ok: true, text: 'Queue samay par khaali hogi, provider ki seema nahi tootegi, aur raat ko 0 pods chalenge.' };
+        },
+        check: k => { const pods = Math.max(k.min, Math.min(k.max, Math.ceil(30000 / k.ql))), rate = pods * 150; return rate <= 3000 && 30000 / rate <= 20 && k.min === 0; },
+        lesson: '<b>maxReplicaCount</b> sirf bill ki chhat nahi hai — yahan woh neeche wali service (SMS provider) ki <b>hifazat</b> bhi hai. Autoscaling ka sawal sirf "kitna tez" nahi hota; yeh bhi hota hai ki "jise main call kar raha hoon, woh kitna jhel sakta hai".',
+        quiz: {
+          q: 'Queue mein 30,000 messages, queueLength 100, maxReplicaCount 20. notify ke kitne pods chalenge?',
+          choices: ['300 — 30,000 ÷ 100', '20 — hisaab 300 hai par chhat 20', '100 — queueLength jitne', '1 — KEDA sirf 0 se 1 karta hai'],
+          answer: 1,
+          explain: 'KEDA ka diya number HPA ke formula mein jaata hai: 30,000 ÷ 100 = 300. Par maxReplicaCount 20 hai, toh pods 20 par ruk jaate hain.',
+        },
+      },
+      {
+        type: 'quiz',
+        title: 'Pakka karo — KEDA aur VPA',
+        questions: [
+          {
+            q: 'notify ke 0 pods hain aur queue mein pehla message aaya. 0 se 1 pod kaun banata hai?',
+            choices: [
+              'HPA — HPA ka formula 0 pods par bhi chalta hai',
+              'KEDA khud — HPA 0 pods se hisaab shuru nahi kar sakta',
+              'Scheduler — Scheduler Pending kaam dekh kar pod bana deta hai',
+              'SQS — queue cluster ko seedha naya pod banane ko kehti hai',
+            ],
+            answer: 1,
+            explain: 'HPA ka formula "abhi ke replicas × …" se shuru hota hai; 0 × kuch bhi = 0. Isliye 0 ↔ 1 (activation) KEDA khud karta hai, aur 1 ↔ N ke liye KEDA ka banaya HPA kaam karta hai.',
+          },
+          {
+            q: 'Ek Deployment par CPU wala HPA laga hai. Koi usi par VPA bhi "Auto" mode mein laga deta hai. Kya hoga?',
+            choices: [
+              'Dono milkar behtar kaam karenge: HPA ginti badhayega aur VPA size',
+              'VPA apne aap band ho jayega kyunki HPA ki priority zyada hoti hai',
+              'Dono ek hi number (CPU) par ulte faisle lenge aur ladte rahenge',
+              'API Server VPA object ko reject kar dega kyunki HPA pehle se hai',
+            ],
+            answer: 2,
+            explain: 'VPA request badhata hai → HPA ka % (jo request ke muqable mein hai) gir jaata hai → HPA pods kam karta hai → load phir badhta hai. Ek hi resource par dono mat lagao. VPA ko "Off" (sirf salaah) mein rakhna surakshit hai.',
+          },
+        ],
+      },
+    ],
+    interview: {
+      title: 'Interview Round — event-driven scaling',
+      instructions: 'Interviewer dekhega ki tum "HPA laga do" se aage sochte ho ya nahi. 🎤',
+      questions: [
+        {
+          q: '"Queue se kaam uthane wale worker par CPU wala HPA aksar kaam kyun nahi karta?"',
+          choices: [
+            'Kyunki HPA sirf Deployments par chalta hai aur workers hamesha StatefulSet hote hain',
+            'Kyunki worker ka CPU intezaar mein kam rehta hai jabki kaam queue mein jama hota rehta hai',
+            'Kyunki queue wale workers mein CPU request lagana allowed nahi hota',
+            'Kyunki metrics-server workers ka CPU naap hi nahi sakta',
+          ],
+          answer: 1,
+          explain: 'Scale us number par karo jo kaam ko naapta ho. Worker ke liye woh number queue ki lambai / consumer lag hai. KEDA yahi number HPA tak pahunchata hai.',
+        },
+        {
+          q: '"KEDA aur HPA ka rishta kya hai? Kya KEDA HPA ki jagah leta hai?"',
+          choices: [
+            'Haan — KEDA lagane ke baad HPA controller ko cluster se hatana padta hai',
+            'Nahi — KEDA ek HPA banata hai aur use bahar ka metric deta hai',
+            'Nahi — KEDA sirf nodes ko scale karta hai aur HPA pods ko',
+            'Haan — KEDA apna alag formula use karta hai jiska HPA se koi rishta nahi',
+          ],
+          answer: 1,
+          explain: 'KEDA HPA ke upar bana hai. kubectl get hpa mein keda-hpa-NAAM dikhta hai. Isi liye us Deployment par apna alag HPA mat lagao — do HPA ek hi Deployment par ladenge.',
+        },
+        {
+          q: '"maxReplicaCount ko 500 rakh dein taaki queue hamesha jaldi khaali ho. Koi dikkat?"',
+          choices: [
+            'Koi dikkat nahi — KEDA khud samajh jaata hai ki kitne pods kaafi hain',
+            'Haan — KEDA 100 se zyada replicas ko support hi nahi karta',
+            'Nahi — zyada pods se sirf thoda sa bill badhta hai, aur kuch nahi',
+            'Haan — neeche ki service ki seema toot sakti hai aur bill beqaabu ho sakta hai',
+          ],
+          answer: 3,
+          explain: 'Chhat do cheezon ki hifazat hai: tumhara bill aur woh service jise worker call karta hai. 500 workers ek saath database par toot padein toh database girega — aur queue aur dheemi khaali hogi.',
+        },
+      ],
+    },
+    success: [
+      'Main bata sakta hoon ki worker ke liye CPU galat signal kyun hai',
+      'Main ek ScaledObject padh kar bata sakta hoon ki kitne pods chalenge',
+      'Main HPA, KEDA, VPA aur Karpenter mein se sahi autoscaler chun sakta hoon',
+    ],
+    homework: `<p>Apne cluster ke workloads ki list banao aur har ek ke aage likho:</p>
+      <pre>kubectl get deploy,sts -A
+# Har ek ke liye:  load ka sahi number kya hai?   (CPU / queue / lag / kuch nahi)
+#                  kaun sa autoscaler?            (HPA / KEDA / VPA-Off / koi nahi)</pre>`,
+    cards: [
+      { front: 'Worker ke liye CPU wala HPA kyun fail hota hai?', back: 'Worker ka CPU intezaar mein kam rehta hai, jabki kaam queue mein jama hota hai. Sahi number: queue ki lambai / lag.' },
+      { front: 'KEDA ke do kaam?', back: '(1) <b>0 ↔ 1</b>: KEDA khud (activation). (2) <b>1 ↔ N</b>: KEDA ek HPA banata hai aur use bahar ka metric deta hai.' },
+      { front: 'ScaledObject: queueLength 100, queue mein 30,000, maxReplicaCount 20 → pods?', back: '30,000 ÷ 100 = 300 → chhat 20 → <b>20 pods</b>.' },
+      { front: 'VPA kya badalta hai, aur surakshit shuruaat?', back: 'Pod ka <b>size</b> (requests), ginti nahi. <code>updateMode: "Off"</code> = sirf salaah (<code>kubectl describe vpa</code>).' },
+      { front: 'HPA + VPA ek saath?', back: 'Ek hi resource (CPU) par nahi — dono ulte faisle lete hain. HPA CPU par + VPA "Off" theek hai.' },
+    ],
+  },
+
+  /* ================================================================== */
+  {
+    id: 'ob-boss',
+    icon: '👑',
+    title: 'BOSS: Diwali ki raat — alert se postmortem tak',
+    badge: 'Nazar ka Nawab',
+    objectives: [
+      'Ek asli ghatna mein auzaaron ko sahi kram mein lagana',
+      'Load ki problem aur bug ki problem mein fark karna',
+      'HPA ki chhat aur <code>&lt;unknown&gt;</code> ko ghatna ke beech pakadna',
+      'Ghatna ke baad ke kaam (postmortem) tay karna',
+    ],
+    lesson: [
+      `<h3>👑 Boss level: Diwali ki raat, 9 baje</h3>
+       <p>Koi naya concept nahi. ChaiPay par Diwali ka traffic aam din se <b>4 guna</b> hai. Tumhara pager bajta hai.</p>
+       <p>Is track mein tumne chhah cheezein seekhi: metrics, alerts/SLO, traces, logs, HPA, KEDA. Asli ghatna mein inka <b>kram</b> hi sab kuch hai:</p>
+       <ol>
+         <li>Alert → <b>kitna bura</b> (burn rate)?</li>
+         <li>Metric → <b>kya</b> aur <b>kab se</b>?</li>
+         <li>Trace → <b>kahan</b>?</li>
+         <li>Log → <b>kyun</b>?</li>
+         <li>Load hai ya bug? → autoscaler ya rollback.</li>
+         <li>Baad mein → aisa dobara na ho, iske liye kya badlega?</li>
+       </ol>`,
+    ],
+    stages: [
+      {
+        type: 'incident',
+        title: '🚨 Diwali ki raat — har mod par ek faisla',
+        pager: '<b>PayApiErrorBudgetBurn</b> — severity: page<br>pay-api ka burn rate <b>18×</b> hai, 6 minute se. (SLO 99.9%)',
+        start: 'n1',
+        nodes: {
+          n1: {
+            sitrep: 'Burn rate 18× → 30 din ka error budget 40 ghante mein khatam.\nSamay: 21:10. Diwali offer 21:00 par shuru hua.',
+            text: 'Pager baja. Pehla kadam?',
+            choices: [
+              { t: 'pay-api ke saare pods restart kar do — aksar isse theek ho jaata hai', good: false, explain: 'Restart saboot mita deta hai aur peak ke beech capacity aur gira deta hai. Abhi tumhe pata hi nahi ki gadbad kya hai.' },
+              { t: 'Dashboard kholo: kaun sa endpoint, kab se, traffic kitna, pods kitne bhare hain', good: true, next: 'n2', explain: 'Alert ne bataya "kitna bura". Ab metric se "kya aur kab se" nikaalo. Dekhne mein 1 minute lagta hai aur baaki raat ki disha tay hoti hai.' },
+              { t: 'Alert ko 2 ghante ke liye silence kar do — Diwali hai, thode errors toh honge', good: false, explain: 'Burn 18× "thode errors" nahi hai: har 50 mein se ek payment fail ho raha hai. Silence planned kaam ke liye hota hai, asli dard chhupane ke liye nahi.' },
+            ],
+          },
+          n2: {
+            sitrep: 'POST /pay:  errors 1.8% (21:04 se)   traffic: aam din ka 4×\n\n$ kubectl get hpa pay-api\nNAME      TARGETS    MINPODS   MAXPODS   REPLICAS\npay-api   96%/60%    2         10        10',
+            text: 'Yeh output kya bata raha hai, aur kya karoge?',
+            choices: [
+              { t: 'HPA 10 ki chhat par atka hai jabki CPU 96% hai — maxReplicas badhao', good: true, next: 'n3', explain: 'TARGETS 96%/60% ka matlab HPA aur pods chahta hai (ceil(10 × 96 ÷ 60) = 16), par maxReplicas 10 rok raha hai. Yeh load ki problem hai, bug ki nahi.' },
+              { t: 'HPA ka target 60% se 90% kar do taaki TARGETS wali line theek dikhe', good: false, explain: 'Target badhane se HPA aur KAM pods chahega. Number theek "dikhega", users ka dard badhega.' },
+              { t: 'HPA theek kaam kar raha hai (10 pods chal rahe hain); gadbad kahin aur hogi', good: false, explain: 'REPLICAS = MAXPODS aur CPU target se bahut upar: yeh chhat par atke HPA ki pehchaan hai. Yahi sabse pehla ilaaj hai.' },
+            ],
+          },
+          n3: {
+            sitrep: 'maxReplicas 10 → 25. pay-api ab 16 pods, CPU 61%.\nPOST /pay errors: 1.8% → 0.4%   (ab bhi waade se 4× zyada)\n\ntrace (ek fail hui request):\n└─ pay-api          3.01 s\n   └─ fraud-check   3.00 s   ERROR: deadline exceeded\n\n$ kubectl get hpa fraud-check\nNAME          TARGETS         MINPODS   MAXPODS   REPLICAS\nfraud-check   &lt;unknown&gt;/60%   2         12        2',
+            text: 'pay-api theek ho gaya, par 0.4% errors bache hain. Trace aur HPA ka output kya kehta hai?',
+            choices: [
+              { t: 'fraud-check mein bug hai; fraud-check ko pichhle version par rollback karo', good: false, explain: 'Koi naya deploy nahi hua, aur error "deadline exceeded" (samay khatam) hai — fraud-check dheema hai, toota nahi. HPA ka output dekho.' },
+              { t: 'pay-api ka timeout 3 s se 10 s kar do taaki fraud-check ko zyada samay mile', good: false, explain: 'User ab 10 second intezaar karega aur pay-api ke pods intezaar mein bhare rahenge. Wajah wahi rahegi: fraud-check ke sirf 2 pods.' },
+              { t: 'fraud-check ka HPA andha hai (TARGETS unknown) aur 2 pods par atka hai', good: true, next: 'n4', explain: 'Trace ne bataya kahan (fraud-check), HPA ne bataya kyun: number nahi mil raha, toh HPA 4× traffic par bhi 2 pods rakhe hue hai. describe hpa → "missing request for cpu".' },
+            ],
+          },
+          n4: {
+            sitrep: 'fraud-check mein CPU request jodi → HPA: 141%/60% → 2 se 5 pods.\nPOST /pay errors: 0.05%   burn rate: 0.5×   ✓',
+            text: 'Aag bujh gayi. Kal subah ki meeting mein kaun se kaam likhoge?',
+            choices: [
+              { t: 'Har HPA ka maxReplicas 500 kar do taaki koi HPA kabhi chhat par na atke', good: false, explain: 'Chhat hifazat hai — bill ki aur neeche ki services ki. Hal chhat hatana nahi, chhat par pahunchne ka alert hai.' },
+              { t: 'Kuch nahi — ghatna 25 minute mein sambhal gayi, yahi kaafi saboot hai ki system theek hai', good: false, explain: 'Dono kharabiyan (chhat aur andha HPA) hafton se maujood thi. Diwali ne bas unhe dikha diya. Agli baar bhi wahi hoga.' },
+              { t: 'Do alert: "HPA 10 min se max par" aur "HPA ka TARGETS unknown"; aur bade din se pehle load test', good: true, next: 'end', explain: 'Dono kharabiyan chup thi. Chup kharabi ka ilaaj alert hai. Aur load test Diwali se pehle wahi dikha deta jo Diwali ne dikhaya.' },
+            ],
+          },
+          end: {
+            end: true,
+            text: 'Ghatna band — 25 minute mein',
+            summary: '<b>Kram:</b> alert (kitna bura) → metric (POST /pay, 21:04 se, HPA chhat par) → pehla ilaaj (maxReplicas) → trace (bache hue errors fraud-check mein) → HPA <code>&lt;unknown&gt;</code> → doosra ilaaj (CPU request).<br><br><b>Dhyaan do:</b> dono wajah <i>load</i> thi, <i>bug</i> nahi — isliye rollback galat hota. Aur dono wajah chup thi: ek chhat jo kabhi chhui nahi gayi, aur ek HPA jo teen hafte se so raha tha.',
+          },
+        },
+      },
+      {
+        type: 'order',
+        title: 'Ghatna ka sahi kram banao',
+        instructions: 'Pager bajne se lekar agle din tak — kadam sahi kram mein lagao.',
+        steps: [
+          { text: 'Alert padho: burn rate kitna hai, kab se hai', explain: 'Pehle "kitna bura". 18× aur 1.5× ka ilaaj alag hota hai.' },
+          { text: 'Dashboard: kaun sa endpoint, traffic, errors, latency, saturation', explain: 'Metric daayra chhota karta hai: kya aur kab se.' },
+          { text: 'Ek fail/dheemi request ki trace kholo', explain: 'Trace batati hai ki kis service mein samay ya error hai.' },
+          { text: 'Us service ke logs mein wahi trace_id dhoondho', explain: 'Log wajah batata hai. Ab tak andaaza nahi lagaya — har kadam ne agla kadam bataya.' },
+          { text: 'Tay karo: load hai (autoscaler dekho) ya bug hai (rollback)', explain: 'Yahi mod sabse zaroori hai. Load par rollback bekaar; bug par zyada pods bekaar.' },
+          { text: 'Fix ke baad pakka karo: errors aur burn rate neeche aaye?', explain: 'Fix lagana kaafi nahi. Wahi number dekho jisne page kiya tha.' },
+          { text: 'Agle din: chup kharabiyon ke liye naye alert + load test', explain: 'Ghatna tab band hoti hai jab wahi ghatna dobara na ho sake.' },
+        ],
+      },
+    ],
+    interview: {
+      title: 'Interview Round — poori tasveer',
+      instructions: 'Aakhri round. Interviewer ek ghatna dega aur tumhara kram sunega. 🎤',
+      questions: [
+        {
+          q: '"Raat ko pager bajta hai: checkout ke errors badh gaye. Pehle 5 minute mein kya karoge?"',
+          choices: [
+            'Sabse pehle sab pods restart karunga, phir dekhunga ki errors kam hue ya nahi',
+            'Alert se kitna bura, dashboard se kya aur kab se, trace se kahan; phir badlaav',
+            'Seedha database ke logs kholunga kyunki zyadatar ghatnayein database se hoti hain',
+            'Pichhle deploy ko rollback karunga, chahe deploy 3 din purana ho',
+          ],
+          answer: 1,
+          explain: 'Pehle 5 minute dekhne ke hain, badalne ke nahi. Ek hi sawal poochhna hai: "yeh load hai ya bug, aur kahan?" — metric aur trace iska jawab de dete hain.',
+        },
+        {
+          q: '"Kaise pehchaanoge ki problem load ki hai ya naye bug ki?"',
+          choices: [
+            'Load: traffic badha, pods bhare. Bug: traffic normal, deploy ke samay se errors',
+            'Load ki problem hamesha raat ko aati hai aur bug ki problem hamesha din mein',
+            'Agar errors 1% se kam hain toh load hai; 1% se zyada hain toh bug hai',
+            'Pehchaanne ki zaroorat nahi — dono ka ilaaj ek hi hai: pods ki ginti badhana',
+          ],
+          answer: 0,
+          explain: 'Do number milao: traffic/saturation (load ka saboot) aur deploy ka samay (bug ka saboot). Ilaaj ulte hain: load → capacity/autoscaler. Bug → rollback. Galat ilaaj samay barbaad karta hai.',
+        },
+        {
+          q: '"Ghatna ke baad tumhare postmortem mein sabse zaroori hissa kya hota hai?"',
+          choices: [
+            'Us insaan ka naam jisne galti ki, taaki agli baar woh dhyaan rakhe',
+            'Ghatna ki poori timeline, minute-dar-minute, jitni lambi ho sake',
+            'Woh badlaav jo wahi ghatna dobara hone se rokenge',
+            'Ek waada ki team agli baar zyada savdhan rahegi',
+          ],
+          answer: 2,
+          explain: 'Postmortem ka maqsad dosh nahi, sudhaar hai. Sabse kaam ke sawal: "yeh kab se toota tha, aur humein pehle kyun pata nahi chala?" Jawab aksar ek gayab alert ya gayab jaanch hoti hai.',
+        },
+      ],
+    },
+    success: [
+      'Main ek ghatna mein alert → metric → trace → log ka kram nibha sakta hoon',
+      'Main load ki problem aur bug ki problem mein fark kar sakta hoon',
+      'Main ghatna ke baad chup kharabiyon ke liye alert tay kar sakta hoon',
+    ],
+    homework: `<p>Apne cluster par aaj hi do chup kharabiyan dhoondho:</p>
+      <pre>kubectl get hpa -A | grep -i unknown          # andhe HPA
+kubectl get hpa -A | awk 'NR>1 && $6==$7'     # REPLICAS == MAXPODS (namespace wala output)</pre>`,
+    cards: [
+      { front: 'Ghatna ke waqt auzaaron ka kram?', back: 'Alert (kitna bura) → Metric (kya, kab se) → Trace (kahan) → Log (kyun) → load ya bug? → fix → pakka karo.' },
+      { front: 'HPA ka REPLICAS = MAXPODS aur TARGETS target se bahut upar. Matlab?', back: 'HPA chhat par atka hai. HPA aur pods chahta hai par maxReplicas rok raha hai.' },
+      { front: 'Load ki problem vs bug ki problem?', back: '<b>Load</b>: traffic badha, pods bhare → autoscaler/capacity. <b>Bug</b>: traffic normal, deploy ke samay se errors → rollback.' },
+      { front: 'Chup kharabi ka ilaaj?', back: 'Alert. Jaise: "HPA 10 min se max par", "HPA TARGETS unknown", "aakhri backup 26 ghante se purana".' },
     ],
   },
 ]);

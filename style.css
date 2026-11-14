@@ -1355,3 +1355,6 @@ button:focus:not(:focus-visible) { outline: none; }
 /* purane static diagrams: dabbe ka naam aur neeche ki line thodi badi (pehle .82rem / .68rem monospace — padhna mushkil) */
 .dg-node .nl { font-size: .88rem; }
 .dg-node .ns { font-size: .74rem; font-family: inherit; }
+/* triage: lambi command (PromQL) phone par button ko screen se bahar dhakel deti thi */
+.tg-cmd { max-width: 100%; }
+.tg-cmd code, .tg-cmdline { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }

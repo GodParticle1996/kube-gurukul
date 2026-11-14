@@ -77,7 +77,11 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
   function shapeOf(cmd) {
     const t = normCmd(cmd).split(' ');
     if (/^(bash|sh|cat)$/.test(t[0])) return t[0] + ' ';
-    if (!['kubectl', 'helm', 'argocd'].includes(t[0])) return t[0] + (t.length > 1 ? ' ' : '');
+    if (!['kubectl', 'helm', 'argocd'].includes(t[0])) {   // doosre CLI (velero, cosign, trivy…): shuru ke sub-command shabd rakho
+      let k = 1;
+      while (k < 3 && t[k] && /^[a-z][a-z-]*$/.test(t[k])) k++;
+      return t.slice(0, k).join(' ') + (t.length > k ? ' ' : '');
+    }
     if (t[0] === 'kubectl' && t[1] === 'apply') return 'kubectl apply -f ';
     let n = 2;
     if (/^(kubectl (rollout|auth|config|get|describe|top|delete|create|set)|helm (repo|dependency|get|show|search|diff)|argocd (app|appset|proj|cluster))$/.test(t.slice(0, 2).join(' '))) n = 3;
@@ -290,12 +294,14 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     const solAt = n => solFlat.map(c => c.split(' ')).filter(t => t.length > n && t.slice(0, n).join(' ') === toks.join(' ')).map(t => t[n]);
     let cands, prefix = '';
     const sl = last.match(/^([a-z0-9]+)\/(.*)$/);
-    if (sl && RES_ALIAS[sl[1]]) { cands = namesOf(RES_ALIAS[sl[1]]); prefix = sl[1] + '/'; last = sl[2]; }
+    const custNames = w => { const ck = customKind(w); return ck ? (ck.items || []).map(x => x.name) : null; };
+    if (sl && (RES_ALIAS[sl[1]] || custNames(sl[1]))) { cands = custNames(sl[1]) || namesOf(RES_ALIAS[sl[1]]); prefix = sl[1] + '/'; last = sl[2]; }
     else if (!toks.length) cands = CMDS;
     else if (prevTok === '-f' || prevTok === '--filename' || (/^(cat|bash|sh)$/.test(toks[0]) && toks.length === 1)) cands = files;
     else if (toks[0] === 'kubectl' && toks.length === 1) cands = VERBS.concat(solAt(1));
     else if (toks[0] === 'kubectl' && toks.length === 2 && /^(get|describe|delete|top|scale|edit|label|annotate|patch)$/.test(toks[1]))
-      cands = Object.keys(KIND_WORD).filter(k => list(k).length).map(k => KIND_WORD[k]);
+      cands = Object.keys(KIND_WORD).filter(k => list(k).length).map(k => KIND_WORD[k]).concat(Object.keys(sim.cluster.custom || {}));
+    else if (toks[0] === 'kubectl' && toks.length >= 3 && custNames(toks[2])) cands = custNames(toks[2]);
     else if (toks[0] === 'kubectl' && /^(logs|exec|debug|attach|port-forward|cp)$/.test(toks[1])) cands = namesOf('pods');
     else if (toks[0] === 'kubectl' && toks.length >= 3 && RES_ALIAS[toks[2]] && RES_ALIAS[toks[2]] !== 'all') cands = namesOf(RES_ALIAS[toks[2]]);
     else if ((toks[0] === 'helm' || toks[0] === 'argocd') && toks.length <= 2 && solAt(toks.length).length && !last.startsWith('-')) cands = solAt(toks.length).filter(x => /^[a-z-]+$/.test(x));
@@ -336,6 +342,32 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     all: 'all',
   };
   function list(kind) { return sim.cluster[kind] || []; }
+  /* ---------- custom kinds: mission apne kinds khud la sakta hai (PDB, ServiceAccount, Certificate, HTTPRoute…) ----------
+     cluster.custom = { pdb: { names: ['pdb', 'poddisruptionbudget', 'poddisruptionbudgets'],
+                               cols: ['NAME', 'MIN AVAILABLE', 'ALLOWED DISRUPTIONS', 'AGE'],
+                               items: [ { name: 'web-pdb', row: ['1', '0', '40d'], describe: 'text', yaml: 'text' } ] } }
+     `kubectl get pdb [naam] [-o yaml]` aur `kubectl describe pdb <naam>` apne aap chalte hain; state `items` mein rehta hai,
+     isliye fix file ka apply(sim) bas items badalta hai aur get/describe turant naya sach dikhate hain (regex responses mein yeh
+     baar-baar stale ho jaata tha). */
+  function customKind(word) {
+    const c = sim.cluster.custom || {};
+    const key = Object.keys(c).find(k => k === word || (c[k].names || []).includes(word));
+    return key ? c[key] : null;
+  }
+  const customItem = (ck, name) => (ck.items || []).find(x => x.name === name) || (ck.items || []).find(x => String(x.name).startsWith(name));
+  function customGet(ck, word, names, outFmt) {
+    const items = ck.items || [];
+    const picked = names.length ? names.map(n => customItem(ck, n)) : items;
+    const miss = names.find((n, i) => !picked[i]);
+    if (miss) {
+      print('err', `Error from server (NotFound): ${(ck.names || [word])[0]} "${miss}" not found`);
+      tip(items.length ? `Maujood ${word}: ${items.map(x => x.name).join(', ')}` : `Is cluster mein koi ${word} nahi hai.`);
+      return null;
+    }
+    if (/^(yaml|json)$/.test(outFmt)) return picked.map(x => x.yaml || `# ${x.name}\n# (is object ka YAML is mission mein nahi diya — kubectl describe ${word} ${x.name} chalao)`).join('\n---\n');
+    if (!picked.length) return 'No resources found in default namespace.';
+    return table([ck.cols].concat(picked.map(x => [x.name].concat(x.row || []))));
+  }
   function find(kind, name) {
     if (!name) return null;
     const items = list(kind);
@@ -451,8 +483,9 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
   }
 
   function kindTip(word) {
-    const near = closest(word, Object.keys(RES_ALIAS));
-    const here = Object.keys(KIND_WORD).filter(k => list(k).length).map(k => KIND_WORD[k]);
+    const cust = Object.keys(sim.cluster.custom || {});
+    const near = closest(word, Object.keys(RES_ALIAS).concat(cust));
+    const here = Object.keys(KIND_WORD).filter(k => list(k).length).map(k => KIND_WORD[k]).concat(cust);
     tip((near ? `Kya tumhara matlab "${near}" tha? ` : '') + (here.length ? `Is cluster mein yeh kinds hain: ${here.join(', ')}` : ''));
   }
   function describePod(p) {
@@ -671,6 +704,13 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       const kinds = res.split(',').filter(Boolean);
       const blocks = [];
       for (const r of kinds) {
+        const ck = customKind(r);
+        if (ck) {
+          const text = customGet(ck, r, names, outFmt);
+          if (text == null) return;
+          blocks.push(kinds.length > 1 ? `── ${r} ──\n${text}` : text);
+          continue;
+        }
         const kind = RES_ALIAS[r];
         if (!kind) { print('err', `error: the server doesn't have a resource type "${r}"`); kindTip(r); return; }
         const pick = items => {
@@ -721,6 +761,18 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       const args = positional(toks.slice(2), ['-l', '--selector']);
       let res = args[0], name = args[1];
       if (res && res.includes('/')) { const [a, b] = res.split('/'); res = a; name = b; }
+      const ckd = customKind(res);
+      if (ckd) {
+        const its = name ? [customItem(ckd, name)] : (ckd.items || []);
+        if (name && !its[0]) {
+          print('err', `Error from server (NotFound): ${(ckd.names || [res])[0]} "${name}" not found`);
+          tip((ckd.items || []).length ? `Maujood ${res}: ${ckd.items.map(x => x.name).join(', ')}` : `Is cluster mein koi ${res} nahi hai.`);
+          return;
+        }
+        if (!its.length) { print('ok', 'No resources found in default namespace.'); return; }
+        print('ok', its.map(x => typeof x.describe === 'function' ? x.describe(sim, x) : (x.describe || `Name:  ${x.name}\n(describe output is mission mein limited hai)`)).join('\n\n\n'));
+        return;
+      }
       const kind = RES_ALIAS[res];
       if (!kind) { print('err', `error: the server doesn't have a resource type "${res || ''}"`); kindTip(res); return; }
       const descOne = obj => {

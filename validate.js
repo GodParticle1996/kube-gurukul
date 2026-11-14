@@ -65,7 +65,7 @@ global.Element = function () {}; Element.prototype = {};
 const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'terminal.js',
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
-  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-gaps.js', 'data-ext-sdd.js',
+  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-gaps.js', 'data-ext-sdd.js',
   'data-decisions.js', 'app.js'];
 
 const missing = FILES.filter(f => !fs.existsSync(path.join(DIR, f)));
@@ -1377,6 +1377,16 @@ t('terminal madad: command ka roop galat ho toh simulator sahi roop batata hai (
   const o = T.run('kubectl rollout undo deploy web');
   assert(/kubectl rollout undo deployment\/web/.test(o), 'sahi roop nahi bataya: ' + o);
   assert(!/kubectl rollout undo deployment\/web/.test(T.run('kubectl rollout restart deploy web')), 'alag sub-command (restart) par undo ka jawab leak hua');
+});
+t('terminal custom kinds: kubectl get/describe <custom> state se chalta hai, galat naam par maujood naam batata hai', () => {
+  const T = term({ custom: { pdb: { names: ['pdb', 'poddisruptionbudgets'], cols: ['NAME', 'MIN AVAILABLE', 'ALLOWED DISRUPTIONS', 'AGE'],
+    items: [{ name: 'web-pdb', row: ['1', '0', '40d'], describe: 'Name: web-pdb\nAllowed disruptions: 0' }] } } });
+  const g = T.run('kubectl get pdb');
+  assert(/NAME\s+MIN AVAILABLE\s+ALLOWED DISRUPTIONS\s+AGE/.test(g) && /web-pdb\s+1\s+0\s+40d/.test(g), 'custom table galat: ' + g);
+  assert(/Allowed disruptions: 0/.test(T.run('kubectl describe pdb web-pdb')), 'custom describe nahi chala');
+  assert(/Allowed disruptions: 0/.test(T.run('kubectl describe poddisruptionbudgets/web-pdb')), 'custom describe slash-form nahi chala');
+  T.st.cluster; // (state ka badlaav niche)
+  assert(/Maujood pdb: web-pdb/.test(T.run('kubectl get pdb nope')), 'galat naam par maujood naam nahi bataye');
 });
 t('flow player: "Wapas" jaakar wahi sawal dobara nahi poochha jaata (XP/firstTry dobara nahi badhta)', () => {
   const st = { type: 'flow', lanes: [{ id: 'a', label: 'A', icon: 'x' }], summary: 's',

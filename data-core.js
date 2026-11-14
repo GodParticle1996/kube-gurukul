@@ -29,6 +29,8 @@ KG.trackGroups = [
     sub: 'Beginner → Intermediate → Advanced. Har track pichhla track poora hone par khulta hai.' },
   { id: 'scenario', title: '🩺 Scenario practice — toota hua cluster theek karo',
     sub: 'Beginner track ke baad kabhi bhi. Interview ke "yeh toota hai, kaise dhoondhoge?" sawaal yahin se aate hain.' },
+  { id: 'prod',     title: '🏭 Production skills — naukri mein roz ka kaam',
+    sub: 'Kabhi bhi khelo (Beginner ke baad behtar). Har level ek asli production scenario hai: debug, upgrade, security, monitoring, EKS networking.' },
   { id: 'tools',    title: '🧰 Tools — Helm, ArgoCD, Karpenter',
     sub: 'Kabhi bhi khelo. Har track ek tool ko asli terminal ke saath sikhata hai.' },
 ];
@@ -101,6 +103,18 @@ KG.tracks = [
     certSub: 'Certificate of Compute Efficiency',
     motto: 'Pod ko jagah chahiye? Node abhi banega — aur khaali hote hi mit jayega.',
     formula: 'Pending pod → NodeClaim → EC2 → Node · khaali node → consolidation → 💰',
+    alwaysUnlocked: true,
+  },
+  {
+    id: 'day2',
+    group: 'prod',
+    icon: '🛠️',
+    name: 'Day-2 Ops Gurukul',
+    blurb: 'Deploy ho gaya — ab cluster ko mahinon tak zinda kaise rakhein? Bina shell wale container ko debug karna, requests/limits ka sahi naap, cluster upgrade bina outage ke, backup aur restore. Ek hi company (ChaiPay) ki kahani.',
+    certTitle: 'CLUSTER KA DOCTOR',
+    certSub: 'Certificate of Day-2 Operations',
+    motto: 'Deploy karna Day-1 hai. Chalaye rakhna Day-2 hai — aur naukri Day-2 ki hoti hai.',
+    formula: 'Day-2 = debug + sahi naap + upgrade + backup',
     alwaysUnlocked: true,
   },
   {

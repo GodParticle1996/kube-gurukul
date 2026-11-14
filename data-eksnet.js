@@ -1063,11 +1063,466 @@ Warning  FailedCreatePodSandBox  ... failed to assign an IP address to container
 kubectl get nodes -o custom-columns=NAME:.metadata.name,MAXPODS:.status.allocatable.pods
 kubectl -n kube-system get ds aws-node -o yaml | grep -A1 -E "WARM|PREFIX"</pre>`,
     cards: [
+      /* (ALB aur boss level is file ke aakhir mein alag registerLevels call mein hain) */
       { front: 'EKS mein pod ka IP kahan se aata hai?', back: 'VPC CNI node ke subnet se <b>asli VPC IP</b> deta hai (ENI ke secondary IP).' },
       { front: 'Ek node par max pods ka formula (bina prefix delegation)?', back: '<code>ENI × (har ENI ke IP − 1) + 2</code>. m5.large: 3 × 9 + 2 = 29.' },
       { front: 'IP khatam hone ka lakshan?', back: 'Pod <code>ContainerCreating</code> mein atka; event <code>failed to assign an IP address to container</code>. CPU/memory khaali hote hain.' },
       { front: 'Prefix delegation kya hal karta hai, kya nahi?', back: 'Hal: ek node par pods (110 tak). Nahi: subnet ke kul IP nahi badhata.' },
       { front: '/24 subnet mein kaam ke IP?', back: '251 — AWS har subnet ke 5 pate rakhta hai.' },
+    ],
+  },
+]);
+
+/* ------------------------------------------------------------------ */
+/* LEVEL 5 — AWS Load Balancer Controller                              */
+/* ------------------------------------------------------------------ */
+VISUALS['eks-alb'] = {
+  t: 'ALB se pod tak — do raaste: instance aur ip',
+  scene: {
+    intro: '<b>Sawal:</b> AWS ka ALB cluster ke bahar hai. ALB request ko pod tak kaise pahunchata hai — aur deploy ke dauraan 502 kahan se aata hai?',
+    aria: 'AWS Load Balancer Controller: Ingress se ALB, aur ALB se pod tak ke do raaste — 6 kadam',
+    nodes: [
+      { id: 'ing', col: 0, row: 0, icon: '📝', label: 'Ingress: pay', sub: 'class: alb', tone: 'gold', about: 'Tumhara likha hua object: "pay.chaipay.in ko pay-api Service par bhejo". <code>ingressClassName: alb</code>.' },
+      { id: 'lbc', col: 1, row: 0, icon: '🤖', label: 'LB Controller', sub: 'Ingress → asli ALB', tone: 'accent', about: 'AWS Load Balancer Controller. Cluster ke andar chalta hai. Ingress dekh kar AWS mein asli ALB, listener aur target group banata hai — aur pods ke aane-jaane par target group ko badalta rehta hai.' },
+      { id: 'alb', col: 2, row: 0, icon: '⚖️', label: 'ALB', sub: 'AWS mein, cluster ke bahar', about: 'Application Load Balancer. Apna health check khud chalata hai. ALB ko Kubernetes ke readiness probe ke baare mein kuch nahi pata.' },
+      { id: 'user', col: 3, row: 0, icon: '📱', label: 'User', sub: 'pay.chaipay.in' },
+      { id: 'node', col: 2, row: 1, icon: '🖥️', label: 'Node (NodePort)', sub: 'kube-proxy', about: 'target-type: instance mein ALB node ke ek port (NodePort) par bhejta hai. Wahan se kube-proxy pod tak pahunchata hai.' },
+      { id: 'pod', col: 3, row: 1, icon: '📦', label: 'pod: pay-api', sub: 'IP 10.0.1.20', tone: 'good', about: 'VPC CNI ki wajah se pod ka IP asli VPC IP hai — isliye ALB pod ko seedha bhej sakta hai.' },
+    ],
+    steps: [
+      { from: 'ing', to: 'lbc', label: 'naya Ingress', tone: 'gold', say: 'Tum <b>Ingress: pay</b> likhte ho. <b>LB Controller</b> ko naya Ingress dikhta hai.' },
+      { from: 'lbc', to: 'alb', label: 'ALB + target group', say: '<b>LB Controller</b> AWS mein ek asli <b>ALB</b> banata hai, aur ek <b>target group</b> — woh list jisme likha hai ki ALB traffic kahan bheje.' },
+      { from: 'user', to: 'alb', label: 'HTTPS', say: '<b>User</b> ki request <b>ALB</b> par aati hai.' },
+      { from: 'alb', to: 'node', label: 'target-type: instance', tone: 'gold', say: 'Pehla raasta — <code>target-type: instance</code>: target group mein <b>nodes</b> likhe hain. <b>ALB</b> request ko <b>Node (NodePort)</b> par bhejta hai.' },
+      { from: 'node', to: 'pod', label: 'ek aur chhalaang', say: '<b>Node (NodePort)</b> par kube-proxy request ko <b>pod: pay-api</b> tak pahunchata hai — pod kisi doosre node par bhi ho sakta hai. Ek chhalaang zyada, aur ALB ka health check node ko dekhta hai, pod ko nahi.' },
+      { from: 'alb', to: 'pod', label: 'target-type: ip', tone: 'good', say: 'Doosra raasta — <code>target-type: ip</code>: target group mein <b>pods ke IP</b> likhe hain. <b>ALB</b> seedha <b>pod: pay-api</b> ko bhejta hai. Tez aur saaf. Par ab ALB aur Kubernetes ko har pod ke aane-jaane par <b>taal milana</b> padta hai — aur deploy ke dauraan 502 yahin se aata hai.' },
+    ],
+  },
+};
+
+/* ------------------------------------------------------------------ */
+/* LEVEL 6 — BOSS                                                      */
+/* ------------------------------------------------------------------ */
+VISUALS['eks-boss'] = {
+  t: 'User se AWS tak — paanch paratein, paanch jagah jahan cheez atakti hai',
+  scene: {
+    intro: 'Ek naye service ke launch par request in paanch paraton se guzarti hai. Har parat apna sach kahin likhti hai.',
+    aria: 'request ka poora raasta: DNS aur certificate, Gateway aur route, pod ka IP, pod ki AWS pehchaan — 5 kadam',
+    nodes: [
+      { id: 'dns', col: 0, row: 0, icon: '🌍', label: 'DNS + certificate', sub: 'ExternalDNS, cert-manager', tone: 'gold', about: 'Sach kahan likha hai: <code>kubectl describe challenge</code>, ExternalDNS ke logs.' },
+      { id: 'lb', col: 1, row: 0, icon: '⚖️', label: 'Load balancer', sub: 'ALB / target group', about: 'Sach kahan likha hai: Ingress/Gateway ke Events, target group ka health.' },
+      { id: 'gw', col: 2, row: 0, icon: '🚪', label: 'Gateway + route', sub: 'Accepted? ResolvedRefs?', tone: 'accent', about: 'Sach kahan likha hai: <code>kubectl describe httproute</code> ke conditions.' },
+      { id: 'pod', col: 2, row: 1, icon: '📦', label: 'Pod', sub: 'IP mila? (VPC CNI)', tone: 'good', about: 'Sach kahan likha hai: <code>kubectl describe pod</code> ke Events — "failed to assign an IP address".' },
+      { id: 'aws', col: 1, row: 1, icon: '☁️', label: 'AWS (S3, SQS…)', sub: 'kaun dikh raha hai?', about: 'Sach kahan likha hai: <code>aws sts get-caller-identity</code> aur AccessDenied ke error ka "assumed-role/…".' },
+    ],
+    steps: [
+      { at: ['dns'], say: '<b>DNS + certificate:</b> user sabse pehle naam poochhta hai aur HTTPS certificate jaanchta hai. Record nahi → "no such host". Certificate nahi → browser ki chetavni. Sach: Challenge ka <code>describe</code>, ExternalDNS ke logs.' },
+      { from: 'dns', to: 'lb', label: 'IP mil gaya', say: '<b>Load balancer:</b> request ALB par aati hai. ALB bana hi nahi (subnet tags), ya target unhealthy hain → 503/504. Sach: Ingress/Gateway ke Events.' },
+      { from: 'lb', to: 'gw', label: 'host + path', say: '<b>Gateway + route:</b> Gateway route dhoondhta hai. Route juda nahi → 404. Sach: HTTPRoute ke <code>Accepted</code> aur <code>ResolvedRefs</code> conditions.' },
+      { from: 'gw', to: 'pod', label: 'Service → pod', tone: 'good', say: '<b>Pod:</b> request pod tak pahunchti hai — agar pod ko IP mila ho. Subnet ke IP khatam → pod <code>ContainerCreating</code> mein. Sach: pod ke Events.' },
+      { from: 'pod', to: 'aws', label: 'S3 / SQS call', say: '<b>AWS:</b> pod AWS ko call karta hai. AWS ko node dikha, pod nahi → <code>AccessDenied</code>. Sach: <code>get-caller-identity</code>. Paanch paratein, paanch alag jagah — par niyam ek: andaaza mat lagao, us parat ka sach padho.' },
+    ],
+  },
+};
+
+KG.registerLevels('eksnet', [
+  /* ================================================================== */
+  {
+    id: 'eks-alb',
+    icon: '⚖️',
+    title: 'ALB aur pods — target type, aur deploy ke dauraan 502',
+    badge: 'ALB Ustaad',
+    objectives: [
+      'AWS Load Balancer Controller: Ingress se asli ALB kaise banta hai',
+      '<code>target-type: instance</code> aur <code>ip</code> ka farak',
+      'Deploy ke dauraan 502/503 kyun aate hain: do ghadiyan jo saath nahi chalti',
+      'Teen ilaaj: <code>preStop</code> sleep, pod readiness gate, chhota deregistration delay',
+    ],
+    lesson: [
+      `<h3>🏗️ ALB kaun banata hai?</h3>
+       <p>Kubernetes khud AWS mein load balancer nahi bana sakta. Yeh kaam ek add-on karta hai: <b>AWS Load Balancer Controller</b>.</p>
+       <pre>apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pay
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: pay.chaipay.in
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: pay-api, port: { number: 8080 } } }</pre>
+       <p>Controller Ingress dekh kar ek asli <b>ALB</b> aur ek <b>target group</b> banata hai. (Service <code>type: LoadBalancer</code> ke liye wahi controller <b>NLB</b> banata hai.)</p>
+       <p><b>Ek jaal:</b> controller ko pata hona chahiye ki ALB kis subnet mein banega. Iske liye public subnets par tag chahiye:
+       <code>kubernetes.io/role/elb = 1</code>. Tag na ho toh Ingress ka ADDRESS hamesha khaali rehta hai.</p>`,
+      `<h3>🎯 target-type: instance ya ip?</h3>
+       <table>
+         <tr><th></th><th><code>instance</code></th><th><code>ip</code></th></tr>
+         <tr><td>Target group mein kya likha hai</td><td>Nodes (NodePort)</td><td>Pods ke IP</td></tr>
+         <tr><td>Raasta</td><td>ALB → node → kube-proxy → pod</td><td>ALB → pod</td></tr>
+         <tr><td>ALB ka health check kise dekhta hai</td><td>Node ko</td><td>Pod ko</td></tr>
+         <tr><td>Service ka type</td><td>NodePort chahiye</td><td>ClusterIP kaafi</td></tr>
+       </table>
+       <p>EKS mein aksar <code>ip</code> chuna jaata hai: kam chhalaang, aur ALB ko asli pod ki sehat dikhti hai.
+       (Yeh isliye mumkin hai ki VPC CNI pod ko asli VPC IP deta hai.)</p>
+       <p><b>Keemat:</b> ab ALB ke target group mein <b>pods</b> hain. Har deploy par pods badalte hain — toh ALB ki list bhi badalni padti hai. Aur yeh badlaav <b>turant nahi</b> hota.</p>`,
+      `<h3>⏱️ Do ghadiyan: Kubernetes aur ALB</h3>
+       <p>Deploy ke dauraan do alag systems apni-apni raftaar se chalte hain:</p>
+       <table>
+         <tr><th>Ghatna</th><th>Kubernetes</th><th>ALB</th><th>Nateeja</th></tr>
+         <tr><td>Purana pod hatana</td><td>Turant SIGTERM → pod 1 s mein band</td><td>Target ko list se hatane mein kuch second</td><td>Un seconds mein requests mare hue pod par → <b>502</b></td></tr>
+         <tr><td>Naya pod aana</td><td>Readiness probe paas → "Ready"</td><td>Apna health check abhi paas nahi hua</td><td>Purane pod hat gaye, naye abhi "healthy" nahi → <b>503</b></td></tr>
+       </table>
+       <p><b>Teen ilaaj:</b></p>
+       <ol>
+         <li><b><code>preStop</code> sleep</b> — pod SIGTERM se pehle 15–30 second zinda rehkar serve karta hai; itne mein ALB use hata chuka hota hai.</li>
+         <li><b>Pod readiness gate</b> — namespace par label <code>elbv2.k8s.aws/pod-readiness-gate-inject=enabled</code>. Naya pod tab tak "Ready" nahi jab tak ALB use healthy na maan le.</li>
+         <li><b>Deregistration delay kam</b> — default 300 second se 30 second, taaki purane pod jaldi chhooten.</li>
+       </ol>`,
+    ],
+    stages: [
+      {
+        type: 'flow',
+        title: '🎬 Flow: ek deploy, second-dar-second — 502 kahan se aaya?',
+        instructions: '"Agla kadam" dabao. Har kadam par dekho ki kaun kaam kar raha hai: Kubernetes, ALB, purana pod ya naya pod. Teen sawal beech mein aayenge.',
+        lanes: [
+          { id: 'k8s', label: 'Kubernetes', icon: '☸️' },
+          { id: 'new', label: 'naya pod', icon: '🆕' },
+          { id: 'old', label: 'purana pod', icon: '📦' },
+          { id: 'alb', label: 'ALB', icon: '⚖️' },
+          { id: 'user', label: 'User', icon: '📱' },
+        ],
+        steps: [
+          { lane: 'k8s', t: 'Rolling update shuru: naya pod pay-api-new banaya', detail: 'Deployment ka naya version. Kubernetes pehle ek naya pod banata hai, phir ek purana hatata hai.' },
+          { lane: 'new', t: 'pay-api-new start hua; readiness probe paas → Kubernetes ke liye "Ready"', detail: 'Kubernetes ke hisaab se naya pod taiyaar hai. Par Kubernetes ka readiness probe aur ALB ka health check <b>do alag jaanch</b> hain.' },
+          { lane: 'alb', t: 'ALB ne pay-api-new ko target group mein joda; health check abhi chal raha hai (state: initial)', detail: 'ALB ko naye target ko "healthy" maanne ke liye health check kai baar lagataar paas chahiye (jaise 15 s ke antar par 2 baar). Tab tak ALB naye pod ko traffic nahi bhejta.',
+            ask: { q: 'Kubernetes ke liye naya pod Ready hai; ALB ke liye abhi nahi. Agar Kubernetes abhi purana pod hata de, toh kya hoga?',
+              choices: [
+                'Kuch nahi — ALB Kubernetes ke Ready ko apna maan leta hai',
+                'Kuch second ALB ke paas koi healthy target nahi hoga → users ko 503',
+                'ALB naya pod delete kar dega kyunki health check adhoora hai',
+                'Kubernetes ALB ke health check ka intezaar apne aap karta hai, hamesha',
+              ], answer: 1,
+              explain: 'Kubernetes ko ALB ke baare mein kuch nahi pata — jab tak tum use batao nahi. Batane ka tareeka: pod readiness gate. Uske bina Kubernetes apni ghadi se chalta hai.' } },
+          { lane: 'k8s', t: 'Kubernetes: "naya Ready hai" → purane pod pay-api-old ko SIGTERM', detail: 'Rolling update ka agla kadam. Kubernetes saath hi pay-api-old ko Endpoints se bhi hata deta hai.' },
+          { lane: 'old', t: 'pay-api-old ko SIGTERM mila → process 1 second mein band', detail: 'App ne SIGTERM ko seedha maan liya aur band ho gayi. Jo requests beech mein thi, toot gayi.' },
+          { lane: 'alb', t: 'LB Controller ne ALB ko bola "pay-api-old hatao"; ALB ko yeh baat poori tarah lagu karne mein kuch second lage', detail: 'Controller ko pod ke hatne ka pata chalta hai → AWS API call → ALB ke saare hisson tak baat pahunchne mein samay. Is beech ALB pay-api-old ke IP par requests bhejta rehta hai.',
+            ask: { q: 'In kuch seconds mein jo requests pay-api-old ke IP par gayi, un users ko kya mila?',
+              choices: [
+                '200 OK — ALB request ko apne aap naye pod par mod deta hai',
+                '404 Not Found — kyunki route hat chuka hai',
+                '502 Bad Gateway — ALB ne ek band ho chuke pod ko request bheji',
+                'Kuch nahi — ALB requests ko queue mein rakh leta hai',
+              ], answer: 2,
+              explain: '502 ka matlab: load balancer ne peeche wale ko request bheji, aur peeche se sahi jawab nahi aaya. Yahan peeche wala pod mar chuka tha. Har deploy par aisi 20–30 requests = "deploy ke waqt thode errors toh aate hi hain" wali galat aadat.' } },
+          { lane: 'user', t: 'User: 502 Bad Gateway', detail: 'User ka payment fail. Dashboard par har deploy ke samay errors ka ek chhota nukeela pahaad.' },
+          { lane: 'old', t: 'Ilaaj 1 — preStop: sleep 20. Purana pod SIGTERM se pehle 20 second zinda rehkar serve karta hai', detail: '<pre>lifecycle:\n  preStop:\n    exec: { command: ["sleep", "20"] }</pre>Ab pod Endpoints se hat chuka hai (naye connections nahi aane chahiye), par 20 second tak chal raha hai. Itne mein ALB use apni list se hata chuka hota hai.',
+            ask: { q: 'preStop mein sleep 20 hai. terminationGracePeriodSeconds kitna hona chahiye?',
+              choices: [
+                '20 se kam — taaki pod jaldi hat jaye',
+                'Theek 20 — dono barabar hone chahiye',
+                '20 se zyada — sleep ke baad app ko band hone ka samay bhi chahiye',
+                'Farak nahi padta — preStop grace period se bahar ginta hai',
+              ], answer: 2,
+              explain: 'Grace period ki ghadi preStop ke saath hi shuru ho jaati hai. Agar grace period 20 ho aur sleep bhi 20, toh sleep khatam hote hi kubelet SIGKILL bhej dega — app ko saaf band hone ka samay nahi milega. Default 30 hai; sleep 20 ke liye theek, sleep 40 ke liye badhana padega.' } },
+          { lane: 'new', t: 'Ilaaj 2 — pod readiness gate: naya pod tab tak "Ready" nahi jab tak ALB use healthy na maan le', detail: 'Namespace par label <code>elbv2.k8s.aws/pod-readiness-gate-inject=enabled</code>. LB Controller har naye pod mein ek extra shart jodta hai. Ab Kubernetes purana pod tabhi hatata hai jab ALB naye pod ko sach mein traffic de sakta ho.' },
+          { lane: 'user', t: 'Agla deploy: 0 errors', detail: 'Dono ghadiyan ab saath chalti hain: naya pod ALB ke liye taiyaar hone ke baad hi "Ready" (readiness gate), aur purana pod ALB se hatne ke baad hi band (preStop).' },
+        ],
+        summary: '<b>502/503 ki jad:</b> Kubernetes aur ALB do alag ghadiyon se chalte hain. <b>Purana pod</b> ALB ki list se hatne se pehle mar jaata hai (502). <b>Naya pod</b> ALB ke liye healthy hone se pehle "Ready" maan liya jaata hai (503). <b>Ilaaj:</b> preStop sleep + pod readiness gate (+ chhota deregistration delay).',
+      },
+      {
+        type: 'triage',
+        title: '🩺 Case: Ingress ka ADDRESS 15 minute se khaali',
+        instructions: 'Commands chuno. Saare clue milne par sawal khulega.',
+        symptom: `Naye cluster par pehla Ingress banaya. <code>kubectl get ingress</code> mein <b>ADDRESS khaali</b> hai, 15 minute se.<br>
+          Team ka kehna hai: "ALB banne mein samay lagta hai, thoda aur ruko."`,
+        commands: [
+          { cmd: 'kubectl describe ingress pay', clue: true,
+            out: 'Name:             pay\nIngress Class:    alb\nAddress:\nEvents:\n  Warning  FailedBuildModel  2m (x9 over 15m)  ingress  Failed build model due to couldn\'t auto-discover subnets: unable to resolve at least one subnet (0 match VPC and tags: [kubernetes.io/role/elb])',
+            note: 'ALB "ban raha" nahi hai — controller 15 minute se <b>fail</b> ho raha hai. Wajah likhi hai: controller ko koi aisa subnet nahi mila jis par tag <code>kubernetes.io/role/elb</code> ho.' },
+          { cmd: 'aws ec2 describe-subnets --query "Subnets[].{Id:SubnetId,Public:MapPublicIpOnLaunch,Tags:Tags[].Key}"', clue: true,
+            out: '[\n  { "Id": "subnet-0a1b", "Public": true,  "Tags": ["Name"] },\n  { "Id": "subnet-0c2d", "Public": true,  "Tags": ["Name"] },\n  { "Id": "subnet-0e3f", "Public": false, "Tags": ["Name", "kubernetes.io/role/internal-elb"] }\n]',
+            note: 'Do public subnets hain, par dono par sirf <code>Name</code> tag hai. Internet-facing ALB ke liye public subnets par <code>kubernetes.io/role/elb = 1</code> chahiye.' },
+          { cmd: 'kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller', clue: false,
+            out: 'NAME                                            READY   STATUS    RESTARTS   AGE\naws-load-balancer-controller-6d8f9c7b5-h4k2m    1/1     Running   0          3h',
+            note: 'Controller chal raha hai. Controller kharab nahi hai — controller ko zaroori jaankari (subnet) nahi mil rahi.' },
+          { cmd: 'kubectl get ingressclass', clue: false,
+            out: 'NAME   CONTROLLER            PARAMETERS   AGE\nalb    ingress.k8s.aws/alb   <none>       3h',
+            note: 'IngressClass <code>alb</code> maujood hai. Ingress sahi controller tak pahunch raha hai.' },
+          { cmd: 'kubectl get pods -n payments', clue: false,
+            out: 'NAME                READY   STATUS    RESTARTS   AGE\npay-api-6b8d7c-a1   1/1     Running   0          20m',
+            note: 'pay-api chal raha hai. Par ALB bana hi nahi, toh pods ki sehat ka abhi koi rishta nahi.' },
+        ],
+        questions: [
+          {
+            q: 'ALB kyun nahi ban raha?',
+            choices: [
+              'ALB banne mein 15–20 minute lagte hain; thoda aur intezaar karna hai',
+              'Public subnets par tag kubernetes.io/role/elb nahi hai',
+              'AWS Load Balancer Controller crash ho gaya hai',
+              'pay-api pods Ready nahi hain, isliye controller ALB nahi bana raha',
+            ],
+            answer: 1,
+            explain: 'Event saaf kehta hai: "couldn\'t auto-discover subnets … tags: [kubernetes.io/role/elb]". ALB aam taur par 2–3 minute mein ban jaata hai. 15 minute ka khaali ADDRESS intezaar nahi, error hai — describe ke Events padho.',
+          },
+          {
+            q: 'Sahi fix?',
+            choices: [
+              'Ingress ko delete karke dobara banao jab tak ADDRESS na aa jaye',
+              'Controller ke pod ko restart karo',
+              'Public subnets par tag kubernetes.io/role/elb = 1 lagao',
+              'Ingress mein target-type ko ip se instance kar do',
+            ],
+            answer: 2,
+            explain: 'Controller tags se subnet dhoondhta hai: public ke liye kubernetes.io/role/elb, private (internal ALB) ke liye kubernetes.io/role/internal-elb. (Doosra raasta: Ingress ke annotation mein subnet IDs seedhe likh dena.)',
+          },
+        ],
+      },
+      {
+        type: 'quiz',
+        title: 'Pakka karo — ALB ke niyam',
+        questions: [
+          {
+            q: 'target-type: ip mein ALB seedha pod ke IP par bhejta hai. Yeh EKS mein kis wajah se mumkin hai?',
+            choices: [
+              'Kyunki kube-proxy ALB ke andar chalta hai',
+              'Kyunki VPC CNI pod ko asli VPC IP deta hai',
+              'Kyunki har pod ko ek public IP milta hai',
+              'Kyunki ALB cluster ke andar ek pod ki tarah chalta hai',
+            ],
+            answer: 1,
+            explain: 'ALB VPC ke andar hai, aur pod ka IP bhi VPC ka asli IP hai — toh ALB pod ko seedha route kar sakta hai. Overlay network wale CNI mein pod ka IP VPC ke liye anjaan hota hai.',
+          },
+          {
+            q: 'Cluster mein 30 Ingress hain aur har ek ne apna alag ALB bana liya. Bill bahut badh gaya. Sabse saada ilaaj?',
+            choices: [
+              'Har Ingress ko Service type LoadBalancer mein badal do',
+              'Ingresses ko ek IngressGroup mein daalo taaki sab ek hi ALB saanjha karen',
+              'target-type ko instance kar do; instance mode mein ALB muft hota hai',
+              'Ingress ki jagah NodePort Services use karo',
+            ],
+            answer: 1,
+            explain: 'Annotation alb.ingress.kubernetes.io/group.name: NAAM. Ek hi group ke saare Ingress ek ALB par alag-alag rules ban jaate hain. Har ALB ka ek maheene ka tay kiraya hota hai — 30 ALB vs 1 ALB ka farak bada hai.',
+          },
+        ],
+      },
+    ],
+    interview: {
+      title: 'Interview Round — load balancer aur zero-downtime deploy',
+      instructions: 'Yeh sawal un logon ko alag karta hai jinhone sach mein production deploy sambhala hai. 🎤',
+      questions: [
+        {
+          q: '"Har deploy par kuch second 502 aate hain. ALB target-type ip hai. Kyun, aur kya karoge?"',
+          choices: [
+            'ALB ka size chhota hai; bada ALB lene se 502 band ho jayenge',
+            'Purana pod ALB se hatne se pehle band hota hai; preStop + readiness gate',
+            'Pods ki CPU limit kam hai; deploy ke waqt throttling se 502 aata hai',
+            'Yeh normal hai; rolling update mein thode errors hamesha aate hain',
+          ],
+          answer: 1,
+          explain: 'Kubernetes aur ALB do alag ghadiyon se chalte hain. preStop sleep purane pod ko ALB se hatne tak zinda rakhta hai. Readiness gate naye pod ko tab tak "Ready" nahi hone deta jab tak ALB use healthy na maan le. Deploy ke errors "normal" nahi hain.',
+        },
+        {
+          q: '"target-type instance aur ip mein kya chunoge, aur kyun?"',
+          choices: [
+            'instance — kyunki usme ALB seedha pod ko bhejta hai aur ek chhalaang kam hoti hai',
+            'ip — ALB seedha pod ko bhejta hai aur health check pod ka hota hai',
+            'Dono ek saath — ek Ingress mein dono target types likhe ja sakte hain',
+            'Farak nahi padta — dono mein raasta aur health check ek jaisa hai',
+          ],
+          answer: 1,
+          explain: 'ip: ALB → pod (kam chhalaang, pod ka asli health). instance: ALB → node → kube-proxy → pod. ip ki keemat: target group pods ke saath badalta hai, isliye preStop / readiness gate zaroori.',
+        },
+        {
+          q: '"Ingress banaya, par ADDRESS khaali hai. Kahan dekhoge?"',
+          choices: [
+            'kubectl get nodes — shayad koi node NotReady ho',
+            'kubectl describe ingress ke Events; controller ke logs',
+            'kubectl top pods — shayad pods par load zyada ho',
+            'DNS ke records — ADDRESS DNS se aata hai',
+          ],
+          answer: 1,
+          explain: 'ADDRESS khaali = controller ALB bana nahi paaya. Wajah Events mein: subnet nahi mile (tags), IAM ijaazat nahi (controller ka role), ya IngressClass galat. Intezaar karne se pehle Events padho.',
+        },
+      ],
+    },
+    success: [
+      'Main bata sakta hoon ki Ingress se asli ALB kaise banta hai',
+      'Main target-type instance aur ip ka farak samjha sakta hoon',
+      'Main deploy ke dauraan ke 502/503 ki wajah aur teen ilaaj bata sakta hoon',
+    ],
+    homework: `<p>EKS cluster par:</p>
+      <pre>kubectl get ingress -A                                 # koi ADDRESS khaali?
+kubectl get deploy &lt;app&gt; -o yaml | grep -A4 preStop     # preStop hai?
+kubectl get ns --show-labels | grep readiness-gate     # readiness gate kis namespace par?</pre>`,
+    cards: [
+      { front: 'AWS Load Balancer Controller kya banata hai?', back: 'Ingress (class <code>alb</code>) → <b>ALB</b> + target group. Service <code>type: LoadBalancer</code> → <b>NLB</b>.' },
+      { front: 'target-type instance vs ip?', back: '<b>instance</b>: ALB → node (NodePort) → kube-proxy → pod. <b>ip</b>: ALB → pod seedha; health check pod ka.' },
+      { front: 'Deploy ke dauraan 502 kyun?', back: 'Purana pod ALB ki target list se hatne se pehle band ho jaata hai. ALB kuch second mare hue pod ko request bhejta hai.' },
+      { front: '502/503 ke teen ilaaj?', back: '<code>preStop</code> sleep (15–30 s) · pod readiness gate (namespace label) · deregistration delay kam (30 s).' },
+      { front: 'Ingress ka ADDRESS khaali — sabse aam wajah?', back: 'Subnets par tag nahi: <code>kubernetes.io/role/elb=1</code> (public) / <code>internal-elb=1</code> (private). <code>kubectl describe ingress</code> ke Events dekho.' },
+    ],
+  },
+
+  /* ================================================================== */
+  {
+    id: 'eks-boss',
+    icon: '👑',
+    title: 'BOSS: launch ka din — receipts.chaipay.in',
+    badge: 'Network Nawab',
+    objectives: [
+      'Ek naye service ke launch par paanchon paraton ko kram se jaanchna',
+      'Har parat ka "sach" kahan likha hai, yeh yaad rakhna',
+      'Jaldbaazi ke jugaad (All, node ka role, haath se DNS) ko pehchaanna',
+      'Lakshan dekh kar sahi parat chunna',
+    ],
+    lesson: [
+      `<h3>👑 Boss level: ek launch, chaar rukawatein</h3>
+       <p>Koi naya concept nahi. ChaiPay aaj ek naya service launch kar raha hai: <code>receipts</code>, host <code>receipts.chaipay.in</code>.</p>
+       <p>Launch ke din cheezein <b>ek ke baad ek</b> atakti hain — aur har baar ek alag parat mein:</p>
+       <ol>
+         <li>🌍 DNS + certificate</li>
+         <li>⚖️ Load balancer</li>
+         <li>🚪 Gateway + route</li>
+         <li>📦 Pod ka IP</li>
+         <li>☁️ Pod ki AWS pehchaan</li>
+       </ol>
+       <p><b>Ek hi niyam:</b> andaaza mat lagao. Har parat apna sach kahin likhti hai — <code>describe</code> ke Events mein, <code>status.conditions</code> mein, ya error ke ek shabd mein.</p>`,
+    ],
+    stages: [
+      {
+        type: 'incident',
+        title: '🚀 Launch ka din — har rukawat par ek faisla',
+        pager: '<b>10:00 AM — receipts.chaipay.in launch.</b><br>Marketing ka email 11:00 baje jayega. Abhi site nahi khul rahi.',
+        start: 'n1',
+        nodes: {
+          n1: {
+            sitrep: 'Browser: NET::ERR_CERT_AUTHORITY_INVALID\n\n$ kubectl get certificate\nNAME           READY   SECRET         AGE\nreceipts-tls   False   receipts-tls   12m',
+            text: 'Certificate 12 minute se Ready nahi. Pehla kadam?',
+            choices: [
+              { t: 'cert-manager ke pod ko restart karo aur 5 minute intezaar karo', good: false, explain: 'cert-manager shayad bilkul theek hai. Restart se pehle poochho: Certificate kis cheez ka intezaar kar raha hai?' },
+              { t: 'Kadi mein neeche chalo: describe certificate → order → challenge', good: true, next: 'n2', explain: 'Certificate → Order → Challenge. Asli wajah hamesha sabse neeche wale object mein likhi hoti hai.' },
+              { t: 'Certificate ko delete karke dobara banao, jab tak Ready na ho', good: false, explain: 'Naya Order usi jagah atkega, aur baar-baar fail hone par Let\'s Encrypt ki ginti ki seema paas aati hai.' },
+            ],
+          },
+          n2: {
+            sitrep: 'Challenge: ... lookup receipts.chaipay.in: no such host\n\n$ kubectl logs deploy/external-dns --tail=1\nlevel=error msg="AccessDenied: User: arn:aws:sts::111122223333:assumed-role/eks-node-role/i-0a1b2c is not authorized to perform: route53:ChangeResourceRecordSets"',
+            text: 'DNS record nahi bana, kyunki ExternalDNS ko Route 53 mein likhne ki ijaazat nahi mili. Error dhyaan se padho. Ab?',
+            choices: [
+              { t: 'Node ke IAM role (eks-node-role) ko Route 53 ki poori ijaazat de do', good: false, explain: 'Ab cluster ka har pod ChaiPay ke DNS records badal sakta hai. Ek compromise hua pod pay.chaipay.in ko apne server par mod dega.' },
+              { t: 'Route 53 mein record haath se bana do; ExternalDNS ko baad mein dekhenge', good: false, explain: 'Aaj kaam chal jayega. Par agla host, ya load balancer ka pata badalna — sab phir tootega, aur tab kisi ko yaad nahi hoga kyun.' },
+              { t: 'ExternalDNS ko apna role nahi mila — association theek karo, pod restart', good: true, next: 'n3', explain: '"assumed-role/eks-node-role" = pod ko apna role mila hi nahi. Association (namespace + ServiceAccount) theek karo aur pod ko dobara banao — chalte pod ko naye credentials nahi milte.' },
+            ],
+          },
+          n3: {
+            sitrep: 'Certificate: Ready True ✓   DNS: receipts.chaipay.in → ALB ✓\nBrowser: 404 Not Found\n\n$ kubectl get httproute -n receipts\nNAME             HOSTNAMES                  ACCEPTED\nreceipts-route   ["receipts.chaipay.in"]    False\n\nReason: NotAllowedByListeners',
+            text: 'HTTPS chal gaya, par 404. Route juda nahi hai. Kya karoge?',
+            choices: [
+              { t: 'receipts namespace ko Gateway ke allowedRoutes wala label do', good: true, next: 'n4', explain: 'Gateway sirf label wale namespaces ke routes leta hai (pichhle mission ka fix). Naye namespace par label lagana hi sahi, chhota badlaav hai.' },
+              { t: 'Gateway ke allowedRoutes ko from: All kar do — launch ka din hai', good: false, explain: 'Ab koi bhi namespace public Gateway par route jod sakta hai. Jaldbaazi mein khola darwaza aksar hamesha khula rehta hai.' },
+              { t: 'receipts-route ko infra namespace mein le jao jahan Gateway hai', good: false, explain: 'App team apna route khud nahi badal payegi, aur infra ka route receipts ke Service tak pahunchne ke liye ReferenceGrant maangega.' },
+            ],
+          },
+          n4: {
+            sitrep: '10:52 AM — site chal rahi hai ✓\n11:05 AM — marketing email gaya, HPA ne receipts ko 4 se 16 pods par scale kiya\n\n$ kubectl get pods -n receipts | grep -c ContainerCreating\n12\n\nEvent: failed to assign an IP address to container',
+            text: '12 naye pods atke hain. Nodes par CPU aur memory khaali hai. Ab?',
+            choices: [
+              { t: 'Nodes ko bade instance type par le jao — zyada CPU chahiye', good: false, explain: 'Pods schedule ho chuke hain; CPU ki koi kami nahi. Event IP ke baare mein hai.' },
+              { t: 'Prefix delegation turant ON kar do — isse naye IP ban jayenge', good: false, explain: 'Prefix delegation ek node par zyada pods aane deta hai. Subnet ke kul IP nahi badhata — aur yahan subnet hi khaali ho chuka hai.' },
+              { t: 'Subnets ke khaali IP dekho; pods ke liye bada subnet / naya CIDR jodo', good: true, next: 'end', explain: '"failed to assign an IP address" = VPC CNI ko subnet se IP nahi mila. aws ec2 describe-subnets mein AvailableIpAddressCount dekho. Tikau ilaaj: pods ke liye bade subnets.' },
+            ],
+          },
+          end: {
+            end: true,
+            text: 'Launch ho gaya — chaar rukawatein, chaar paratein',
+            summary: '<b>Chaar rukawatein, isi kram mein:</b><br>🌍 Certificate atka → wajah Challenge mein (<code>no such host</code>)<br>☁️ DNS nahi bana → ExternalDNS node ke role se chal raha tha (<code>assumed-role/eks-node-role</code>)<br>🚪 404 → HTTPRoute <code>Accepted: False</code><br>📦 Pods atke → <code>failed to assign an IP address</code><br><br><b>Har baar sach likha hua tha</b> — ek <code>describe</code>, ek log line, ek condition mein. Aur har baar ek tez jugaad maujood tha (restart, node ka role, from: All, bada instance) jo ya toh kaam nahi karta, ya kal ki problem banta.',
+          },
+        },
+      },
+      {
+        type: 'bins',
+        title: 'Lakshan dekho, parat chuno',
+        instructions: 'Har lakshan ke liye socho: raaste ki kaun si parat mein dekhna hai?',
+        bins: [
+          { id: 'dns', label: '🌍 DNS / certificate' },
+          { id: 'gw', label: '🚪 Gateway / route' },
+          { id: 'ip', label: '📦 Pod ka IP (VPC CNI)' },
+          { id: 'id', label: '☁️ AWS pehchaan' },
+          { id: 'alb', label: '⚖️ ALB / deploy' },
+        ],
+        items: [
+          { text: 'Browser: "Your connection is not private"; Certificate READY False', bin: 'dns', explain: 'Certificate ki kadi mein neeche chalo: Order → Challenge.' },
+          { text: 'HTTPS theek hai, par 404; HTTPRoute ACCEPTED False', bin: 'gw', explain: 'Gateway ne route ko joda nahi. allowedRoutes aur hostname dekho.' },
+          { text: 'Pod ContainerCreating; event "failed to assign an IP address"', bin: 'ip', explain: 'Subnet ke IP khatam, ya node apni ENI/IP ki seema par.' },
+          { text: 'App ke log: AccessDenied … assumed-role/eks-node-role/…', bin: 'id', explain: 'Pod node ki pehchaan use kar raha hai. Association / annotation aur pod restart.' },
+          { text: 'Sirf deploy ke dauraan 20–30 requests par 502', bin: 'alb', explain: 'Purana pod ALB ki list se hatne se pehle band ho raha hai. preStop + readiness gate.' },
+          { text: 'Challenge: "lookup shop.chaipay.in: no such host"', bin: 'dns', explain: 'DNS record nahi bana. ExternalDNS ke logs: domain-filter ya ijaazat.' },
+          { text: 'Ingress ka ADDRESS 15 minute se khaali', bin: 'alb', explain: 'LB Controller ALB bana nahi paaya. Ingress ke Events: subnet tags ya IAM.' },
+        ],
+      },
+    ],
+    interview: {
+      title: 'Interview Round — request ka poora raasta',
+      instructions: 'Aakhri round. Interviewer ek hi sawal poochhega, kai tarah se: "request kahan atki?" 🎤',
+      questions: [
+        {
+          q: '"User browser mein hamara URL kholta hai. EKS mein request pod tak kaise pahunchti hai? Mukhya padav batao."',
+          choices: [
+            'User → kubectl → API Server → etcd → pod',
+            'User → DNS → ALB → Gateway/Ingress → Service → pod',
+            'User → node ka public IP → kubelet → container',
+            'User → CoreDNS → Scheduler → pod',
+          ],
+          answer: 1,
+          explain: 'Paanch padav: naam (DNS) → darwaza (ALB) → niyam (Gateway/route) → Service (kaun se pods) → pod (IP). Har padav ka apna "sach": DNS record, target health, route ke conditions, Endpoints, pod ke Events.',
+        },
+        {
+          q: '"Naya service 404 de raha hai. Kaise tay karoge ki problem kis parat mein hai?"',
+          choices: [
+            'Sab kuch restart karke dekhunga ki kaun sa restart kaam karta hai',
+            'Bahar se andar chalunga: DNS → certificate → load balancer → route → pod',
+            'Seedha pod ke logs dekhunga; 404 hamesha app se aata hai',
+            'Node ko reboot karunga; network ki problem aksar node se hoti hai',
+          ],
+          answer: 1,
+          explain: '404 ka matlab: request kisi tak pahunchi, par us "kisi" ko raasta nahi mila. Aksar woh Gateway hota hai (route juda nahi). Bahar se andar chalne se har kadam par aadha daayra hat jaata hai.',
+        },
+        {
+          q: '"Launch ke din tumhare saathi ne Gateway ko from: All kar diya \'taaki kaam chal jaye\'. Kya kahoge?"',
+          choices: [
+            'Theek kiya — launch ke din raftaar suraksha se zyada zaroori hai',
+            'Sahi fix ek label ka tha; from: All se har namespace traffic mod sakta hai',
+            'Koi farak nahi padta — allowedRoutes sirf ek salaah hai, Gateway use maanta nahi',
+            'Gateway ko delete karke naya banana chahiye tha',
+          ],
+          answer: 1,
+          explain: 'Jaldbaazi ke jugaad ki do pehchaan: (1) woh daayra bada karta hai (All, node ka role, cluster-admin), (2) use wapas karna koi yaad nahi rakhta. Sahi fix aksar utna hi chhota hota hai — bas dhoondhna padta hai.',
+        },
+      ],
+    },
+    success: [
+      'Main request ke raaste ki paanchon paratein kram se bata sakta hoon',
+      'Main lakshan dekh kar sahi parat chun sakta hoon',
+      'Main jaldbaazi ke jugaad aur sahi chhote fix mein farak kar sakta hoon',
+    ],
+    homework: `<p>Apne kisi ek service ke liye kaagaz par poora raasta banao, aur har padav ke aage woh command likho jo us padav ka sach batata hai:</p>
+      <pre>DNS         →  dig &lt;host&gt;
+Certificate →  kubectl get certificate ; kubectl describe challenge
+ALB         →  kubectl describe ingress|gateway
+Route       →  kubectl describe httproute
+Service     →  kubectl get endpoints &lt;svc&gt;
+Pod         →  kubectl describe pod &lt;pod&gt;
+AWS         →  kubectl exec deploy/&lt;app&gt; -- aws sts get-caller-identity</pre>`,
+    cards: [
+      { front: 'Request ke raaste ki paanch paratein?', back: 'DNS + certificate → load balancer → Gateway + route → pod (IP) → AWS (pehchaan).' },
+      { front: 'Har parat ka "sach" kahan likha hai?', back: 'Challenge ka describe · Ingress/Gateway ke Events · HTTPRoute ke conditions · pod ke Events · <code>get-caller-identity</code>.' },
+      { front: 'Jaldbaazi ke jugaad ki do pehchaan?', back: '(1) Daayra bada karta hai (from: All, node ka role, cluster-admin). (2) Wapas karna koi yaad nahi rakhta.' },
+      { front: '404 par debug ki disha?', back: 'Bahar se andar: DNS → certificate → load balancer → route ke conditions → Service ke Endpoints → pod.' },
     ],
   },
 ]);

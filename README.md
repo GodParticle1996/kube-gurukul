@@ -97,7 +97,7 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
     requirements, weighted NodePool fallback aur configurable launch/consolidation delay
     decisions ko visible banate hain. Ticks commands hain; EC2 timing/prices illustrative hain
 
-- **🧭 Decision Dojo — 15 trees, 93 practice scenarios:** sawal → wajah → recommendation;
+- **🧭 Decision Dojo — 23 trees, 142 practice scenarios:** sawal → wajah → recommendation;
   saath mein poora map, X vs Y table, production gotchas, YAML aur related levels/labs.
   Topic practice ya 8-scenario mixed round khelo; galat jawab Revision Dojo card banta hai
 
@@ -171,7 +171,7 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `helmsim.js` | helm simulator (releases, revisions, values merge, lifecycle) |
 | `argosim.js` | argocd simulator (Applications, sync/health, waves, prune, Rollouts) |
 | `karpentersim.js` | Karpenter controller sim (provisioning, consolidation, cost) |
-| `decisions.js` · `data-decisions.js` | Decision trees, comparison tables, scenario practice + related content |
+| `decisions.js` · `data-decisions.js` · `data-decisions-prod.js` | Decision trees, comparison tables, scenario practice + related content |
 | `reallabs.js` · `real-labs/` | Browser catalogue + real-cluster README/setup/verify/solution files |
 | `tools/replay-missions.js` · `tools/mcq-bias.js` | Mission transcripts + solution checks; answer-length bias report |
 | `validate.js` | **`node validate.js`** — content + engine + simulator tests.<br>Labs ko sach mein **render** karta hai, unke goals ko **solvable saabit** karta hai (slider ka knob sweep, board ka backtracking), aur **non-Latin script leaks** pakadta hai |

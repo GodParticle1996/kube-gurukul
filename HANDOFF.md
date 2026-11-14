@@ -2,7 +2,8 @@
 
 This section is the current state. Everything below the next heading is older history.
 
-- **Content:** 11 tracks / 80 levels / 56 terminal missions / 19 real labs. Four new "production" tracks
+- **Content:** 11 tracks / 80 levels / 56 terminal missions / 19 real labs / 23 decision trees (142 practice scenarios;
+  8 new trees for the production tracks live in `data-decisions-prod.js`). Four new "production" tracks
   (`day2`, `observe`, `secure`, `eksnet`; 22 levels) share one company story, ChaiPay — see `EXTENDING.md` §17.5.
 - **Engine UX:** terminal help (current task, Tab completion, did-you-mean, free command palette, paid next-command),
   step-by-step flow player, one-card-at-a-time lesson pager, hash routing with a working Back button, grouped home page
@@ -10,7 +11,7 @@ This section is the current state. Everything below the next heading is older hi
   All documented for other agents in `EXTENDING.md` §17.
 - **Verified:** `node validate.js` passes; `node tools/replay-missions.js run` replays all 56 mission solutions;
   every level intro and stage of all 11 tracks opened in headless Chromium at 1180px and 390px with 0 page errors
-  and 0 horizontal overflow.
+  and 0 horizontal overflow. Every recommendation (127 leaves) of all 23 decision trees was walked at both widths too.
 - **Not verified:** real labs 16–19 were written on a machine without Docker/kind and have never run on a cluster
   (flag `untested: true` in `reallabs.js`; remove it after a real run). The lesson text of the 58 older levels was not
   re-fact-checked line by line. 11 of the 58 older diagrams were converted to step-by-step scenes; the other 47 are still static HTML.

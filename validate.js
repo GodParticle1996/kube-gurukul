@@ -66,7 +66,7 @@ const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
   'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-secure.js', 'data-eksnet.js', 'data-gaps.js', 'data-ext-sdd.js',
-  'data-decisions.js', 'app.js'];
+  'data-decisions.js', 'data-decisions-prod.js', 'app.js'];
 
 const missing = FILES.filter(f => !fs.existsSync(path.join(DIR, f)));
 if (missing.length) { console.error('❌ missing files:', missing.join(', ')); process.exit(1); }

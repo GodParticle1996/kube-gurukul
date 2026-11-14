@@ -1371,3 +1371,9 @@ button:focus:not(:focus-visible) { outline: none; }
   background: #ffb3470f; border: 1px solid #ffb34759; border-radius: 12px;
   padding: 12px 16px; margin: 14px 0; line-height: 1.6; font-size: .92rem; overflow-wrap: anywhere;
 }
+
+/* Decision Dojo: lamba inline <code> (jaise system:serviceaccount:payments:notify-sa) phone par page ko chauda na kare */
+.dd-leaf code, .dd-step code, .dd-tldr code, .dd-scenario code, .dd-opt code { overflow-wrap: anywhere; }
+/* Jawab ka lamba naam (jaise "ValidatingAdmissionPolicy …") phone par card se bahar na nikle */
+.dd-leaf-h > div { min-width: 0; }
+.dd-leaf-pick { overflow-wrap: anywhere; }

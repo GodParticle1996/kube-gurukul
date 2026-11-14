@@ -495,9 +495,12 @@ Laptop par asli processes chalwane wala stage (System Gurukul / SQL Gurukul jais
 - Purane level mein naya video → `KG.extendLevel(id, { objectives, lesson, stages, success, cards, interview, homework })`
   (`core.js`), level na mile toh ERROR. Batch files (`data-ext-sdd.js`) sabse aakhir mein, `app.js` se pehle load hoti hain.
 
-## 12. Decision Dojo (`decisions.js` + `data-decisions.js`)
+## 12. Decision Dojo (`decisions.js` + `data-decisions.js` + `data-decisions-prod.js`)
 
-Abhi **15 trees aur 93 practice scenarios** hain. Tree data IIFE ke andar register karo:
+Abhi **23 trees aur 142 practice scenarios** hain. `data-decisions.js` mein purane 15 trees hain.
+`data-decisions-prod.js` mein "Production ke kaam" tracks ke 8 trees hain (`debugtool`, `restore`, `alerting`, `signal`,
+`admission`, `eksid`, `tlscert`, `eksip`) — sab ChaiPay ki kahani mein. Nayi tree file ko `index.html` aur `validate.js`
+ki `FILES` list, dono mein jodo. Tree data register karo:
 
 ```js
 KG.registerDecisions([{
@@ -526,6 +529,16 @@ Scenario ka `answer` leaf ID hai; practice options leaves se bante hain. Scenari
 constraint likho, options ki length se jawab reveal mat karo. Renderer recommendation, full map,
 comparison aur answer ka decision-route dikhata hai. Mixed practice 8 scenarios leti hai;
 galat jawab Revision Dojo mein mistake card banta hai. `levels`/`labs` links dono taraf sahi IDs do.
+
+Teen baatein jo validator nahi pakadta:
+
+1. **`pick` ki lambai barabar rakho.** Practice ke options leaves ke `pick` se bante hain. Ek tree ke andar sabse lamba
+   `pick` sabse chhote `pick` ke 1.15 guna se kam ho. Jaanch: `node tools/mcq-bias.js list --kind=decision`
+   (nayi tree ka naam is list mein nahi aana chahiye).
+2. **`yaml` field escape hoti hai.** Wahan `<naam>` seedha likho, `&lt;naam&gt;` nahi. Baaki fields (`one`, `why`, `gotchas`,
+   `example`) HTML hain — wahan `&lt;naam&gt;` likho.
+3. **Tree ka `levels: [...]`** hi tay karta hai ki level ke shuru wale "🧭 Kab use karein?" box mein kaun sa tree dikhe.
+   Sirf wahi level jodo jiska faisla tree mein sach mein hai.
 
 ## 13. Real Labs (`reallabs.js` + `real-labs/`)
 

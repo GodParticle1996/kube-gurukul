@@ -184,7 +184,7 @@ spec:
     title: 'Service ko kaise expose karein — ClusterIP, Headless, NodePort, LoadBalancer, Ingress ya Gateway API?',
     short: 'Traffic andar kaise aaye?',
     tldr: 'Pehle poochho <b>kaun bulayega</b> (cluster ke andar se, bahar se, ya sirf tum debug ke liye). Bahar se HTTP hai toh L7 router (Gateway API/Ingress); baaki protocols ke liye LoadBalancer.',
-    levels: ['service', 'ingress'], labs: ['04-service-dns'],
+    levels: ['service', 'ingress', 'gw-api', 'eks-alb'], labs: ['04-service-dns'],
     start: 'who',
     nodes: {
       who: {
@@ -781,7 +781,7 @@ livenessProbe:  { httpGet: { path: /healthz, port: http }, periodSeconds: 10, fa
     title: 'Autoscaling — HPA, KEDA, VPA, Cluster Autoscaler ya Karpenter?',
     short: 'Kaunsa autoscaler?',
     tldr: 'Pehle <b>problem pehchaano</b>: pods <b>kam</b> hain (HPA/KEDA), pods ka <b>size</b> galat hai (VPA), ya pods ke liye <b>nodes</b> nahi hain (Cluster Autoscaler/Karpenter). Aksar do saath chalte hain: HPA pods badhata hai, node autoscaler unke liye jagah.',
-    levels: ['autoscale', 'karpenterbasics'], labs: ['10-hpa'],
+    levels: ['autoscale', 'karpenterbasics', 'as-hpa', 'as-keda'], labs: ['10-hpa'],
     start: 'problem',
     nodes: {
       problem: {
@@ -1426,7 +1426,7 @@ spec:
     title: 'Access kaise dein — Role/RoleBinding, ClusterRole, built-in roles ya token hi nahi?',
     short: 'RBAC combo',
     tldr: 'Pehle <b>kaun</b> (insaan ya app)? Phir <b>kahan</b> (ek namespace, kai, ya poora cluster/cluster-scoped resources)? Hamesha <b>kam se kam</b> verbs — aur app ko API chahiye hi nahi toh token mount hi mat karo.',
-    levels: ['rbac'], labs: ['08-rbac'],
+    levels: ['rbac', 'sec-sa'], labs: ['08-rbac'],
     start: 'who',
     nodes: {
       who: {
@@ -1576,7 +1576,7 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster
     title: 'Requests/limits kaise set karein — Guaranteed, "memory = limit", Burstable ya BestEffort?',
     short: 'Resources strategy',
     tldr: '<b>Memory</b>: request = limit (memory wapas nahi li ja sakti — sirf kill). <b>CPU</b>: request zaroor; limit sirf tab jab throttling chalegi ya isolation chahiye. Requests <b>naap ke</b> (VPA/metrics), andaaze se nahi.',
-    levels: ['scheduler'], labs: ['01-crashloop-oom', '06-quota-qos'],
+    levels: ['scheduler', 'd2-rightsize'], labs: ['01-crashloop-oom', '06-quota-qos', '17-cpu-throttling'],
     start: 'prod',
     nodes: {
       prod: {
@@ -1985,7 +1985,7 @@ spec:
     title: 'Network security — NetworkPolicy (ingress/egress), service mesh L7/mTLS ya node encryption?',
     short: 'Traffic kaise surakshit karein?',
     tldr: 'L3/L4 "kaun kisse baat kare" → <b>NetworkPolicy</b> (default deny + allows). HTTP path/method ya service identity ke rules, mTLS → <b>service mesh</b>. Bas wire par encryption → <b>WireGuard/IPsec</b> (Cilium/Calico).',
-    levels: ['netpol', 'istio'], labs: ['09-networkpolicy'],
+    levels: ['netpol', 'istio', 'sec-boss'], labs: ['09-networkpolicy', '19-quarantine'],
     start: 'need',
     nodes: {
       need: {

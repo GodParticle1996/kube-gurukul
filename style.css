@@ -1362,3 +1362,6 @@ button:focus:not(:focus-visible) { outline: none; }
 .term-goal, .term-tasks li { overflow-wrap: anywhere; }
 .term-goal code, .term-tasks code { overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
 .tp-chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+/* lambe shabd (securityContext ke naam, image paths) phone par chip/option ko screen se bahar dhakelte the */
+.chip, .mcard, .choice, .bin-label, .slot-text { overflow-wrap: anywhere; }
+.chip { max-width: 100%; }

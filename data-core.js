@@ -118,6 +118,18 @@ KG.tracks = [
     alwaysUnlocked: true,
   },
   {
+    id: 'observe',
+    group: 'prod',
+    icon: '📈',
+    name: 'Observability & Autoscaling Gurukul',
+    blurb: 'Kuch toota hai — kaise pata chalega aur kahan? Prometheus ke metrics, sahi alerts aur SLO, logs + traces se wajah tak pahunchna. Phir load badhe toh HPA aur KEDA se apne aap scale karna.',
+    certTitle: 'NAZAR KA NAWAB',
+    certSub: 'Certificate of Observability & Autoscaling',
+    motto: 'Jo naapa nahi, woh sambhala nahi ja sakta. Jo har cheez par bajta hai, use koi nahi sunta.',
+    formula: 'Metric (kya) → Trace (kahan) → Log (kyun) · Load ↑ → replicas ↑',
+    alwaysUnlocked: true,
+  },
+  {
     id: 'kodekloud',
     group: 'scenario',
     icon: '🩺',

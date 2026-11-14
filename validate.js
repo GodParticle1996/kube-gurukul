@@ -65,7 +65,7 @@ global.Element = function () {}; Element.prototype = {};
 const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'terminal.js',
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
-  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-gaps.js', 'data-ext-sdd.js',
+  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-gaps.js', 'data-ext-sdd.js',
   'data-decisions.js', 'app.js'];
 
 const missing = FILES.filter(f => !fs.existsSync(path.join(DIR, f)));
@@ -1234,7 +1234,7 @@ t('content: <pre> mein "\\ # comment" nahi (bash line-continuation tootti hai)',
 });
 t('content: HTML fields mein raw <placeholder> nahi (browser use tag samajh ke GAYAB kar deta hai)', () => {
   // in fields ko engine text ki tarah dikhata hai (textContent/escapeHtml) — wahan <pod> theek hai
-  const TEXT_FIELDS = new Set(['cluster', 'files', 'responses', 'hints', 'template', 'out', 'yaml', 'start', 'cleanup', 'tokens']);
+  const TEXT_FIELDS = new Set(['cluster', 'files', 'responses', 'hints', 'template', 'out', 'yaml', 'start', 'cleanup', 'tokens', 'context']);   // context: <pre> mein escapeHtml se jaata hai (quiz/interview/pop quiz)
   const OK = new Set('a abbr b br code details div em h1 h2 h3 h4 h5 i img kbd li ol p pre s small span strong sub summary sup table tbody td th thead tr u ul svg path rect circle line text g polyline polygon defs marker tspan ellipse title style section label button input'.split(' '));
   const bad = [];
   const scan = (v, where) => {

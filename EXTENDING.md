@@ -662,7 +662,12 @@ Learner "Agla kadam →" dabata hai; har kadam = ek teer + chalta packet + neech
 | `say` ke shabd | `yeh / woh / isse / usse / isko / usko` mana — dabbe ka **naam** likho |
 
 - `set: { nodeId: { tone, sub } }` us kadam se dabbe ka rang/subtitle badal deta hai aur aage tak rehta hai (jaise pod `Pending` → `Running`).
-- Teer kisi beech ke dabbe ke upar se jaaye toh `bend: 40` do.
+- **Teer kisi teesre dabbe ke upar se nahi guzar sakta** (validator fail karta hai). Ek hi row/column mein ek dabba chhod kar
+  jaana ho toh `bend: 110` do — teer rows ke beech ki khaali patti se ghoom kar jaata hai. Sabse achha: dabbon ko aise rakho
+  ki teer sirf padosi dabbon ke beech chalein (seedha daayen/baayen/upar/neeche).
+- **Label ki jagah engine khud chunta hai** (`placeLabel`): teer ke bagal mein; jagah na ho toh dabbon ke upar/neeche ki khaali
+  patti mein; aakhri upaay mein teer ki line par. Label kabhi kisi dabbe ko nahi dhakta. Kahin jagah na mile toh validator bolta hai
+  "label ke liye khaali jagah nahi" — tab label chhota karo ya layout badlo.
 - Purana static `html` saath rakh sakte ho (hotspot game usi ko use karta hai). `scene` ho toh level intro mein scene dikhta hai.
 - Naya scene likh kar `gallery.html` mein dekho, aur phone width (390px) par bhi.
 
@@ -740,6 +745,7 @@ ServiceMonitor, HTTPRoute, Certificate, ClusterPolicy, PodIdentityAssociation �
 (Playwright) se 1180px aur 390px par kholi gayi: page errors 0, horizontal overflow 0. Bada UI badlaav karo toh wahi dobara karo:
 har level ka intro + har stage kholo, `document.documentElement.scrollWidth - clientWidth` 2px se kam ho, aur console/page error na ho.
 
-**Jo is pass mein nahi hua:** purane 58 levels ka lesson text line-by-line dobara fact-check nahi hua; sirf 3 purane diagram
-(`controlplane`, `deploy`, `service`) scene mein badle; real labs 16–19 cluster par nahi chale.
+**Jo is pass mein nahi hua:** purane 58 levels ka lesson text line-by-line dobara fact-check nahi hua; 58 purane diagrams mein se
+11 scene bane (`controlplane`, `deploy`, `service`, `scheduler`, `probes`, `storage`, `ingress`, `netpol`, `autoscale`, `rbac`, `gitops`),
+baaki 47 abhi static `html` hain; real labs 16–19 cluster par nahi chale.
 

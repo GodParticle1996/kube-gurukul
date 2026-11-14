@@ -32,8 +32,8 @@ VISUALS['sec-sa'] = {
     ],
     steps: [
       { from: 'kubelet', to: 'pod', label: 'token file', say: '<b>kubelet</b> <b>pod: notify</b> ke andar ek token file rakhta hai. Token 1 ghante ka hota hai; kubelet use khud badalta rehta hai. Token sirf isi pod se bandha hai.' },
-      { from: 'pod', to: 'api', label: 'request + token', say: '<b>pod: notify</b> jab bhi <b>API Server</b> se kuch maangta hai, token saath bhejta hai. API Server token se pehchaanta hai: yeh <code>notify-sa</code> hai.' },
-      { from: 'api', to: 'rbac', label: 'ijaazat hai?', tone: 'gold', say: '<b>API Server</b> <b>RBAC</b> se poochhta hai: "notify-sa ko yeh kaam karne ki ijaazat hai?" Jawab RoleBinding aur Role se aata hai. Pehchaan token se, ijaazat RBAC se.' },
+      { from: 'pod', to: 'api', label: 'request + token', say: '<b>pod: notify</b> jab bhi <b>API Server</b> se kuch maangta hai, token saath bhejta hai. API Server token se pehchaanta hai: bhejne wala <code>notify-sa</code> hai.' },
+      { from: 'api', to: 'rbac', label: 'ijaazat hai?', tone: 'gold', say: '<b>API Server</b> <b>RBAC</b> se poochhta hai: "notify-sa ko maanga hua kaam karne ki ijaazat hai?" Jawab RoleBinding aur Role se aata hai. Pehchaan token se, ijaazat RBAC se.' },
       { from: 'bad', to: 'pod', label: 'token chura liya', tone: 'bad', set: { pod: { tone: 'bad', sub: 'compromised' } }, say: '<b>Attacker</b> pod ke andar hai. Attacker token file padh leta hai. Ab attacker API Server ke liye <code>notify-sa</code> hi hai.' },
       { from: 'pod', to: 'api', label: 'list secrets', tone: 'bad', bend: 24, say: '<b>Attacker</b> notify ke token se <b>API Server</b> se payments namespace ke saare Secrets maangta hai. API Server ko farak nahi pata — token asli hai.' },
       { from: 'rbac', to: 'sec', label: 'allow ya deny?', tone: 'bad', say: 'Ab sab kuch <b>RBAC</b> par tika hai. Agar notify-sa ko "sab kuch" ki ijaazat hai, toh attacker ko <b>Secrets (payments)</b> mil gaye. Agar notify-sa ko sirf ek ConfigMap padhne ki ijaazat hai, toh attacker ke haath kuch nahi lagta. Yahi <b>least privilege</b> hai.' },
@@ -72,7 +72,7 @@ VISUALS['sec-policy'] = {
       { from: 'dev', to: 'api', label: 'Deployment (image: latest)', say: '<b>Developer</b> ek Deployment bhejta hai jisme <code>image: chaipay/pay-api:latest</code> likha hai. <b>API Server</b> pehchaan aur RBAC jaanchta hai — dono theek.' },
       { from: 'api', to: 'mut', label: 'pehle mutate', say: 'RBAC ke baad request <b>Mutate</b> padav par jaati hai. Yahan policy chhooti hui cheezein jod sakti hai, jaise <code>seccompProfile: RuntimeDefault</code>.' },
       { from: 'mut', to: 'val', label: 'phir validate', tone: 'gold', say: 'Badli hui request <b>Validate</b> padav par jaati hai. Kram hamesha yahi hai: pehle mutate, phir validate — taaki niyam aakhri roop par lage.' },
-      { from: 'val', to: 'no', label: 'latest tag mana hai', tone: 'bad', bend: -30, say: 'Policy <code>disallow-latest-tag</code> ka niyam: image ka tag <code>latest</code> nahi ho sakta. <b>Validate</b> "na" kehta hai. Developer ko <b>Inkaar</b> milta hai — error mein policy ka naam likha hai.' },
+      { from: 'val', to: 'no', label: 'latest tag mana hai', tone: 'bad', bend: 110, say: 'Policy <code>disallow-latest-tag</code> ka niyam: image ka tag <code>latest</code> nahi ho sakta. <b>Validate</b> "na" kehta hai. Developer ko <b>Inkaar</b> milta hai — error mein policy ka naam likha hai.' },
       { from: 'dev', to: 'api', label: 'image: 4.0.1', tone: 'good', bend: 24, say: '<b>Developer</b> tag ko <code>4.0.1</code> karke dobara bhejta hai. Request phir usi raaste se jaati hai: RBAC → Mutate → Validate.' },
       { from: 'val', to: 'etcd', label: 'pass', tone: 'good', say: 'Is baar <b>Validate</b> "haan" kehta hai. Deployment <b>etcd</b> mein likha jaata hai. Dhyaan do: RBAC batata hai <i>kaun</i> kya bana sakta hai; policy batati hai ki bana hua object <i>kaisa</i> hona chahiye.' },
     ],
@@ -611,7 +611,7 @@ VISUALS['sec-supply'] = {
     steps: [
       { from: 'ci', to: 'scan', label: 'nayi image', say: '<b>CI: build</b> image banata hai. Push se pehle image <b>Scan (Trivy)</b> ke paas jaati hai.' },
       { at: ['scan'], say: '<b>Scan (Trivy)</b> image ke har package ko jaanchta hai. CRITICAL kamzori mili aur uska fix maujood hai → pipeline yahin ruk jaati hai. Kharab image aage badhti hi nahi.' },
-      { from: 'scan', to: 'sign', label: 'saaf hai', tone: 'good', say: 'Scan paas hua. Ab <b>Sign (cosign)</b> image ke <b>digest</b> par signature banata hai. Signature kehta hai: "yeh image ChaiPay ki pipeline se nikli hai".' },
+      { from: 'scan', to: 'sign', label: 'saaf hai', tone: 'good', say: 'Scan paas hua. Ab <b>Sign (cosign)</b> image ke <b>digest</b> par signature banata hai. Signature kehta hai: "is digest wali image ChaiPay ki pipeline se nikli hai".' },
       { from: 'sign', to: 'reg', label: 'image + signature', say: 'Image aur signature dono <b>Registry</b> mein jaate hain. Tag <code>4.0.1</code> ek chit hai; asli pehchaan digest <code>sha256:9f2c…</code> hai.' },
       { from: 'reg', to: 'adm', label: 'pod maang raha hai', tone: 'gold', say: 'Koi Deployment is image ko maangta hai. <b>Admission: verify</b> registry se signature mangwata hai aur tumhari public key se milata hai.' },
       { from: 'adm', to: 'k8s', label: 'signature sahi', tone: 'good', say: 'Signature sahi hai, toh pod <b>Cluster</b> mein chalta hai. Bina signature wali image — chahe kisi ne registry mein chupke se daal di ho — darwaze par hi ruk jaati hai.' },
@@ -649,7 +649,7 @@ VISUALS['sec-runtime'] = {
       { id: 'you', col: 0, row: 1, icon: '🧑‍🚒', label: 'On-call (tum)', sub: 'jawab dena hai', about: 'Falco sirf batata hai. Rokna aur saaf karna insaan (ya automation) ka kaam hai.' },
     ],
     steps: [
-      { from: 'ctr', to: 'kern', label: 'execve("sh")', tone: 'bad', say: 'Attacker <b>container: notify</b> ke andar ek shell chalata hai. Shell chalana bhi ek syscall hai: container <b>Linux kernel</b> se kehta hai "yeh naya process chalao".' },
+      { from: 'ctr', to: 'kern', label: 'execve("sh")', tone: 'bad', say: 'Attacker <b>container: notify</b> ke andar ek shell chalata hai. Shell chalana bhi ek syscall hai: container <b>Linux kernel</b> se kehta hai "ek naya process chalao".' },
       { from: 'kern', to: 'falco', label: 'syscall ki khabar', say: '<b>Falco</b> eBPF ke zariye <b>Linux kernel</b> ke har syscall ki khabar sunta hai. Container ke andar kuch install nahi hai; attacker Falco ko dekh ya band nahi kar sakta.' },
       { from: 'falco', to: 'rules', label: 'niyam se milao', tone: 'gold', say: '<b>Falco</b> is khabar ko <b>Rules</b> se milata hai. Niyam: "production container ke andar shell nahi khulna chahiye". Match ho gaya.' },
       { from: 'falco', to: 'alert', label: 'alert', tone: 'bad', bend: -30, say: '<b>Falco</b> ek <b>Alert</b> bhejta hai: kaun sa pod, kaun sa container, kaun sa command, kis samay.' },
@@ -1111,7 +1111,7 @@ VISUALS['sec-boss'] = {
       { id: 'data', col: 0, row: 1, icon: '🗝️', label: 'Asli maal', sub: 'Secrets, database', tone: 'good', about: 'Attacker ka asli nishana: passwords, keys, customers ka data.' },
     ],
     steps: [
-      { from: 'bad', to: 'img', label: 'kamzor library', tone: 'bad', say: '<b>Attacker</b> ek jaani hui kamzori dhoondhta hai. <b>Image ki jaanch</b> (scan CI mein, signature darwaze par) is kamzori wali image ko release hone se rokti. Yeh deewar kamzor ho toh attacker pod ke andar aa jaata hai.' },
+      { from: 'bad', to: 'img', label: 'kamzor library', tone: 'bad', say: '<b>Attacker</b> ek jaani hui kamzori dhoondhta hai. <b>Image ki jaanch</b> (scan CI mein, signature darwaze par) is kamzori wali image ko release hone se rokti. Pehli deewar kamzor ho toh attacker pod ke andar aa jaata hai.' },
       { from: 'img', to: 'pol', label: 'pod ke andar', tone: 'bad', say: 'Attacker pod ke andar hai. <b>Admission policy</b> ne pehle hi tay kar diya tha ki pod root nahi chalega aur privileged nahi hoga. Isliye attacker container se node tak nahi kood sakta.' },
       { from: 'pol', to: 'rbac', label: 'token churaya', tone: 'bad', say: 'Attacker pod ka token churata hai. <b>Least privilege</b> ki wajah se token sirf ek ConfigMap aur ek Secret padh sakta hai. NetworkPolicy ki wajah se pod database tak pahunch hi nahi sakta.' },
       { from: 'rbac', to: 'rt', label: 'ajeeb harkat', tone: 'bad', say: 'Attacker miner chalata hai. <b>Runtime nazar</b> (Falco) shell, naya binary aur mining pool ka connection pakad leti hai. On-call ko page milta hai.' },

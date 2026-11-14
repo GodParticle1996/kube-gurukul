@@ -246,6 +246,29 @@ const VISUALS = {
 
   scheduler: {
     t: 'Requests, Limits & QoS — eviction ki line',
+    scene: {
+      intro: '<b>Sawal:</b> Scheduler node kaise chunta hai — aur node bhar jaaye toh pehle kaun sa pod nikalta hai?',
+      aria: 'Request se scheduling, limit ka asar, aur QoS ke hisaab se eviction ka kram, 8 kadam',
+      nodes: [
+        { id: 'pod', col: 0, row: 0, icon: '📦', label: 'pod: api', sub: 'request 500m / 512Mi', about: 'Naya pod. Request = pod ka waada: "mujhe kam se kam itna chahiye". Limit = hadd: "limit se zyada nahi".' },
+        { id: 'sched', col: 1, row: 0, icon: '🧮', label: 'Scheduler', sub: 'requests dekhta hai', tone: 'accent', about: 'Scheduler har naye pod ke liye ek node chunta hai. Scheduler sirf requests ka jod dekhta hai, asli usage nahi.' },
+        { id: 'na', col: 2, row: 0, icon: '🖥️', label: 'node-a', sub: '300m CPU khaali', tone: 'muted' },
+        { id: 'nb', col: 1, row: 1, icon: '🖥️', label: 'node-b', sub: '2 CPU khaali', tone: 'good' },
+        { id: 'be', col: 0, row: 2, icon: '🥉', label: 'BestEffort', sub: 'kuch set nahi', tone: 'muted', about: 'Pod mein na request likhi, na limit. Node par dabav aaye toh sabse pehle nikalta hai.' },
+        { id: 'bu', col: 1, row: 2, icon: '🥈', label: 'Burstable', sub: 'request limit se kam', tone: 'muted', about: 'Request likhi hai, par limit se kam (ya limit hai hi nahi). Zyadatar apps isi class mein hote hain.' },
+        { id: 'gu', col: 2, row: 2, icon: '🥇', label: 'Guaranteed', sub: 'request = limit', tone: 'muted', about: 'Har container mein CPU aur memory dono ki request aur limit barabar. Sabse aakhir mein nikalta hai.' },
+      ],
+      steps: [
+        { from: 'pod', to: 'sched', label: 'request: 500m, 512Mi', say: 'Naya pod <b>pod: api</b> bana. Pod kehta hai: mujhe kam se kam 500m CPU aur 512Mi memory chahiye. Is waade ka naam <b>request</b> hai.' },
+        { from: 'sched', to: 'na', label: '300m khaali — kam hai', tone: 'bad', say: '<b>Scheduler</b> node-a ko dekhta hai. node-a par sirf 300m CPU khaali hai. 500m ki request fit nahi hoti. node-a list se bahar.' },
+        { from: 'sched', to: 'nb', label: 'fit → yahan bhejo', tone: 'good', set: { nb: { sub: '1.5 CPU khaali' } }, say: 'node-b par 2 CPU khaali hai. Request fit hoti hai. <b>Scheduler</b> pod: api ko node-b par bhejta hai. Dhyan do: Scheduler <b>asli usage nahi</b>, sirf <b>requests ka jod</b> dekhta hai.' },
+        { at: ['nb'], say: 'Ab <b>limit</b>. CPU limit paar → kernel container ko <b>dheema</b> kar deta hai (throttle). Memory limit paar → kernel container ko <b>maar deta hai</b> (OOMKilled, exit code 137).' },
+        { at: ['nb'], set: { nb: { tone: 'bad', sub: 'memory full!' } }, say: 'Maan lo node-b ki memory hi bhar gayi. node-b ka <b>kubelet</b> kuch pods ko nikalta hai (evict). Pehle kaun nikalega? Pod ki <b>QoS class</b> tay karti hai.' },
+        { at: ['be'], set: { be: { tone: 'bad' } }, say: 'Sabse pehle <b>BestEffort</b> pods nikalte hain — jin pods mein koi request ya limit nahi likhi.' },
+        { at: ['bu'], set: { bu: { tone: 'gold' } }, say: 'Phir <b>Burstable</b> pods. Burstable pod tab nikalta hai jab Burstable pod apni request se zyada memory le raha ho. pod: api isi class mein hai.' },
+        { at: ['gu'], set: { gu: { tone: 'good' } }, say: 'Sabse aakhir mein <b>Guaranteed</b> pods — jinki request aur limit barabar hain. Zaroori app (jaise database) ko Guaranteed banao.' },
+      ],
+    },
     html: `
       <div class="dg-split">
         <div class="dg-node is-good"><span class="ni">🥇</span><span class="nl">Guaranteed</span><span class="ns">requests == limits</span><span class="dg-pill good">sabse aakhri mein evict</span></div>
@@ -262,6 +285,26 @@ const VISUALS = {
 
   probes: {
     t: 'Teen probes, teen sawal',
+    scene: {
+      intro: '<b>Sawal:</b> Kubernetes ko kaise pata chalta hai ki pod ko traffic dena hai, rokna hai, ya restart karna hai?',
+      aria: 'Startup, readiness aur liveness probe ka kram aur har probe ke fail hone ka asar, 8 kadam',
+      nodes: [
+        { id: 'kubelet', col: 0, row: 0, icon: '👷', label: 'kubelet', sub: 'node ka agent', about: 'kubelet har node par chalta hai. Teeno probes kubelet hi chalata hai — Service ya API Server nahi.' },
+        { id: 'pod', col: 1, row: 0, icon: '📦', label: 'pod: web', sub: 'boot ho raha hai', tone: 'muted', about: 'Ek pod jiska app boot hone mein 40 second leta hai.' },
+        { id: 'user', col: 0, row: 1, icon: '🧑', label: 'User', sub: 'request bhejta hai' },
+        { id: 'svc', col: 1, row: 1, icon: '📞', label: 'Service: web-svc', sub: 'sirf Ready pods', tone: 'accent', about: 'Service sirf un pods ko traffic deti hai jo Ready hain (jinka readiness probe paas hai).' },
+      ],
+      steps: [
+        { at: ['pod'], say: 'Pod <b>pod: web</b> abhi start hua. App ko boot hone mein 40 second lagte hain. Is beech Kubernetes ko teen sawal poochhne hain.' },
+        { from: 'kubelet', to: 'pod', label: 'startup: boot hua?', tone: 'gold', set: { pod: { sub: 'startup probe chal raha' } }, say: '<b>kubelet</b> pehle sirf <b>startup probe</b> chalata hai. Jab tak startup probe paas nahi hota, readiness aur liveness probe ruke rehte hain. Dheeme app ko boot ka samay mil jaata hai.' },
+        { from: 'kubelet', to: 'pod', label: 'readiness: traffic doon?', set: { pod: { tone: 'good', sub: 'READY 1/1' } }, say: 'Startup probe paas. Ab <b>kubelet</b> <b>readiness probe</b> chalata hai. Readiness paas → pod ka IP Service ki list (Endpoints) mein jud jaata hai.' },
+        { from: 'user', to: 'svc', label: 'request', say: 'User ki request <b>Service: web-svc</b> par aati hai.' },
+        { from: 'svc', to: 'pod', label: 'sirf Ready pod ko', tone: 'good', say: '<b>Service: web-svc</b> request sirf un pods ko deti hai jo Ready hain. pod: web Ready hai, toh request pod: web tak pahunchti hai.' },
+        { from: 'kubelet', to: 'pod', label: 'readiness FAIL', tone: 'bad', set: { pod: { tone: 'gold', sub: 'READY 0/1' } }, say: 'Maan lo database 30 second ke liye dheema hua aur readiness probe fail ho gaya. <b>kubelet</b> pod ko <b>restart nahi karta</b>. Pod sirf Service ki list se bahar ho jaata hai. Database theek hote hi pod wapas list mein aa jaata hai.' },
+        { from: 'kubelet', to: 'pod', label: 'liveness FAIL → restart', tone: 'bad', set: { pod: { tone: 'bad', sub: 'container restart' } }, say: 'Ab maan lo app deadlock mein atak gaya — process zinda hai par jawab nahi deta. <b>liveness probe</b> fail hota hai. <b>kubelet</b> container ko <b>restart</b> kar deta hai.' },
+        { at: ['kubelet', 'pod', 'svc'], say: 'Yaad rakho: <b>startup</b> = boot ka intezaar. <b>readiness</b> = traffic ka gate (fail → list se bahar). <b>liveness</b> = restart ka button (fail → container restart). Liveness probe mein database check mat daalo — database dheema hote hi saare pods restart hone lagenge.' },
+      ],
+    },
     html: `
       <div class="dg-split">
         <div class="dg-node is-gold"><span class="ni">🐣</span><span class="nl">Startup</span><span class="ns">"boot ho gaya?"</span><span class="dg-pill gold">jab tak fail — baaki probes ruke</span></div>
@@ -300,6 +343,26 @@ const VISUALS = {
 
   storage: {
     t: 'PVC → StorageClass → PV — storage ki chain',
+    scene: {
+      intro: '<b>Sawal:</b> pod mar jaata hai toh data kahan rehta hai — aur disk banti kaise hai?',
+      aria: 'Pod se PVC, StorageClass, CSI driver aur PV tak ki chain, 7 kadam',
+      nodes: [
+        { id: 'pod', col: 0, row: 0, icon: '📦', label: 'Pod: db-0', sub: 'disk chahiye', about: 'Database ka pod. Pod khud disk nahi banata; pod sirf ek PVC ka naam leta hai.' },
+        { id: 'pvc', col: 1, row: 0, icon: '🎫', label: 'PVC: data-db-0', sub: '10Gi, fast-ssd', tone: 'accent', about: 'PersistentVolumeClaim = disk ki maang ki parchi. Developer likhta hai: kitni badi, kaunsi class.' },
+        { id: 'sc', col: 2, row: 0, icon: '🏭', label: 'StorageClass', sub: 'fast-ssd (recipe)', about: 'Disk banane ki recipe: kaunsa driver, kaunsa disk type. Platform team banati hai.' },
+        { id: 'csi', col: 2, row: 1, icon: '🔧', label: 'CSI driver', sub: 'cloud se baat', about: 'Driver jo cloud (AWS EBS, GCP PD) ko bolta hai: disk banao, node se jodo.' },
+        { id: 'pv', col: 1, row: 1, icon: '💾', label: 'PV', sub: 'asli disk (EBS)', tone: 'muted', about: 'PersistentVolume = asli disk ka Kubernetes record. Dynamic provisioning mein PV apne aap banta hai.' },
+      ],
+      steps: [
+        { from: 'pod', to: 'pvc', label: 'claim', say: '<b>Pod: db-0</b> ke YAML mein likha hai: mujhe <b>PVC: data-db-0</b> wali disk chahiye. PVC ek <b>parchi</b> hai: 10Gi, fast-ssd wali.' },
+        { from: 'pvc', to: 'sc', label: 'kaunsi recipe?', say: 'PVC mein <code>storageClassName: fast-ssd</code> likha hai. <b>StorageClass</b> disk banane ki <b>recipe</b> hai: kaunsa disk type, kaunsa driver.' },
+        { from: 'sc', to: 'csi', label: 'disk banao', say: 'StorageClass ka <b>CSI driver</b> cloud ko bolta hai: 10Gi ki ek SSD disk banao.' },
+        { from: 'csi', to: 'pv', label: 'PV ban gaya', tone: 'good', set: { pv: { tone: 'good' } }, say: 'Cloud ne asli disk bana di. Kubernetes mein us disk ka record <b>PV</b> (PersistentVolume) ke naam se banta hai.' },
+        { from: 'pv', to: 'pvc', label: 'Bound', tone: 'good', set: { pvc: { tone: 'good', sub: 'STATUS: Bound' } }, say: '<b>PV</b> aur <b>PVC</b> jud jaate hain. PVC ka status <code>Bound</code> ho jaata hai. Ek PV sirf ek PVC se judta hai.' },
+        { from: 'pvc', to: 'pod', label: 'mount', tone: 'good', set: { pod: { tone: 'good', sub: 'disk /data par' } }, say: 'Disk node se judti hai aur <b>Pod: db-0</b> ke andar <code>/data</code> par mount hoti hai.' },
+        { at: ['pod', 'pv'], set: { pod: { tone: 'bad', sub: 'pod mar gaya' } }, say: 'Pod: db-0 mar gaya? <b>PV</b> aur data wahin rehte hain. Naya Pod: db-0 usi PVC ko maangta hai aur wahi disk wapas milti hai. Data pod ke saath nahi marta.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node is-accent"><span class="ni">📦</span><span class="nl">Pod</span><span class="ns">"mujhe disk chahiye"</span></div>
@@ -338,6 +401,29 @@ const VISUALS = {
 
   ingress: {
     t: 'Ek darwaza, saari services',
+    scene: {
+      intro: '<b>Sawal:</b> 3 services hain — kya 3 Load Balancer kharidne padenge?',
+      aria: 'User se Load Balancer, Ingress Controller aur host/path ke niyam se sahi Service tak, 8 kadam',
+      nodes: [
+        { id: 'user', col: 0, row: 1, icon: '🌍', label: 'User', sub: 'internet se' },
+        { id: 'lb', col: 1, row: 1, icon: '⚖️', label: 'Load Balancer', sub: 'ek hi (cloud ka)', about: 'Cloud ka Load Balancer. Poore cluster ke liye ek — har service ka alag nahi (paisa bachta hai).' },
+        { id: 'ic', col: 2, row: 1, icon: '🚪', label: 'Ingress Controller', sub: 'nginx pod + TLS', tone: 'accent', about: 'Ek asli chalta hua pod (nginx, traefik). Ingress ke niyam padhkar request ko sahi Service par bhejta hai.' },
+        { id: 'rules', col: 3, row: 0, icon: '📋', label: 'Ingress', sub: 'niyam: host + path', about: 'Ingress ek YAML object hai — sirf niyamon ki list. Ingress khud koi process nahi hai.' },
+        { id: 'api', col: 2, row: 0, icon: '📞', label: 'api-svc', sub: 'path /api' },
+        { id: 'web', col: 3, row: 1, icon: '📞', label: 'web-svc', sub: 'path /' },
+        { id: 'admin', col: 2, row: 2, icon: '📞', label: 'admin-svc', sub: 'admin.shop.com' },
+      ],
+      steps: [
+        { from: 'user', to: 'lb', label: 'https://shop.com/api', say: 'User <code>https://shop.com/api</code> kholta hai. Request cloud ke <b>Load Balancer</b> par aati hai. Poore cluster ke liye ek hi Load Balancer hai — har service ka alag nahi.' },
+        { from: 'lb', to: 'ic', label: 'aage bhejo', say: '<b>Load Balancer</b> request ko <b>Ingress Controller</b> ke pod ko deta hai. Ingress Controller ek asli chalta hua pod hai (nginx ya traefik).' },
+        { at: ['ic'], say: '<b>Ingress Controller</b> HTTPS ko yahin kholta hai (TLS termination). Certificate ek jagah, saari services ke liye.' },
+        { from: 'ic', to: 'rules', label: 'niyam padho', say: '<b>Ingress Controller</b> <b>Ingress</b> object ke niyam padhta hai. Ingress khud koi process nahi — Ingress sirf niyamon ki list hai: kaunsa host aur path kis Service par jaaye.' },
+        { from: 'ic', to: 'api', label: '/api → api-svc', tone: 'good', say: 'Path <code>/api</code> hai. Niyam kehta hai: <code>/api</code> → <b>api-svc</b>. Request api-svc par jaati hai.' },
+        { from: 'ic', to: 'web', label: '/ → web-svc', tone: 'good', say: 'Koi doosra user <code>shop.com/</code> kholta hai. Niyam: <code>/</code> → <b>web-svc</b>.' },
+        { from: 'ic', to: 'admin', label: 'host: admin.shop.com', tone: 'good', say: 'Teesra user <code>admin.shop.com</code> kholta hai. Host alag hai. Niyam: host <code>admin.shop.com</code> → <b>admin-svc</b>.' },
+        { at: ['rules', 'ic'], say: 'Do naam alag rakho: <b>Ingress</b> = niyam (YAML). <b>Ingress Controller</b> = niyam chalane wala pod. Controller install nahi kiya toh Ingress YAML kuch nahi karta. Naya standard <b>Gateway API</b> hai — soch wahi, zimmedaari alag-alag teams mein banti hai.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node"><span class="ni">🌍</span><span class="nl">Internet</span><span class="ns">shop.com</span></div>
@@ -354,6 +440,26 @@ const VISUALS = {
 
   netpol: {
     t: 'Default: sab khula. Policy: zero-trust',
+    scene: {
+      intro: '<b>Sawal:</b> ek pod hack ho jaaye toh kya hacked pod seedha database tak pahunch sakta hai?',
+      aria: 'Bina policy ke sab khula, phir default-deny, phir ek allow policy, 7 kadam',
+      nodes: [
+        { id: 'fe', col: 0, row: 0, icon: '🎨', label: 'frontend', sub: 'app=frontend' },
+        { id: 'be', col: 1, row: 0, icon: '⚙️', label: 'backend', sub: 'app=backend' },
+        { id: 'db', col: 2, row: 0, icon: '🗄️', label: 'database', sub: 'app=db, port 5432', tone: 'accent' },
+        { id: 'bad', col: 1, row: 1, icon: '🦹', label: 'hacked pod', sub: 'attacker andar', tone: 'bad', about: 'Koi bhi pod jisme attacker ghus gaya. Usi namespace mein hai, par label app=backend nahi hai.' },
+        { id: 'pol', col: 2, row: 1, icon: '🧱', label: 'NetworkPolicy', sub: 'abhi koi nahi', tone: 'muted', about: 'Pods ke beech ka firewall. Policy label se pods chunti hai. CNI (Calico, Cilium) policy ko lagu karta hai.' },
+      ],
+      steps: [
+        { from: 'fe', to: 'be', label: 'theek', tone: 'good', say: 'Shuru mein koi NetworkPolicy nahi hai. <b>frontend</b> → <b>backend</b> call chalti hai. Yahan tak sab theek.' },
+        { from: 'bad', to: 'db', label: 'seedha DB tak', tone: 'bad', say: 'Par bina policy ke <b>har pod har pod se</b> baat kar sakta hai. <b>hacked pod</b> seedha <b>database</b> tak pahunch jaata hai.' },
+        { at: ['pol', 'db'], set: { pol: { tone: 'accent', sub: 'default-deny' } }, say: 'Pehla kadam: <b>default-deny</b> policy. Namespace ke saare pods ka aane wala traffic band. Ab koi kisi se baat nahi kar sakta — backend bhi database se nahi.' },
+        { from: 'be', to: 'db', label: 'allow: 5432', tone: 'good', set: { pol: { sub: 'deny + allow' } }, say: 'Doosra kadam: ek <b>allow</b> policy. Sirf <code>app=backend</code> label wale pods, <b>database</b> ke port 5432 par aa sakte hain. (frontend → backend ke liye bhi aisi hi ek allow policy chahiye.)' },
+        { from: 'bad', to: 'db', label: 'DENIED', tone: 'bad', say: '<b>hacked pod</b> phir koshish karta hai. hacked pod par label <code>app=backend</code> nahi hai. Request ruk jaati hai (timeout).' },
+        { from: 'fe', to: 'db', label: 'DENIED', tone: 'bad', bend: 110, say: '<b>frontend</b> bhi seedha <b>database</b> tak nahi ja sakta. frontend ko backend se hokar jaana padega.' },
+        { at: ['pol'], say: 'Teen niyam: (1) policy <b>label</b> se pods chunti hai, IP se nahi. (2) Policies sirf <b>allow</b> karti hain; kai policies ka allow jud jaata hai. (3) CNI policy lagu na kare toh policy chupchaap ignore hoti hai — koi error nahi aata.' },
+      ],
+    },
     html: `
       <div class="dg-split">
         <div class="dg-box is-bad"><span class="bx-label">😱 Default — no policy</span>
@@ -376,6 +482,29 @@ const VISUALS = {
 
   autoscale: {
     t: 'HPA pods badhata hai, Cluster Autoscaler nodes',
+    scene: {
+      intro: '<b>Sawal:</b> traffic achanak badhe toh pods kaun badhata hai — aur pods ke liye jagah na ho toh?',
+      aria: 'Traffic spike se metrics-server, HPA, Deployment, Pending pod aur naye node tak, 8 kadam',
+      nodes: [
+        { id: 'users', col: 0, row: 0, icon: '📈', label: 'Traffic', sub: 'achanak badha' },
+        { id: 'pods', col: 1, row: 0, icon: '📦', label: 'web pods', sub: '3 pods, CPU 85%', tone: 'bad' },
+        { id: 'deploy', col: 2, row: 0, icon: '🚀', label: 'Deployment: web', sub: 'replicas: 3' },
+        { id: 'node', col: 3, row: 0, icon: '🖥️', label: 'naya node', sub: 'abhi nahi hai', tone: 'muted' },
+        { id: 'ms', col: 1, row: 1, icon: '📏', label: 'metrics-server', sub: 'CPU naapta hai', about: 'Har pod ka CPU aur memory naapta hai. metrics-server na ho toh HPA ko number nahi milta.' },
+        { id: 'hpa', col: 2, row: 1, icon: '🤖', label: 'HPA', sub: 'target: CPU 60%', tone: 'accent', about: 'HorizontalPodAutoscaler. Sirf pods ki ginti badalta hai. HPA nodes nahi la sakta.' },
+        { id: 'ca', col: 3, row: 1, icon: '🏗️', label: 'Karpenter / CA', sub: 'nodes laata hai', about: 'Karpenter ya Cluster Autoscaler. Pending pods dekhkar cloud se naya node laata hai.' },
+      ],
+      steps: [
+        { from: 'users', to: 'pods', label: 'zyada requests', tone: 'bad', say: 'Traffic achanak badha. <b>web pods</b> ka CPU 85% tak pahunch gaya.' },
+        { from: 'pods', to: 'ms', label: 'CPU kitna?', say: '<b>metrics-server</b> har pod ka CPU naapta hai. metrics-server na ho toh HPA andha hai — HPA ke TARGETS mein <code>unknown</code> dikhta hai.' },
+        { from: 'ms', to: 'hpa', label: '85%', say: '<b>HPA</b> metrics-server se number leta hai: average CPU 85%. Yaani pods apni CPU <b>request</b> ka 85% use kar rahe hain. Target 60% hai.' },
+        { from: 'hpa', to: 'deploy', label: 'replicas: 3 → 5', tone: 'gold', set: { deploy: { sub: 'replicas: 5' } }, say: '<b>HPA</b> hisaab lagata hai: 3 × 85 ÷ 60 = 4.25 → upar round = 5. HPA <b>Deployment: web</b> ke replicas 3 se 5 kar deta hai.' },
+        { from: 'deploy', to: 'pods', label: '2 naye pods', set: { pods: { tone: 'gold', sub: '4 Running, 1 Pending' } }, say: 'Deployment 2 naye pods banata hai. Ek pod ko jagah mil gayi. Doosra pod <b>Pending</b> hai — kisi node par itni CPU request khaali nahi.' },
+        { at: ['ca', 'pods'], say: '<b>Karpenter / CA</b> Pending pod ko dekhta hai. HPA nodes nahi la sakta — HPA sirf pods ginta hai.' },
+        { from: 'ca', to: 'node', label: 'cloud se naya node', tone: 'good', set: { node: { tone: 'good', sub: 'Ready' } }, say: '<b>Karpenter / CA</b> cloud se ek <b>naya node</b> maangta hai. 1–2 minute mein naya node Ready ho jaata hai.' },
+        { at: ['pods', 'node'], set: { pods: { tone: 'good', sub: '5 Running, CPU 51%' } }, say: 'Pending pod naye node par chal jaata hai. Ab 5 pods hain aur average CPU 51% — target ke neeche. Traffic ghatega toh HPA pods ghatayega, aur khaali node hata diya jaayega.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node is-gold pulse"><span class="ni">📈</span><span class="nl">Traffic spike!</span><span class="ns">CPU 85% &gt; target 60%</span></div>
@@ -407,6 +536,28 @@ const VISUALS = {
 
   rbac: {
     t: 'RBAC — kaun, kya, kahan',
+    scene: {
+      intro: '<b>Sawal:</b> API Server kaise tay karta hai ki kaun kya kar sakta hai?',
+      aria: 'ServiceAccount ki request, RoleBinding aur Role ki jaanch, allowed aur Forbidden, 8 kadam',
+      nodes: [
+        { id: 'sa', col: 0, row: 0, icon: '🤖', label: 'SA: ci-bot', sub: 'namespace: dev', about: 'ServiceAccount = pod ki identity. Insaan ke liye User/Group hota hai, pod ke liye ServiceAccount.' },
+        { id: 'api', col: 1, row: 0, icon: '🚪', label: 'API Server', sub: 'har request yahin', tone: 'accent', about: 'Har kubectl aur har pod ki request API Server se guzarti hai. Yahin ijaazat ki jaanch hoti hai.' },
+        { id: 'pods', col: 2, row: 0, icon: '📦', label: 'pods (dev)', sub: 'Role mein likha hai' },
+        { id: 'sec', col: 3, row: 0, icon: '🔑', label: 'secrets (dev)', sub: 'Role mein nahi', tone: 'muted' },
+        { id: 'rb', col: 1, row: 1, icon: '🔗', label: 'RoleBinding', sub: 'ci-bot ↔ pod-reader', about: 'RoleBinding = jod. Kehta hai: is identity ko Role do. RoleBinding mein khud koi ijaazat nahi likhi hoti.' },
+        { id: 'role', col: 2, row: 1, icon: '📜', label: 'Role: pod-reader', sub: 'get, list pods', about: 'Role = ijaazat ki list, ek namespace ke andar. Poore cluster ke liye ClusterRole hota hai.' },
+      ],
+      steps: [
+        { from: 'sa', to: 'api', label: 'get pods -n dev', say: '<b>SA: ci-bot</b> (ek pod ki identity) API Server se poochhta hai: namespace dev ke pods dikhao.' },
+        { at: ['api'], say: '<b>API Server</b> pehle pehchaanta hai <b>kaun</b> bol raha hai (authentication). Phir poochhta hai: ci-bot ko <b>ijaazat</b> hai? Ijaazat ki jaanch ka naam RBAC hai.' },
+        { from: 'api', to: 'rb', label: 'ci-bot ka binding?', say: '<b>API Server</b> RoleBindings mein dhoondhta hai. Ek <b>RoleBinding</b> mila jo ci-bot ko Role: pod-reader se jodta hai.' },
+        { from: 'rb', to: 'role', label: 'kaunsa Role?', say: '<b>RoleBinding</b> sirf jod hai. Asli ijaazat <b>Role: pod-reader</b> mein likhi hai: pods par <code>get</code> aur <code>list</code>.' },
+        { from: 'api', to: 'pods', label: 'allowed', tone: 'good', say: 'Request <code>get pods</code> Role ki list mein hai. <b>API Server</b> pods ki list lauta deta hai.' },
+        { from: 'sa', to: 'api', label: 'get secrets -n dev', tone: 'bad', say: 'Ab <b>SA: ci-bot</b> secrets maangta hai.' },
+        { from: 'api', to: 'sec', label: 'Forbidden (403)', tone: 'bad', bend: 110, say: 'Role: pod-reader mein <code>secrets</code> likha hi nahi. RBAC mein jo likha nahi, <b>mana</b> hai. Jawab: <code>Forbidden</code>.' },
+        { at: ['role', 'rb'], say: '<b>Role</b> + <b>RoleBinding</b> = ek namespace ke andar. Poore cluster ke liye <b>ClusterRole</b> + <b>ClusterRoleBinding</b>. Jaanch ka command: <code>kubectl auth can-i get secrets -n dev --as=system:serviceaccount:dev:ci-bot</code>' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node is-accent"><span class="ni">🤖</span><span class="nl">ServiceAccount</span><span class="ns">app ki identity</span></div>
@@ -536,6 +687,26 @@ const VISUALS = {
 
   gitops: {
     t: 'GitOps — git bolta hai, cluster sunta hai',
+    scene: {
+      intro: '<b>Sawal:</b> agar koi raat ko cluster mein seedha badlaav kar de toh kya hota hai?',
+      aria: 'PR se Git, ArgoCD ka pull aur sync, phir manual drift aur self-heal, 7 kadam',
+      nodes: [
+        { id: 'dev', col: 0, row: 0, icon: '🧑‍💻', label: 'Developer', sub: 'PR banata hai' },
+        { id: 'git', col: 1, row: 0, icon: '📚', label: 'Git repo', sub: 'replicas: 3', about: 'Git repo mein likha YAML = cluster kaisa hona chahiye (desired state).' },
+        { id: 'argo', col: 2, row: 0, icon: '🔄', label: 'ArgoCD', sub: 'cluster ke andar', tone: 'accent', about: 'ArgoCD cluster ke andar chalta hai. Git ko dekhta hai, cluster se tulna karta hai, fark mitata hai.' },
+        { id: 'cluster', col: 3, row: 0, icon: '☸️', label: 'Cluster', sub: 'replicas: 3', tone: 'good', about: 'Cluster mein abhi jo chal raha hai (actual state).' },
+        { id: 'human', col: 3, row: 1, icon: '🙋', label: 'koi insaan', sub: 'kubectl edit', tone: 'muted' },
+      ],
+      steps: [
+        { from: 'dev', to: 'git', label: 'PR: replicas 3 → 5', set: { git: { sub: 'replicas: 5' } }, say: '<b>Developer</b> cluster ko haath nahi lagata. Developer <b>Git repo</b> mein PR banata hai: replicas 3 se 5. Review hota hai, merge hota hai.' },
+        { from: 'argo', to: 'git', label: 'kuch badla?', say: '<b>ArgoCD</b> cluster ke andar chalta hai aur Git repo ko baar-baar dekhta hai (pull). Git ya CI ko cluster ka password dene ki zaroorat nahi.' },
+        { at: ['argo', 'cluster'], set: { argo: { tone: 'gold', sub: 'OutOfSync' } }, say: '<b>ArgoCD</b> tulna karta hai: Git mein replicas 5, <b>Cluster</b> mein 3. Fark mila → status <code>OutOfSync</code>.' },
+        { from: 'argo', to: 'cluster', label: 'sync (apply)', tone: 'good', set: { cluster: { sub: 'replicas: 5' }, argo: { tone: 'good', sub: 'Synced' } }, say: '<b>ArgoCD</b> Git wala YAML cluster par laga deta hai. Ab dono mein replicas 5 → status <code>Synced</code>.' },
+        { from: 'human', to: 'cluster', label: 'kubectl edit → 2', tone: 'bad', set: { cluster: { tone: 'bad', sub: 'replicas: 2 (drift)' } }, say: 'Raat ko <b>koi insaan</b> seedha <code>kubectl edit</code> se replicas 2 kar deta hai. Git mein abhi bhi 5 likha hai. Is fark ka naam <b>drift</b> hai.' },
+        { from: 'argo', to: 'cluster', label: 'self-heal: wapas 5', tone: 'good', set: { cluster: { tone: 'good', sub: 'replicas: 5' } }, say: '<b>ArgoCD</b> (selfHeal chalu ho toh) drift pakadta hai aur Git wala replicas 5 wapas laga deta hai.' },
+        { at: ['git'], say: 'Isliye <b>Git repo</b> hi sach ka ek srot hai. Audit = <code>git log</code>. Rollback = <code>git revert</code>. Cluster mein seedha kiya badlaav tikta nahi.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node is-accent"><span class="ni">📚</span><span class="nl">Git repo</span><span class="ns">desired state (PR + review)</span></div>

@@ -72,7 +72,7 @@ VISUALS['net-certs'] = {
     steps: [
       { from: 'cert', to: 'cm', label: 'certificate chahiye', tone: 'gold', say: 'Tum <b>Certificate: pay-tls</b> likhte ho. <b>cert-manager</b> ko naya Certificate dikhta hai.' },
       { from: 'cm', to: 'le', label: 'Order', say: '<b>cert-manager</b> <b>Let\'s Encrypt</b> ko ek <b>Order</b> bhejta hai: "pay.chaipay.in ka certificate do".' },
-      { from: 'le', to: 'cm', label: 'Challenge: saabit karo', bend: 24, say: '<b>Let\'s Encrypt</b> kehta hai: "saabit karo ki domain tumhara hai. Main <code>http://pay.chaipay.in/.well-known/acme-challenge/…</code> kholunga — wahan ek khaas token milna chahiye." Isko <b>HTTP-01 challenge</b> kehte hain.' },
+      { from: 'le', to: 'cm', label: 'Challenge: saabit karo', bend: 24, say: '<b>Let\'s Encrypt</b> kehta hai: "saabit karo ki domain tumhara hai. Main <code>http://pay.chaipay.in/.well-known/acme-challenge/…</code> kholunga — wahan ek khaas token milna chahiye." Is jaanch ka naam <b>HTTP-01 challenge</b> hai.' },
       { from: 'edns', to: 'dns', label: 'record banao', say: 'Challenge tabhi paas hoga jab <code>pay.chaipay.in</code> ka DNS record ho. <b>ExternalDNS</b> Gateway ka host dekh kar <b>Route 53 (DNS)</b> mein record banata hai: pay.chaipay.in → load balancer.', set: { dns: { sub: 'pay.chaipay.in → LB ✓', tone: 'good' } } },
       { from: 'le', to: 'dns', label: 'pay.chaipay.in kahan?', say: '<b>Let\'s Encrypt</b> DNS se poochhta hai, load balancer tak pahunchta hai, aur token wala page kholta hai. Token mil gaya → challenge paas.' },
       { from: 'le', to: 'cm', label: 'certificate', tone: 'good', bend: -24, say: '<b>Let\'s Encrypt</b> certificate de deta hai (90 din ka).' },
@@ -570,8 +570,8 @@ VISUALS['eks-identity'] = {
       { from: 'agent', to: 'eks', label: 'payments / notify-sa', say: '<b>Pod Identity Agent</b> token ko <b>EKS Auth API</b> tak pahunchata hai: "namespace payments, ServiceAccount notify-sa — iske liye kaun sa role?"' },
       { from: 'eks', to: 'role', label: 'association mila', tone: 'gold', say: '<b>EKS Auth API</b> associations ki list dekhta hai. Likha hai: payments + notify-sa → <b>IAM Role</b> <code>notify-sqs-role</code>. Namespace ya naam ek akshar bhi alag ho toh association nahi milta.' },
       { from: 'eks', to: 'agent', label: 'thodi der ke credentials', tone: 'good', bend: 24, say: '<b>EKS Auth API</b> us role ke <b>temporary</b> credentials lautata hai (kuch ghanton ke). <b>Pod Identity Agent</b> unhe pod ko de deta hai. Koi key kahin likhi nahi gayi.' },
-      { from: 'pod', to: 'sqs', label: 'ReceiveMessage', tone: 'good', say: '<b>pod: notify</b> ab <code>notify-sqs-role</code> ban kar <b>SQS: notify-queue</b> ko call karta hai. AWS ko dikhta hai: yeh notify hai, aur notify ko sirf isi queue ki ijaazat hai.' },
-      { from: 'pod', to: 'node', label: 'association nahi mila', tone: 'bad', say: 'Agar association <b>nahi</b> milta, aur pod node ke metadata tak pahunch sakta hai, toh SDK chupchaap <b>Node ka IAM Role</b> use kar leta hai. Nateeja: <code>AccessDenied</code> — ya usse bura, zaroorat se zyada ijaazat.' },
+      { from: 'pod', to: 'sqs', label: 'ReceiveMessage', tone: 'good', say: '<b>pod: notify</b> ab <code>notify-sqs-role</code> ban kar <b>SQS: notify-queue</b> ko call karta hai. AWS ko dikhta hai: call karne wala notify hai, aur notify ko sirf isi queue ki ijaazat hai.' },
+      { from: 'pod', to: 'node', label: 'association nahi mila', tone: 'bad', say: 'Agar association <b>nahi</b> milta, aur pod node ke metadata tak pahunch sakta hai, toh SDK chupchaap <b>Node ka IAM Role</b> use kar leta hai. Nateeja: <code>AccessDenied</code> — ya AccessDenied se bhi bura: zaroorat se zyada ijaazat.' },
     ],
   },
 };
@@ -620,11 +620,11 @@ VISUALS['eks-vpccni'] = {
     ],
     steps: [
       { from: 'cni', to: 'sub', label: 'IP do', say: '<b>VPC CNI (aws-node)</b> node ke shuru hote hi <b>Subnet 10.0.1.0/24</b> se IP maang leta hai — pods aane se <b>pehle</b>. Default mein VPC CNI ek poore khaali ENI jitne IP "garam" rakhta hai.' },
-      { from: 'sub', to: 'eni', label: '10 IP', tone: 'gold', bend: -34, say: '<b>Subnet 10.0.1.0/24</b> ke IP <b>ENI (network card)</b> par chadh jaate hain. Ab yeh IP is node ke naam hain — chahe koi pod unhe use kare ya na kare.' },
+      { from: 'sub', to: 'eni', label: '10 IP', tone: 'gold', bend: 110, say: '<b>Subnet 10.0.1.0/24</b> ke IP <b>ENI (network card)</b> par chadh jaate hain. Ab 10 IP is node ke naam hain — chahe koi pod unhe use kare ya na kare.' },
       { from: 'eni', to: 'old', label: 'ek pod, ek IP', tone: 'good', say: 'Har pod ko ENI se ek asli VPC IP milta hai. m5.large par zyada se zyada <code>3 × (10 − 1) + 2 = 29</code> pods. CPU bacha ho tab bhi 30vaan pod is node par nahi aa sakta.' },
-      { from: 'old', to: 'aws', label: 'seedha VPC IP', bend: 30, say: 'Faayda: <b>purane pods</b> ka IP asli VPC IP hai, toh <b>VPC ki baaki duniya</b> (RDS, security groups) pod se seedhi baat karti hai. Koi overlay nahi.' },
+      { from: 'old', to: 'aws', label: 'seedha VPC IP', bend: 110, say: 'Faayda: <b>purane pods</b> ka IP asli VPC IP hai, toh <b>VPC ki baaki duniya</b> (RDS, security groups) pod se seedhi baat karti hai. Koi overlay nahi.' },
       { from: 'cni', to: 'sub', label: 'aur IP do', tone: 'bad', bend: 24, set: { sub: { sub: '0 IP bache', tone: 'bad' } }, say: 'Keemat: cluster badha, har node ne apne "garam" IP rakh liye, aur <b>Subnet 10.0.1.0/24</b> ke 251 IP khatam ho gaye. <b>VPC CNI (aws-node)</b> aur IP maangta hai — subnet ke paas dene ko kuch nahi.' },
-      { at: ['pod'], set: { pod: { tone: 'bad', sub: 'IP nahi mila' } }, say: '<b>naya pod</b> node par schedule ho chuka hai, par IP ke bina sandbox nahi banta. Pod <code>ContainerCreating</code> mein atka rehta hai. Event: <code>failed to assign an IP address to container</code>. CPU aur memory ka isse koi rishta nahi.' },
+      { at: ['pod'], set: { pod: { tone: 'bad', sub: 'IP nahi mila' } }, say: '<b>naya pod</b> node par schedule ho chuka hai, par IP ke bina sandbox nahi banta. Pod <code>ContainerCreating</code> mein atka rehta hai. Event: <code>failed to assign an IP address to container</code>. CPU aur memory ka IP ki kami se koi rishta nahi.' },
     ],
   },
 };
@@ -1091,7 +1091,7 @@ VISUALS['eks-alb'] = {
     ],
     steps: [
       { from: 'ing', to: 'lbc', label: 'naya Ingress', tone: 'gold', say: 'Tum <b>Ingress: pay</b> likhte ho. <b>LB Controller</b> ko naya Ingress dikhta hai.' },
-      { from: 'lbc', to: 'alb', label: 'ALB + target group', say: '<b>LB Controller</b> AWS mein ek asli <b>ALB</b> banata hai, aur ek <b>target group</b> — woh list jisme likha hai ki ALB traffic kahan bheje.' },
+      { from: 'lbc', to: 'alb', label: 'ALB + target group', say: '<b>LB Controller</b> AWS mein ek asli <b>ALB</b> banata hai, aur ek <b>target group</b> — ek list jisme likha hai ki ALB traffic kahan bheje.' },
       { from: 'user', to: 'alb', label: 'HTTPS', say: '<b>User</b> ki request <b>ALB</b> par aati hai.' },
       { from: 'alb', to: 'node', label: 'target-type: instance', tone: 'gold', say: 'Pehla raasta — <code>target-type: instance</code>: target group mein <b>nodes</b> likhe hain. <b>ALB</b> request ko <b>Node (NodePort)</b> par bhejta hai.' },
       { from: 'node', to: 'pod', label: 'ek aur chhalaang', say: '<b>Node (NodePort)</b> par kube-proxy request ko <b>pod: pay-api</b> tak pahunchata hai — pod kisi doosre node par bhi ho sakta hai. Ek chhalaang zyada, aur ALB ka health check node ko dekhta hai, pod ko nahi.' },

@@ -33,7 +33,7 @@ VISUALS['d2-debug'] = {
       { from: 'you', to: 'api', label: 'kubectl exec … -- sh', tone: 'bad', say: '<b>Tum</b> pehle purana tareeka aazmate ho: <code>kubectl exec</code>. Jawab aata hai: <code>exec: "sh": executable file not found</code>. <b>container: pay-api</b> ki image mein shell hai hi nahi.' },
       { from: 'you', to: 'api', label: 'kubectl debug …', bend: 24, say: '<b>Tum</b> <code>kubectl debug</code> chalate ho. <b>API Server</b> pod ke spec mein ek <b>ephemeral container</b> jod deta hai. Pod restart nahi hota; <b>container: pay-api</b> chalta rehta hai.' },
       { from: 'api', to: 'kubelet', label: 'naya container', say: '<b>kubelet</b> ko pod spec ka badlaav dikhta hai. kubelet <code>busybox</code> image pull karta hai.' },
-      { from: 'kubelet', to: 'dbg', label: 'start', tone: 'good', bend: -30, set: { dbg: { tone: 'accent', sub: 'busybox — shell hai ✓' } }, say: '<b>kubelet</b> usi pod ke andar <b>debugger-x7k2p</b> container chala deta hai. Ab pod mein do containers hain: asli app aur tumhara toolbox.' },
+      { from: 'kubelet', to: 'dbg', label: 'start', tone: 'good', set: { dbg: { tone: 'accent', sub: 'busybox — shell hai ✓' } }, say: '<b>kubelet</b> usi pod ke andar <b>debugger-x7k2p</b> container chala deta hai. Ab pod mein do containers hain: asli app aur tumhara toolbox.' },
       { from: 'dbg', to: 'net', label: 'wahi localhost', tone: 'gold', say: '<b>debugger-x7k2p</b> aur <b>container: pay-api</b> ek hi <b>Pod ka network</b> istemal karte hain. debugger-x7k2p se <code>wget localhost:8080</code> seedha pay-api ko lagta hai. <code>--target=pay-api</code> diya ho toh debugger-x7k2p ko pay-api ke processes bhi dikhte hain.' },
       { from: 'dbg', to: 'ledger', label: 'wget ledger-svc', say: '<b>debugger-x7k2p</b> se tum wahi call karte ho jo pay-api karta hai: <code>wget http://ledger-svc:8080/healthz</code>. Jo error pay-api ko mil raha tha, wahi error ab tumhari aankhon ke saamne hai — usi pod ke IP aur usi DNS se.' },
     ],
@@ -554,7 +554,7 @@ VISUALS['d2-upgrade'] = {
       { id: 'new', col: 2, row: 1, icon: '🖥️', label: 'node-new-1', sub: 'abhi nahi bana', tone: 'muted', about: 'Naye version ka worker node.' },
     ],
     steps: [
-      { at: ['git'], say: 'Sabse pehle <b>Git ke manifests</b> jaancho. Kya koi YAML aisa <code>apiVersion</code> use karta hai jo v1.33 mein nahi hai? Tools: <code>kubent</code>, <code>pluto</code>, aur EKS ka "Upgrade insights" tab. Yeh jaanch upgrade se <b>pehle</b> hoti hai.' },
+      { at: ['git'], say: 'Sabse pehle <b>Git ke manifests</b> jaancho. Kya koi YAML aisa <code>apiVersion</code> use karta hai jo v1.33 mein nahi hai? Tools: <code>kubent</code>, <code>pluto</code>, aur EKS ka "Upgrade insights" tab. Deprecated API ki jaanch upgrade se <b>pehle</b> hoti hai.' },
       { at: ['cp'], set: { cp: { sub: 'v1.33 ✓', tone: 'good' } }, say: '<b>Control Plane</b> pehle upgrade hota hai, aur ek baar mein sirf <b>ek minor version</b> (1.32 → 1.33). Dhyaan do: Control Plane ko wapas purane version par nahi laya ja sakta.' },
       { from: 'cp', to: 'addons', label: 'version milao', say: '<b>Add-ons</b> (CoreDNS, kube-proxy, CNI) ko us version par lao jo naye <b>Control Plane</b> ke saath chalta hai.' },
       { at: ['new'], set: { new: { sub: 'kubelet v1.33 ✓', tone: 'good' } }, say: 'Naya node <b>node-new-1</b> v1.33 ke kubelet ke saath judta hai. <b>node-old-1</b> abhi bhi chal raha hai: kubelet Control Plane se 3 minor version tak purana ho sakta hai, par naya kabhi nahi.' },

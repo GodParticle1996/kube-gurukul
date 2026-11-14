@@ -58,6 +58,18 @@
       if (s.from == null && !(s.at || []).length) out.push(`${w}: na teer (from/to) hai na 'at' — learner ko pata nahi chalega kahan dekhna hai`);
       Object.keys(s.set || {}).forEach(a => { if (!ids.has(a)) out.push(`${w}: set '${a}' koi node nahi hai`); });
       if (String(s.label || '').length > 28) out.push(`${w}: teer ka label 28 akshar se lamba hai`);
+      if (s.from != null && ids.has(s.from) && ids.has(s.to) && s.from !== s.to) {
+        const hit = edgeCrosses(scene, s);
+        if (hit) out.push(`${w}: teer '${s.from}' → '${s.to}' dabbe '${hit}' ke upar se guzarta hai — 'bend' badhao (~90) ya dabbon ki jagah badlo`);
+        else if (s.label) {
+          /* label ke liye koi khaali jagah mili? (na mile toh label kisi dabbe ko dhakega) */
+          const cols = Math.max(...scene.nodes.map(n => n.col)) + 1, rows = Math.max(...scene.nodes.map(n => n.row)) + 1;
+          const W = PAD * 2 + cols * CW, H = PAD * 2 + TOP + rows * CH, lw = String(s.label).length * 6.6 + 16;
+          const byId = {}; scene.nodes.forEach(n => { byId[n.id] = n; });
+          const at = placeLabel(edgePath(byId[s.from], byId[s.to], s.bend, lw), lw, scene.nodes, W, H);
+          if (labelHits(scene.nodes, at.x, at.y, lw, W, H)) out.push(`${w}: label '${s.label}' ke liye khaali jagah nahi — label chhota karo ya dabbon ke beech jagah chhodo`);
+        }
+      }
     });
     (scene.groups || []).forEach((g, i) => {
       if (!Array.isArray(g.cols) || !Array.isArray(g.rows) || g.cols.length !== 2 || g.rows.length !== 2) out.push(`group ${i + 1}: cols: [se, tak] aur rows: [se, tak] chahiye`);
@@ -79,18 +91,55 @@
     const len = Math.hypot(p.x2 - p.x1, p.y2 - p.y1) || 1;
     const nx = -(p.y2 - p.y1) / len, ny = (p.x2 - p.x1) / len;
     const off = (labelW || 0) / 2 * Math.abs(nx) + 10 * Math.abs(ny) + 8;
-    let mx = (p.x1 + p.x2) / 2, my = (p.y1 + p.y2) / 2, d;
+    let bx = (p.x1 + p.x2) / 2, by = (p.y1 + p.y2) / 2, d, sign, pts;
     if (!bend) {
       d = `M${p.x1.toFixed(1)} ${p.y1.toFixed(1)} L${p.x2.toFixed(1)} ${p.y2.toFixed(1)}`;
-      const sign = Math.abs(ny) > 0.05 ? (ny > 0 ? -1 : 1) : (nx > 0 ? 1 : -1);
-      mx += nx * off * sign; my += ny * off * sign;
+      sign = Math.abs(ny) > 0.05 ? (ny > 0 ? -1 : 1) : (nx > 0 ? 1 : -1);
+      pts = t => ({ x: p.x1 + (p.x2 - p.x1) * t, y: p.y1 + (p.y2 - p.y1) * t });
     } else {
-      const cx = mx + nx * bend, cy = my + ny * bend;
+      const cx = bx + nx * bend, cy = by + ny * bend;
       d = `M${p.x1.toFixed(1)} ${p.y1.toFixed(1)} Q${cx.toFixed(1)} ${cy.toFixed(1)} ${p.x2.toFixed(1)} ${p.y2.toFixed(1)}`;
-      const sign = bend > 0 ? 1 : -1;
-      mx += nx * (bend / 2 + off * sign); my += ny * (bend / 2 + off * sign);
+      sign = bend > 0 ? 1 : -1;
+      pts = t => ({ x: (1 - t) * (1 - t) * p.x1 + 2 * (1 - t) * t * cx + t * t * p.x2, y: (1 - t) * (1 - t) * p.y1 + 2 * (1 - t) * t * cy + t * t * p.y2 });
+      bx += nx * bend / 2; by += ny * bend / 2;            /* mude hue teer ka beech ka bindu */
     }
-    return { d, mx, my };
+    return { d, bx, by, nx, ny, off, sign, pts, mx: bx + nx * off * sign, my: by + ny * off * sign };
+  }
+  /* kya (x,y) par rakha w×h ka label kisi dabbe ko ya diagram ke kinare ko chhuta hai? */
+  function labelHits(nodes, x, y, w, W, H) {
+    if (x - w / 2 < 2 || x + w / 2 > W - 2 || y - 10 < 2 || y + 10 > H - 2) return true;
+    return nodes.some(n => { const c = center(n); return Math.abs(x - c.x) < (BW + w) / 2 + 3 && Math.abs(y - c.y) < (BH + 20) / 2 + 3; });
+  }
+  /* label ke liye pehli khaali jagah. Pasand ka kram:
+       1. teer ke beech mein, teer ke BAGAL mein (pasand ki taraf, phir doosri taraf, phir thoda aur door)
+          — lamba label do paas-paas ke dabbon ke beech nahi samata, tab label dabbon ke upar/neeche wali khaali patti mein jaata hai
+       2. teer ke saath thoda aage/peechhe sarak kar, bagal mein
+       3. teer ki line ke UPAR hi (line ka chhota hissa dhakta hai, par koi dabba ya arrowhead nahi)
+     Kuch na mile toh purani jagah (validator isko galti ginta hai). */
+  function placeLabel(e, w, nodes, W, H) {
+    const free = (x, y) => !labelHits(nodes, x, y, w, W, H);
+    for (const t of [0.5, 0.36, 0.64]) {
+      const q = e.pts(t), far = t === 0.5 ? 60 : 24;
+      for (let extra = 0; extra <= far; extra += 6) {
+        for (const sg of [e.sign, -e.sign]) {
+          const x = q.x + e.nx * (e.off + extra) * sg, y = q.y + e.ny * (e.off + extra) * sg;
+          if (free(x, y)) return { x, y };
+        }
+      }
+    }
+    for (const t of [0.5, 0.42, 0.58, 0.34, 0.66, 0.26]) { const q = e.pts(t); if (free(q.x, q.y)) return { x: q.x, y: q.y }; }
+    return { x: e.mx, y: e.my };
+  }
+  /* teer kisi TEESRE dabbe ke upar se guzarta hai? (validator ke liye) */
+  function edgeCrosses(scene, s) {
+    const byId = {}; scene.nodes.forEach(n => { byId[n.id] = n; });
+    const e = edgePath(byId[s.from], byId[s.to], s.bend, 0);
+    for (const n of scene.nodes) {
+      if (n.id === s.from || n.id === s.to) continue;
+      const c = center(n);
+      for (let k = 1; k < 24; k++) { const q = e.pts(k / 24); if (Math.abs(q.x - c.x) < BW / 2 + 2 && Math.abs(q.y - c.y) < BH / 2 + 2) return n.id; }
+    }
+    return null;
   }
 
   /* step i tak ke saare `set` jod kar har dabbe ka abhi ka rang/subtitle */
@@ -141,9 +190,9 @@
       svg += `<path class="sc-edge now ${t}" d="${e.d}" marker-end="url(#${mk}${t})"/>`;
       if (!KG.sceneStill) svg += `<circle class="sc-dot ${t}" r="5"><animateMotion dur="1.4s" repeatCount="indefinite" path="${e.d}"/></circle>`;
       if (step.label) {
-        const w = lw;
-        svg += `<g class="sc-elabel ${t}"><rect x="${(e.mx - w / 2).toFixed(1)}" y="${(e.my - 10).toFixed(1)}" width="${w.toFixed(1)}" height="20" rx="10"/>` +
-          `<text x="${e.mx.toFixed(1)}" y="${(e.my + 4).toFixed(1)}">${esc(step.label)}</text></g>`;
+        const w = lw, at = placeLabel(e, w, scene.nodes, W, H);
+        svg += `<g class="sc-elabel ${t}"><rect x="${(at.x - w / 2).toFixed(1)}" y="${(at.y - 10).toFixed(1)}" width="${w.toFixed(1)}" height="20" rx="10"/>` +
+          `<text x="${at.x.toFixed(1)}" y="${(at.y + 4).toFixed(1)}">${esc(step.label)}</text></g>`;
       }
     }
     return svg + '</svg>';

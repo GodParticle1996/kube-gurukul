@@ -28,8 +28,8 @@ VISUALS['ob-metrics'] = {
     steps: [
       { at: ['pod'], say: '<b>pod: pay-api</b> apne number ek page par rakhta hai: <code>GET /metrics</code>. pod kisi ko kuch bhejta nahi — bas page taiyaar rakhta hai.' },
       { from: 'sm', to: 'svc', label: 'selector: app=pay-api', tone: 'gold', say: '<b>ServiceMonitor</b> label se <b>Service: pay-api</b> ko chunta hai, aur batata hai ki Service ke kis port par <code>/metrics</code> hai.' },
-      { from: 'prom', to: 'sm', label: 'release=kps wale chuno', say: '<b>Prometheus</b> har ServiceMonitor ko nahi padhta. Prometheus sirf woh ServiceMonitors chunta hai jin par ek khaas label hai (ChaiPay mein <code>release: kps</code>). Label na ho toh ServiceMonitor nazarandaz ho jaata hai — <b>bina kisi error ke</b>.' },
-      { from: 'prom', to: 'pod', label: 'GET /metrics', bend: 40, say: '<b>Prometheus</b> ko ab pata hai kise scrape karna hai. Prometheus har 30 second mein seedha <b>pod: pay-api</b> ke paas jaata hai aur <code>/metrics</code> padhta hai. Is jodi ko <b>target</b> kehte hain.' },
+      { from: 'prom', to: 'sm', label: 'release=kps wale chuno', say: '<b>Prometheus</b> har ServiceMonitor ko nahi padhta. Prometheus sirf un ServiceMonitors ko chunta hai jin par ek khaas label hai (ChaiPay mein <code>release: kps</code>). Label na ho toh ServiceMonitor nazarandaz ho jaata hai — <b>bina kisi error ke</b>.' },
+      { from: 'prom', to: 'pod', label: 'GET /metrics', say: '<b>Prometheus</b> ko ab pata hai kise scrape karna hai. Prometheus har 30 second mein seedha <b>pod: pay-api</b> ke paas jaata hai aur <code>/metrics</code> padhta hai. Is jodi ko <b>target</b> kehte hain.' },
       { from: 'prom', to: 'tsdb', label: 'number + samay', say: '<b>Prometheus</b> har number ko samay ke saath <b>Time-series data</b> mein likhta hai.' },
       { from: 'graf', to: 'tsdb', label: 'PromQL', tone: 'good', say: '<b>Grafana</b> PromQL se poochhta hai, jaise <code>rate(http_requests_total[5m])</code>, aur graph banata hai. Graph khaali ho toh ulta chalo: target hai? → ServiceMonitor chuna gaya? → Service ka label mila?' },
     ],
@@ -67,7 +67,7 @@ VISUALS['ob-alerts'] = {
       { from: 'pend', to: 'fire', label: '5 min tak sach', tone: 'bad', say: 'Shart poore 5 minute sach rahi. Alert <b>Firing</b> ho gaya. Prometheus alert ko Alertmanager ke paas bhejta hai.' },
       { from: 'fire', to: 'am', label: 'alert + labels', say: '<b>Alertmanager</b> ko alert milta hai, labels ke saath: <code>severity=page</code>, <code>team=payments</code>. Agar 40 pods ek saath alert bhejen, Alertmanager unhe <b>ek</b> sandesh mein jod deta hai.' },
       { from: 'am', to: 'page', label: 'severity=page', tone: 'bad', say: 'Label <code>severity=page</code> hai, toh <b>Alertmanager</b> on-call insaan ka <b>Pager</b> bajata hai. Page ka matlab: user ko abhi dard hai.' },
-      { from: 'am', to: 'tick', label: 'severity=ticket', bend: 30, say: 'Label <code>severity=ticket</code> hota toh wahi <b>Alertmanager</b> alert ko <b>Ticket / Slack</b> mein daalta. Koi nahi jagta. Raasta alert ke label se tay hota hai — isliye label sahi lagana alert likhne jitna hi zaroori hai.' },
+      { from: 'am', to: 'tick', label: 'severity=ticket', bend: 110, say: 'Label <code>severity=ticket</code> hota toh wahi <b>Alertmanager</b> alert ko <b>Ticket / Slack</b> mein daalta. Koi nahi jagta. Raasta alert ke label se tay hota hai — isliye label sahi lagana alert likhne jitna hi zaroori hai.' },
     ],
   },
 };
@@ -498,7 +498,7 @@ VISUALS['ob-traces'] = {
       { id: 'tempo', col: 0, row: 1, icon: '🧵', label: 'Tempo', sub: 'trace jodta hai', about: 'Trace ka storage. Ek hi trace_id wale saare spans ko jodkar ek ped (tree) dikhata hai.' },
     ],
     steps: [
-      { from: 'gw', to: 'pay', label: 'trace_id=4bf9…', say: '<b>API gateway</b> request ko <code>trace_id=4bf9…</code> deta hai aur <code>traceparent</code> header mein <b>pay-api</b> ko bhejta hai. Yeh ID is request ki pehchaan hai — poore raaste mein.' },
+      { from: 'gw', to: 'pay', label: 'trace_id=4bf9…', say: '<b>API gateway</b> request ko <code>trace_id=4bf9…</code> deta hai aur <code>traceparent</code> header mein <b>pay-api</b> ko bhejta hai. trace_id is request ki pehchaan hai — poore raaste mein.' },
       { from: 'pay', to: 'fraud', label: 'wahi trace_id', set: { fraud: { sub: 'span: 2.61 s' } }, say: '<b>pay-api</b> jab <b>fraud-check</b> ko call karta hai, toh wahi <code>traceparent</code> header aage bhejta hai. fraud-check ka kaam ek alag span banta hai: 2.61 second.' },
       { from: 'pay', to: 'ledger', label: 'wahi trace_id', set: { ledger: { sub: 'span: 0.04 s' } }, say: '<b>pay-api</b> phir <b>ledger</b> ko call karta hai, usi trace_id ke saath. ledger ka span: 0.04 second. Agar koi service header aage na bheje, toh trace wahin toot jaati hai.' },
       { from: 'pay', to: 'otel', label: 'spans', tone: 'gold', say: 'Teeno services (pay-api, fraud-check, ledger) apne-apne spans <b>OTel Collector</b> ko bhejti hain. Har span par wahi trace_id likha hai.' },

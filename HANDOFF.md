@@ -13,7 +13,7 @@ This section is the current state. Everything below the next heading is older hi
   and 0 horizontal overflow.
 - **Not verified:** real labs 16–19 were written on a machine without Docker/kind and have never run on a cluster
   (flag `untested: true` in `reallabs.js`; remove it after a real run). The lesson text of the 58 older levels was not
-  re-fact-checked line by line. Only 3 older diagrams (`controlplane`, `deploy`, `service`) were converted to scenes.
+  re-fact-checked line by line. 11 of the 58 older diagrams were converted to step-by-step scenes; the other 47 are still static HTML.
 - **Git:** all work is local commits on `main`; nothing was pushed.
 
 ---

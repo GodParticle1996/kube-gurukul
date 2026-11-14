@@ -743,7 +743,9 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
         } else if (kind === 'all') {
           text = ['── pods ──', podTable(wide), '', '── deployments ──', genericTable('deployments') || 'No resources found.', '', '── services ──', genericTable('services') || 'No resources found.'].join('\n');
         } else if (kind === 'pods') {
-          text = podTable(wide, pick(list('pods')), labelCols);
+          const pl = pick(list('pods'));
+          // asli kubectl: koi pod na ho toh sirf header nahi, yeh line aati hai
+          text = pl.length ? podTable(wide, pl, labelCols) : 'No resources found in default namespace.';
         } else if (kind === 'events') {
           const evs = list('events');
           text = evs.length ? evs.join('\n') : 'No events found.';

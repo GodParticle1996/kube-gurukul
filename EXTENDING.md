@@ -74,6 +74,9 @@ Building blocks (style.css mein sab ready hai): `dg-flow`/`dg-col`/`dg-split`/`d
 (+ bx-label — dashed group box), `dg-ladder`/`dg-rung`, `dg-legend`, `dg-cap`.
 Sab diagrams ek saath dekhne ke liye: `gallery.html`.
 
+**Kadam-dar-kadam diagram chahiye (kaun kisko kya bhejta hai, kis kram mein)?** `html` ki jagah `scene` likho — §17.1 dekho.
+Naye levels ke liye `scene` hi pehli pasand hai.
+
 ## 3. Game types (stages)
 
 ```js
@@ -299,6 +302,9 @@ mission ke `success()` mein `sim.cluster.releases[0].values` / `.userValues` /
 
 Tracks order mein unlock hote hain (`KG.tracks` ka order = unlock order).
 
+Har track par `group` zaroori hai (`main` / `scenario` / `prod` / `tools` — list `KG.trackGroups` mein, `data-core.js`).
+Home page tracks ko isi group ke heading ke neeche dikhata hai. Naya group chahiye toh `KG.trackGroups` mein jodo.
+
 ## 7. Sirf flashcards add karna (bina naye level ke)
 
 Kisi level ke `cards` array mein naya card daalo — **dhyan:** cards level complete
@@ -523,7 +529,8 @@ galat jawab Revision Dojo mein mistake card banta hai. `levels`/`labs` links don
 
 ## 13. Real Labs (`reallabs.js` + `real-labs/`)
 
-Abhi **15 lab directories** hain. Naye lab mein `README.md`, `verify.sh` aur `solution/` banao;
+Abhi **19 lab directories** hain (01–15 kind v1.32 par chale the; 16–19 likhe gaye par cluster par **nahi** chale —
+catalogue mein `untested: true`, jo app mein ek saaf chetavni dikhata hai. Lab ko sach mein chala lo toh flag hata do). Naye lab mein `README.md`, `verify.sh` aur `solution/` banao;
 broken setup YAML/script, expected output, hints, decision recap aur cleanup document karo.
 [`real-labs/README.md`](real-labs/README.md) mein setup aur verification helpers diye hain.
 Phir `KG.realLabs` mein unique `id`, `num`, `title`, `mins`, `concept`, `decision`, related
@@ -633,3 +640,106 @@ jiske liye test likha gaya hai (16.1, 16.2, 16.3) — baaki tumhe khud dekhna ha
 3. Har "galat" option/message asli tool ka asli message ho (flag ka naam, error ka text, column ka order).
 4. Ek command, ek kaam: learner ko ek line paste karke do terminal ka kaam mat karwao.
 5. Simulator mein naya niyam jode toh validator mein us niyam ka ek test bhi jodo (lesson ka daava = test ka assert).
+
+## 17. 🧭 2026-11 ka UX pass — naye engine features aur unke niyam
+
+User ne chaar dikkatein batayi thi: (1) terminal mission mein atakna, (2) ek screen par bahut text, (3) diagram saaf nahi,
+(4) raasta saaf nahi (kahan ruka tha, aage kya). Neeche ke features inhi chaar ke jawab hain. **Inhe todna mat** — naya content
+inhi ke upar likho.
+
+### 17.1 Scene player (`scene.js`) — kadam-dar-kadam SVG diagram
+
+`VISUALS['level-id'] = { t: 'Title', scene: { intro, aria, groups, nodes, steps } }`. Poora format `scene.js` ke upar likha hai.
+Learner "Agla kadam →" dabata hai; har kadam = ek teer + chalta packet + neeche **ek** vaakya (`say`). Dabbe par click = `about`.
+
+| Cheez | Hadd (validator fail karta hai) |
+|---|---|
+| node `label` | ≤ 20 akshar |
+| node `sub` | ≤ 26 akshar |
+| step `label` (teer par) | ≤ 28 akshar |
+| `steps` | kam se kam 2; har step mein `say`; ya `from`+`to`, ya `at: [ids]` |
+| ek grid cell (`col`,`row`) | ek hi dabba |
+| `say` ke shabd | `yeh / woh / isse / usse / isko / usko` mana — dabbe ka **naam** likho |
+
+- `set: { nodeId: { tone, sub } }` us kadam se dabbe ka rang/subtitle badal deta hai aur aage tak rehta hai (jaise pod `Pending` → `Running`).
+- Teer kisi beech ke dabbe ke upar se jaaye toh `bend: 40` do.
+- Purana static `html` saath rakh sakte ho (hotspot game usi ko use karta hai). `scene` ho toh level intro mein scene dikhta hai.
+- Naya scene likh kar `gallery.html` mein dekho, aur phone width (390px) par bhi.
+
+### 17.2 Terminal ki madad (`terminal.js`) — mission mein learner ab atakta nahi
+
+Har terminal mission ko yeh paanch cheezein **zaroori** hain: `tasks`, `success: KG.allOf(TASKS)`, `hints`, `successText`, `solution`.
+`solution` sirf validator ke liye nahi hai — engine isi se learner ki madad banata hai:
+
+| Feature | Kahan se aata hai |
+|---|---|
+| "👉 Ab kaam N: …" (abhi ka kaam highlight) | `tasks` ka kram. **Tasks usi kram mein likho jis kram mein learner unhe karega** |
+| 🧰 "Is mission ke commands" palette (free) | `solution` ke commands ke **shape** (`kubectl get pods`, `velero backup describe` …) |
+| 🆘 "Agla command dikhao" (−10 XP) | `solution` ka pehla command jo learner ne abhi tak nahi chalaya |
+| Tab completion | verbs → kinds → cluster ke object/file naam |
+| "Kya tumhara matlab … tha?" | edit distance se, object naam aur kind ke liye |
+| Galat roop wala command | learner ka command `solution` ke kisi command jaisa ho toh sahi roop dikhta hai |
+
+Niyam:
+- `solution` ka **aakhri** command hi mission jitaaye (validator yahi jaanchta hai). Beech ke command par jeet = learner aadha mission chhod deta hai.
+- `solution` mein har command wahi likho jo simulator sach mein samajhta hai. `node tools/replay-missions.js run` har mission ko replay karta hai.
+- Arena ka DOM kram `[goalBox, terminal, buttons, palette]` hai. Validator `children[0..2]` padhta hai — naya element **aakhir** mein jodo.
+- Mission ke `cluster` ke andar ke callbacks (`describe`, `logs`, `exec` function ho sakte hain) ko **missing function aur `[]` regex match** sahna
+  chahiye: `validateMission` cluster ko JSON se clone karta hai, toh functions gir jaate hain.
+
+### 17.3 Custom kinds — CRD ya koi bhi naya resource, bina engine chhede
+
+```js
+cluster: {
+  custom: {
+    pdb: { names: ['pdb', 'poddisruptionbudget', 'poddisruptionbudgets'],      // learner in mein se koi bhi likh sakta hai
+           cols: ['NAME', 'MIN AVAILABLE', 'ALLOWED DISRUPTIONS', 'AGE'],
+           items: [ { name: 'notify-pdb', row: ['1', '0', '40d'],              // row = NAME ke baad ke columns
+                      describe: 'text'  /* ya (sim, item) => 'text' */, yaml: 'text' } ] },
+  },
+}
+```
+
+`kubectl get <kind>`, `get <kind> <naam>`, `get <kind>/<naam>`, `-o yaml`, `describe <kind> [naam]` aur Tab completion apne-aap chalte hain.
+ServiceMonitor, HTTPRoute, Certificate, ClusterPolicy, PodIdentityAssociation — sab isi se bane hain (`data-observe.js`, `data-eksnet.js`,
+`data-secure.js` mein misaalein). Jo command simulator nahi jaanta (velero, trivy, cosign, aws) uske liye mission ka `responses` use karo;
+`err: true` us jawab ko error ke rang mein chhapta hai.
+
+### 17.4 Flow player, hotspot, lesson pager, routing
+
+- **Flow** (`type: 'flow'`): ab learner ke haath mein hai. Aage ke kadam chhupe rehte hain; "⏭ Agla kadam" / "⏮ Wapas" / "▶ Chalao (auto)".
+  Auto ki raftaar text ki lambai se tay hoti hai. Step ke sawal ka jawab ek baar diya toh dobara nahi poocha jaata.
+  `instructions` mein "▶ dabao" mat likho — likho "\"Agla kadam\" dabao".
+- **Hotspot**: sahi jawab ke baad khud aage nahi badhta; "Agla sawal →" button hai (padhne ka samay learner tay kare).
+- **Lesson pager**: `lesson` ke cards ek-ek karke dikhte hain ("Agla card →"). Isliye **har card apne aap mein poora ho** — "upar dekho" /
+  "pichhle card mein" mat likho. Ek card = ek baat. Learner "saare cards ek saath" bhi chun sakta hai (`KG.state.lessonAll`).
+- **Routing**: har screen ka hash hai — `#/`, `#/track/<id>`, `#/level/<id>`, `#/play/<id>`, `#/tree/<id>`, `#/lab/<id>`, `#/dojo`,
+  `#/decisions`, `#/labs`. Browser ka Back button kaam karta hai. Nayi screen banao toh uske function ke shuru mein `setRoute('#/…')`
+  bulao aur `app.js` ke `route()` mein uska case jodo. Band (locked) level ka link track page par le jaata hai.
+- **Home**: sabse upar "agla kadam" card (`.resume-card.nextup`); har track card par "📍 Tum yahan ho" aur "Agla level: …".
+
+### 17.5 Content ke niyam jo is pass mein validator ne pakde
+
+1. **MCQ ki lambai.** Har track mein, sahi jawab "sabse lamba" ya "sabse chhota" 10% se zyada sawalon mein nahi ho sakta
+   (sahi ≥ 1.15× sabse lambe galat se, ya ≤ 0.85× sabse chhote galat se). Sahi jawab **beech ki lambai** ka likho; ek galat jawab use lamba ho.
+   Jaanch: `node tools/mcq-bias.js list <track>` (kuch na chhape = theek). Incident ke liye `--kind=incident`.
+2. **Kachcha `<placeholder>` mana** HTML wale fields mein (`<pod>`, `<unknown>`): `&lt;pod&gt;` likho. `context` field ab chhoot mein hai (engine use escape karta hai).
+3. **Slider ki shuruaati haalat**: `check` ko pehle se paas nahi karni chahiye, **aur** woh ek sach-mumkin haalat honi chahiye
+   (jaise request ≤ limit). Galat shuruaat = learner galat cheez yaad karta hai.
+4. **Ek kahani.** Naye tracks (`day2`, `observe`, `secure`, `eksnet`) sab **ChaiPay** company ki kahani hain: services `pay-api`, `ledger`
+   (`ledger-0`), `notify`, `fraud-check`; namespace `payments`; EKS cluster `chaipay-prod`; account `111122223333`; region `ap-south-1`.
+   Naya level inhi naamon ko dobara use kare. Real lab mein bhi wahi naam rakho jo us level ke mission mein the
+   (Lab 19 mein hack hua pod `notify` hai, kyunki `sec-boss` mission mein bhi `notify` hai).
+5. **Fill template**: `{0}..{n}` har placeholder theek ek baar. Template ko string functions se jodkar mat banao — seedha likho.
+6. **Phone width.** Lambi cheezein (PromQL, `system:serviceaccount:…`, ARN) 390px par page ko chauda kar deti thi. CSS mein
+   `overflow-wrap: anywhere` laga hai; naya chauda element banao toh 390px par dekho.
+
+### 17.6 Browser mein jaanchna (validator ke alawa)
+
+`node validate.js` DOM ko nakli banata hai — layout, overflow aur click ka kram nahi dekhta. Is pass mein har screen headless Chromium
+(Playwright) se 1180px aur 390px par kholi gayi: page errors 0, horizontal overflow 0. Bada UI badlaav karo toh wahi dobara karo:
+har level ka intro + har stage kholo, `document.documentElement.scrollWidth - clientWidth` 2px se kam ho, aur console/page error na ho.
+
+**Jo is pass mein nahi hua:** purane 58 levels ka lesson text line-by-line dobara fact-check nahi hua; sirf 3 purane diagram
+(`controlplane`, `deploy`, `service`) scene mein badle; real labs 16–19 cluster par nahi chale.
+

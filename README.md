@@ -18,13 +18,13 @@ python3 -m http.server 8000
 # → http://localhost:8000
 ```
 
-Diagram gallery: [`gallery.html`](gallery.html) — saare 58 concept visuals ek page par.
+Diagram gallery: [`gallery.html`](gallery.html) — saare 80 concept visuals ek page par.
 
 Content add karne ke baad: **`node validate.js`** chalao (structure + engine + simulators sab check hote hain).
 
 ## Kya hai isme
 
-- **7 tracks, 58 levels** — har track ka boss level + certificate:
+- **11 tracks, 80 levels** — har track ka boss level + certificate:
   - 🌱 **Beginner (8):** Docker→K8s, Control Plane (API Server/etcd/Scheduler/Controller
     Manager), Worker Nodes (kubelet/kube-proxy), Pods, Deployments, Services,
     ConfigMaps/Secrets/Namespaces, Boss: Pehla Deploy
@@ -56,8 +56,19 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
     (CNI → kube-proxy → CoreDNS), cluster maintenance (**PDB slider lab** + etcd restore),
     certificates & kubeconfig, CKS hardening, Boss: teen bimari ek cluster
 
-  Beginner → Intermediate → Advanced sequential unlock hote hain; **Helm, ArgoCD,
-  Karpenter aur KodeKloud tracks shuru se hi khule hain** (jab chaaho khelo).
+  **Production ke kaam (2026-11)** — chaar naye tracks, sab ek hi company "ChaiPay" (EKS cluster `chaipay-prod`) ki kahani,
+  *hamesha unlocked*, production job + interview ke liye:
+  - 🛠️ **Day-2 Ops Gurukul (5):** `kubectl debug` (distroless pod), right-sizing (requests/limits/throttling),
+    cluster upgrade + PDB-blocked drain, Velero backup/restore, Boss
+  - 📈 **Observability & Autoscaling (6):** Prometheus/ServiceMonitor + PromQL, SLO + burn-rate alerts,
+    logs + traces (alert → metric → trace → log), HPA (`<unknown>` debug), KEDA/VPA, Boss
+  - 🛡️ **Security Gurukul (5):** ServiceAccount least privilege, admission policy (Kyverno, Audit → Enforce),
+    supply chain (trivy/cosign/digest), runtime security (Falco), Boss: hack hue pod ka quarantine
+  - 🌐 **Networking & EKS (6):** Gateway API (HTTPRoute + canary), cert-manager + ExternalDNS,
+    EKS Pod Identity, VPC CNI + IP exhaustion, ALB + zero-downtime deploy, Boss: launch day
+
+  Beginner → Intermediate → Advanced sequential unlock hote hain; **baaki saare tracks shuru se hi khule hain**
+  (jab chaaho khelo). Home page tracks ko 4 groups mein dikhata hai aur sabse upar batata hai "agla kadam kya hai".
 
 - **Har level mein:**
   - 🎯 Learning objectives (intro par) + ✔ success criteria (completion par)
@@ -164,7 +175,8 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `tools/replay-missions.js` · `tools/mcq-bias.js` | Mission transcripts + solution checks; answer-length bias report |
 | `validate.js` | **`node validate.js`** — content + engine + simulator tests.<br>Labs ko sach mein **render** karta hai, unke goals ko **solvable saabit** karta hai (slider ka knob sweep, board ka backtracking), aur **non-Latin script leaks** pakadta hai |
 | `app.js` | Screens: home + mood/resume, track maps, stages, interview, Revision Dojo, pop quiz, certificates |
-| `visuals.js` | 58 concept diagrams (`VISUALS[levelId]`) |
+| `visuals.js` | 80 concept diagrams (`VISUALS[levelId]`) — static `html` ya kadam-dar-kadam `scene` |
+| `scene.js` | Scene player: SVG diagram jo "Agla kadam" se ek-ek teer dikhata hai (EXTENDING §17.1) |
 | `data-core.js` | Ranks + track definitions |
 | `data-beginner.js` · `data-intermediate.js` · `data-advanced.js` · `data-helm.js` · `data-argocd.js` · `data-karpenter.js` · `data-kodekloud.js` | Level content |
 | `data-gaps.js` | Gap levels jo existing tracks ke **beech** mein jaate hain (`KG.registerLevelsAfter`) — sabse aakhir mein load hoti hai |

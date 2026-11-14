@@ -1,3 +1,23 @@
+# KubeGurukul status — 2026-11-14 (deepening pass)
+
+This section is the current state. Everything below the next heading is older history.
+
+- **Content:** 11 tracks / 80 levels / 56 terminal missions / 19 real labs. Four new "production" tracks
+  (`day2`, `observe`, `secure`, `eksnet`; 22 levels) share one company story, ChaiPay — see `EXTENDING.md` §17.5.
+- **Engine UX:** terminal help (current task, Tab completion, did-you-mean, free command palette, paid next-command),
+  step-by-step flow player, one-card-at-a-time lesson pager, hash routing with a working Back button, grouped home page
+  with a "next step" card, `scene.js` step-by-step SVG diagrams, custom kinds in the kubectl simulator.
+  All documented for other agents in `EXTENDING.md` §17.
+- **Verified:** `node validate.js` passes; `node tools/replay-missions.js run` replays all 56 mission solutions;
+  every level intro and stage of all 11 tracks opened in headless Chromium at 1180px and 390px with 0 page errors
+  and 0 horizontal overflow.
+- **Not verified:** real labs 16–19 were written on a machine without Docker/kind and have never run on a cluster
+  (flag `untested: true` in `reallabs.js`; remove it after a real run). The lesson text of the 58 older levels was not
+  re-fact-checked line by line. Only 3 older diagrams (`controlplane`, `deploy`, `service`) were converted to scenes.
+- **Git:** all work is local commits on `main`; nothing was pushed.
+
+---
+
 # KubeGurukul improvement status — 2026-10-23
 
 A–D implementation complete on `codex/kube-gurukul-handoff-completion`.

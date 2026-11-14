@@ -101,7 +101,8 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
   saath mein poora map, X vs Y table, production gotchas, YAML aur related levels/labs.
   Topic practice ya 8-scenario mixed round khelo; galat jawab Revision Dojo card banta hai
 
-- **🧪 Real Cluster Labs — 15 folders** in [`real-labs/`](real-labs/README.md): broken scenario,
+- **🧪 Real Cluster Labs — 19 folders** in [`real-labs/`](real-labs/README.md) (Lab 16–19 naye hain: `kubectl debug`,
+  CPU throttling, admission policy, quarantine — yeh chaar abhi asli cluster par **test nahi hue**, app mein saaf likha hai): broken scenario,
   expected output, hints, `verify.sh`, `solution/` aur cleanup. Docker + kind/minikube +
   kubectl chahiye; Helm lab ke liye Helm bhi. Browser commands dikhata hai; commands tumhare
   terminal par chalte hain. App ka "ho gaya" button self-mark hai; cluster checks `./verify.sh`
@@ -178,6 +179,6 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `visuals.js` | 80 concept diagrams (`VISUALS[levelId]`) — static `html` ya kadam-dar-kadam `scene` |
 | `scene.js` | Scene player: SVG diagram jo "Agla kadam" se ek-ek teer dikhata hai (EXTENDING §17.1) |
 | `data-core.js` | Ranks + track definitions |
-| `data-beginner.js` · `data-intermediate.js` · `data-advanced.js` · `data-helm.js` · `data-argocd.js` · `data-karpenter.js` · `data-kodekloud.js` | Level content |
+| `data-beginner.js` · `data-intermediate.js` · `data-advanced.js` · `data-helm.js` · `data-argocd.js` · `data-karpenter.js` · `data-kodekloud.js` · `data-day2.js` · `data-observe.js` · `data-secure.js` · `data-eksnet.js` | Level content |
 | `data-gaps.js` | Gap levels jo existing tracks ke **beech** mein jaate hain (`KG.registerLevelsAfter`) — sabse aakhir mein load hoti hai |
 | `gallery.html` | Saare diagrams ek page par |

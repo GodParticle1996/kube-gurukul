@@ -549,4 +549,527 @@ kubectl get challenge -A                    # atke hue challenges</pre>`,
   },
 ]);
 
+/* ------------------------------------------------------------------ */
+/* LEVEL 3 — pod ko AWS ki pehchaan                                    */
+/* ------------------------------------------------------------------ */
+VISUALS['eks-identity'] = {
+  t: 'EKS Pod Identity — pod ko AWS ka apna, chhota sa role',
+  scene: {
+    intro: '<b>Sawal:</b> <code>notify</code> pod ko SQS queue padhni hai. AWS ko kaise pata chalega ki yeh request <code>notify</code> ki hai — aur notify ko sirf isi queue ki ijaazat kaise milegi?',
+    aria: 'EKS Pod Identity ka raasta: pod, agent, EKS Auth API, IAM role, SQS, aur node ka role — 6 kadam',
+    nodes: [
+      { id: 'pod', col: 0, row: 0, icon: '📦', label: 'pod: notify', sub: 'SA: notify-sa', tone: 'good', about: 'Pod ke andar AWS SDK chalta hai. SDK ko AWS ke credentials chahiye.' },
+      { id: 'agent', col: 1, row: 0, icon: '🤝', label: 'Pod Identity Agent', sub: 'har node par', tone: 'accent', about: 'EKS ka add-on, DaemonSet. Pod ka SDK credentials isi agent se maangta hai.' },
+      { id: 'eks', col: 2, row: 0, icon: '☸️', label: 'EKS Auth API', sub: 'association dekhta hai', about: 'AWS ki taraf ka hissa. Dekhta hai: is cluster + namespace + ServiceAccount ke liye kaun sa IAM role likha hai (association).' },
+      { id: 'node', col: 0, row: 1, icon: '🖥️', label: 'Node ka IAM Role', sub: 'saare pods ka saanjha', tone: 'bad', about: 'EC2 node ka apna role. Node ke saare pods is tak pahunch sakte hain. Ise app ki ijaazat dena galat hai.' },
+      { id: 'sqs', col: 1, row: 1, icon: '📬', label: 'SQS: notify-queue', sub: 'notify ka kaam', about: 'Woh AWS resource jise notify ko padhna hai.' },
+      { id: 'role', col: 2, row: 1, icon: '🪪', label: 'IAM Role', sub: 'notify-sqs-role', tone: 'gold', about: 'Sirf notify ke liye bana role. Ijaazat: sirf notify-queue se padhna. Aur kuch nahi.' },
+    ],
+    steps: [
+      { from: 'pod', to: 'agent', label: 'credentials do', say: '<b>pod: notify</b> ke andar AWS SDK credentials maangta hai. Request node par chal rahe <b>Pod Identity Agent</b> ke paas jaati hai — pod ke ServiceAccount token ke saath.' },
+      { from: 'agent', to: 'eks', label: 'payments / notify-sa', say: '<b>Pod Identity Agent</b> token ko <b>EKS Auth API</b> tak pahunchata hai: "namespace payments, ServiceAccount notify-sa — iske liye kaun sa role?"' },
+      { from: 'eks', to: 'role', label: 'association mila', tone: 'gold', say: '<b>EKS Auth API</b> associations ki list dekhta hai. Likha hai: payments + notify-sa → <b>IAM Role</b> <code>notify-sqs-role</code>. Namespace ya naam ek akshar bhi alag ho toh association nahi milta.' },
+      { from: 'eks', to: 'agent', label: 'thodi der ke credentials', tone: 'good', bend: 24, say: '<b>EKS Auth API</b> us role ke <b>temporary</b> credentials lautata hai (kuch ghanton ke). <b>Pod Identity Agent</b> unhe pod ko de deta hai. Koi key kahin likhi nahi gayi.' },
+      { from: 'pod', to: 'sqs', label: 'ReceiveMessage', tone: 'good', say: '<b>pod: notify</b> ab <code>notify-sqs-role</code> ban kar <b>SQS: notify-queue</b> ko call karta hai. AWS ko dikhta hai: yeh notify hai, aur notify ko sirf isi queue ki ijaazat hai.' },
+      { from: 'pod', to: 'node', label: 'association nahi mila', tone: 'bad', say: 'Agar association <b>nahi</b> milta, aur pod node ke metadata tak pahunch sakta hai, toh SDK chupchaap <b>Node ka IAM Role</b> use kar leta hai. Nateeja: <code>AccessDenied</code> — ya usse bura, zaroorat se zyada ijaazat.' },
+    ],
+  },
+};
+
+const ID_NODE = 'arn:aws:sts::111122223333:assumed-role/eks-node-role/i-0a1b2c3d4e5f6';
+const ID_GOOD = 'arn:aws:sts::111122223333:assumed-role/notify-sqs-role/eks-chaipay-pr-notify-7a6-4f1c';
+const idOk = s => !!(s.cluster.assoc && s.cluster.restarted);
+const notifyLogs = s => idOk(s)
+  ? 'notify starting...\nSQS: connected to notify-queue (ap-south-1)\nreceived 10 messages\nsent 10 SMS'
+  : `notify starting...\nSQS ReceiveMessage failed: AccessDenied: User: ${ID_NODE} is not authorized to perform: sqs:ReceiveMessage on resource: arn:aws:sqs:ap-south-1:111122223333:notify-queue because no identity-based policy allows the sqs:ReceiveMessage action\n(dhyaan do "assumed-role/eks-node-role": AWS ko notify nahi, NODE dikh raha hai)`;
+const callerId = s => `{\n    "UserId": "AROAEXAMPLEID:${idOk(s) ? 'eks-chaipay-pr-notify-7a6-4f1c' : 'i-0a1b2c3d4e5f6'}",\n    "Account": "111122223333",\n    "Arn": "${idOk(s) ? ID_GOOD : ID_NODE}"\n}` +
+  (idOk(s) ? '\n(ab AWS ko notify-sqs-role dikh raha hai — notify ki apni pehchaan)' : '\n(Arn mein eks-node-role hai: pod node ki pehchaan use kar raha hai, apni nahi)');
+const notifyPod = name => ({ name, ready: '1/1', status: 'Running', restarts: 0, age: '2h', node: 'node-1', ip: '10.0.1.21', logs: notifyLogs, exec: { 'aws sts get-caller-identity': callerId } });
+const T_ID = [
+  { text: 'notify ke logs padho — AWS ko kaun si pehchaan dikh rahi hai?', check: s => s.history.some(h => /^kubectl logs (deploy(ment)?\/)?notify\b/.test(h)) },
+  { text: 'Pod ke andar se pehchaan pakki karo: <code>kubectl exec deploy/notify -- aws sts get-caller-identity</code>', check: s => s.history.some(h => /^kubectl exec .*notify\S* -- aws sts get-caller-identity$/.test(h)) },
+  { text: 'Cluster ke Pod Identity associations dekho', check: s => s.history.some(h => /^aws eks list-pod-identity-associations\b/.test(h)) },
+  { text: 'Sahi association banao (namespace <code>payments</code>, ServiceAccount <code>notify-sa</code>)', check: s => !!s.cluster.assoc },
+  { text: 'notify ke pods ko dobara banao — chalte pod ko naye credentials nahi milte', check: s => idOk(s) },
+  { text: 'Pakka karo: <code>get-caller-identity</code> ab <code>notify-sqs-role</code> dikhata hai', check: s => idOk(s) && s.history.slice(s.cluster.restartedAt).some(h => /get-caller-identity$/.test(h)) },
+];
+function recreateNotify(s) {
+  const c = s.cluster;
+  c.pods = c.pods.filter(p => !/^notify-/.test(p.name));
+  c.pods.unshift(notifyPod('notify-7a6b5c-m4'));
+  c.pods[0].age = '10s';
+  if (c.assoc) { c.restarted = true; c.restartedAt = s.history.length; }
+}
+
+/* ------------------------------------------------------------------ */
+/* LEVEL 4 — VPC CNI aur IP khatam hona                                */
+/* ------------------------------------------------------------------ */
+VISUALS['eks-vpccni'] = {
+  t: 'VPC CNI — har pod ko VPC ka ek asli IP',
+  scene: {
+    intro: '<b>Sawal:</b> node par CPU aur memory khaali hai, phir bhi naya pod <code>ContainerCreating</code> mein atka hai. Pod ko kaun si cheez nahi mil rahi?',
+    aria: 'VPC CNI kaise pod ko IP deta hai aur subnet ke IP kaise khatam hote hain — 6 kadam',
+    groups: [{ label: '🖥️ Node (m5.large)', cols: [1, 2], rows: [0, 1], tone: 'good' }],
+    nodes: [
+      { id: 'sub', col: 0, row: 0, icon: '🏘️', label: 'Subnet 10.0.1.0/24', sub: '251 IP kul', tone: 'gold', about: 'VPC ka ek hissa. /24 subnet mein 256 pate hote hain; AWS 5 apne paas rakhta hai → 251 kaam ke. Nodes aur pods dono yahin se IP lete hain.' },
+      { id: 'cni', col: 1, row: 0, icon: '🔌', label: 'VPC CNI (aws-node)', sub: 'IP ka intezaam', tone: 'accent', about: 'Har node par chalne wala add-on. Subnet se IP maangta hai aur pods ko deta hai. Kuch IP pehle se "garam" rakhta hai taaki naya pod tez shuru ho.' },
+      { id: 'eni', col: 2, row: 0, icon: '🧷', label: 'ENI (network card)', sub: '3 ENI × 10 IP', about: 'Node ke network cards. Har instance type par ENI ki ginti aur har ENI par IP ki ginti tay hai. m5.large: 3 ENI, har ek par 10 IP.' },
+      { id: 'pod', col: 1, row: 1, icon: '📦', label: 'naya pod', sub: 'ContainerCreating', tone: 'muted' },
+      { id: 'old', col: 2, row: 1, icon: '📦', label: 'purane pods', sub: 'har ek ka apna VPC IP', tone: 'good' },
+      { id: 'aws', col: 0, row: 1, icon: '☁️', label: 'VPC ki baaki duniya', sub: 'RDS, doosre VPC', about: 'Pod ka IP asli VPC IP hai, isliye RDS, security groups aur doosre VPC pod ko seedha dekh sakte hain.' },
+    ],
+    steps: [
+      { from: 'cni', to: 'sub', label: 'IP do', say: '<b>VPC CNI (aws-node)</b> node ke shuru hote hi <b>Subnet 10.0.1.0/24</b> se IP maang leta hai — pods aane se <b>pehle</b>. Default mein VPC CNI ek poore khaali ENI jitne IP "garam" rakhta hai.' },
+      { from: 'sub', to: 'eni', label: '10 IP', tone: 'gold', bend: -34, say: '<b>Subnet 10.0.1.0/24</b> ke IP <b>ENI (network card)</b> par chadh jaate hain. Ab yeh IP is node ke naam hain — chahe koi pod unhe use kare ya na kare.' },
+      { from: 'eni', to: 'old', label: 'ek pod, ek IP', tone: 'good', say: 'Har pod ko ENI se ek asli VPC IP milta hai. m5.large par zyada se zyada <code>3 × (10 − 1) + 2 = 29</code> pods. CPU bacha ho tab bhi 30vaan pod is node par nahi aa sakta.' },
+      { from: 'old', to: 'aws', label: 'seedha VPC IP', bend: 30, say: 'Faayda: <b>purane pods</b> ka IP asli VPC IP hai, toh <b>VPC ki baaki duniya</b> (RDS, security groups) pod se seedhi baat karti hai. Koi overlay nahi.' },
+      { from: 'cni', to: 'sub', label: 'aur IP do', tone: 'bad', bend: 24, set: { sub: { sub: '0 IP bache', tone: 'bad' } }, say: 'Keemat: cluster badha, har node ne apne "garam" IP rakh liye, aur <b>Subnet 10.0.1.0/24</b> ke 251 IP khatam ho gaye. <b>VPC CNI (aws-node)</b> aur IP maangta hai — subnet ke paas dene ko kuch nahi.' },
+      { at: ['pod'], set: { pod: { tone: 'bad', sub: 'IP nahi mila' } }, say: '<b>naya pod</b> node par schedule ho chuka hai, par IP ke bina sandbox nahi banta. Pod <code>ContainerCreating</code> mein atka rehta hai. Event: <code>failed to assign an IP address to container</code>. CPU aur memory ka isse koi rishta nahi.' },
+    ],
+  },
+};
+const ITYPES = [{ n: 't3.medium', eni: 3, ip: 6 }, { n: 'm5.large', eni: 3, ip: 10 }, { n: 'm5.xlarge', eni: 4, ip: 15 }];
+const SUBNETS = [{ n: '/24', ips: 251 }, { n: '/23', ips: 507 }, { n: '/22', ips: 1019 }];
+/* saada model (asli ginti warm-pool ki settings par nirbhar karti hai) */
+function cniModel(k) {
+  const t = ITYPES[k.type], sub = SUBNETS[k.subnet], need = 600;
+  const maxPods = k.pd ? 110 : t.eni * (t.ip - 1) + 2;
+  const capacity = k.nodes * maxPods;
+  const pods = Math.min(need, capacity);
+  const ipNeed = k.pd
+    ? k.nodes * (1 + 16 * (Math.ceil(pods / k.nodes / 16) + 1))
+    : Math.min(k.nodes * t.eni * t.ip, pods + k.nodes * (t.eni + t.ip));
+  const freePct = Math.round((sub.ips - ipNeed) / sub.ips * 100);
+  return { t, sub, need, maxPods, capacity, ipNeed, freePct, fits: ipNeed <= sub.ips };
+}
+
+KG.registerLevels('eksnet', [
+  /* ================================================================== */
+  {
+    id: 'eks-identity',
+    icon: '🪪',
+    title: 'Pod ko AWS ki pehchaan — EKS Pod Identity aur IRSA',
+    badge: 'Pehchaan Pandit',
+    objectives: [
+      'Pod AWS (S3, SQS) ko call kare toh AWS ko <b>kaun</b> dikhta hai',
+      'Teen tareeke: likhi hui key, node ka role, pod ka apna role — aur kaun sa sahi',
+      'EKS Pod Identity ka association; IRSA ka annotation',
+      '<code>AccessDenied</code> ko <code>aws sts get-caller-identity</code> se debug karna (terminal)',
+    ],
+    lesson: [
+      `<h3>🏢 Misaal: office ka visitor pass</h3>
+       <p>Ek delivery wala office building mein aata hai. Teen tareeke hain use andar bhejne ke:</p>
+       <table>
+         <tr><th>Tareeka</th><th>Kubernetes mein</th><th>Problem</th></tr>
+         <tr><td>Use building ki <b>master chaabi</b> ki copy de do</td><td>AWS access key ko Secret mein likhna</td><td>Chaabi kabhi expire nahi hoti; ek baar leak → hamesha ke liye</td></tr>
+         <tr><td>Use <b>guard ka pass</b> pehna do</td><td>Node ke IAM role ko ijaazat dena</td><td>Us node ka <b>har</b> pod wahi pass pehen leta hai</td></tr>
+         <tr><td>Reception se <b>uske naam ka</b>, 4 ghante ka pass</td><td>Pod ka apna IAM role</td><td>— (yahi sahi hai)</td></tr>
+       </table>
+       <p><b>Asli baat:</b> AWS ke liye sawal hamesha yahi hai — "yeh request <b>kaun</b> bhej raha hai?" Tumhe pakka karna hai ki jawab "notify" ho, "koi node" nahi.</p>`,
+      `<h3>🤝 EKS Pod Identity: teen cheezein</h3>
+       <ol>
+         <li><b>Agent</b>: add-on <code>eks-pod-identity-agent</code> (har node par).</li>
+         <li><b>IAM role</b>: jiski ijaazat chhoti ho (sirf <code>notify-queue</code> padhna), aur jiska trust <code>pods.eks.amazonaws.com</code> par ho.</li>
+         <li><b>Association</b>: "is cluster ke is namespace ke is ServiceAccount ko yeh role do".</li>
+       </ol>
+       <pre>aws eks create-pod-identity-association \\
+  --cluster-name chaipay-prod \\
+  --namespace payments --service-account notify-sa \\
+  --role-arn arn:aws:iam::111122223333:role/notify-sqs-role</pre>
+       <p><b>Do jaal:</b></p>
+       <ul>
+         <li>Namespace ya ServiceAccount ka naam ek akshar bhi galat → association kisi pod se nahi milta. <b>Koi error nahi aata.</b></li>
+         <li>Association banane ke baad <b>chalte pods ko kuch nahi milta</b>. Pods ko dobara banana padta hai (<code>kubectl rollout restart</code>).</li>
+       </ul>
+       <p><b>IRSA</b> (purana tareeka, ab bhi bahut jagah): association ki jagah ServiceAccount par annotation
+       <code>eks.amazonaws.com/role-arn</code>, aur IAM role ke trust policy mein <code>system:serviceaccount:payments:notify-sa</code> likha hota hai.</p>`,
+      `<h3>🔎 AccessDenied? Pehle poochho "main kaun hoon"</h3>
+       <pre>kubectl exec deploy/notify -- aws sts get-caller-identity</pre>
+       <p>Jawab ke <code>Arn</code> mein jo role dikhta hai, wahi AWS ko dikh raha hai:</p>
+       <table>
+         <tr><th>Arn mein kya dikha</th><th>Matlab</th><th>Kahan dekhna hai</th></tr>
+         <tr><td><code>…/eks-node-role/i-0a1b…</code></td><td>Pod <b>node</b> ki pehchaan use kar raha hai</td><td>Association / annotation; pod restart hua?</td></tr>
+         <tr><td><code>…/notify-sqs-role/…</code> + AccessDenied</td><td>Pehchaan sahi, <b>ijaazat</b> kam</td><td>IAM role ki policy: action aur resource</td></tr>
+         <tr><td>Error: <code>AssumeRoleWithWebIdentity</code> not authorized (IRSA)</td><td>Role pod par <b>bharosa</b> nahi karta</td><td>Trust policy mein namespace / SA ka naam</td></tr>
+       </table>
+       <p>AccessDenied ke error mein bhi yahi likha hota hai: <code>User: arn:aws:sts::…:assumed-role/<b>eks-node-role</b>/…</code>. Us ek shabd ko padhna seekh lo.</p>`,
+    ],
+    stages: [
+      {
+        type: 'match',
+        title: 'Lakshan aur wajah',
+        instructions: 'Baayen woh hai jo tumhe dikha. Daayen uski wajah.',
+        pairs: [
+          { left: 'get-caller-identity mein node ka role dikhta hai', right: 'Pod ko apna role mila hi nahi: association/annotation galat, ya pod restart nahi hua', explain: 'SDK ko pod ke credentials nahi mile, toh SDK node ke role par gir gaya.' },
+          { left: 'Sahi role dikhta hai, phir bhi AccessDenied on sqs:ReceiveMessage', right: 'IAM role ki policy mein woh action ya woh queue nahi hai', explain: 'Pehchaan theek hai. Ijaazat ki list (policy) mein kami hai.' },
+          { left: 'Association kal bana tha; pods 6 din purane hain; ab bhi node ka role', right: 'Chalte pods ko naye credentials nahi milte', explain: 'Credentials pod banne ke waqt jodne ka intezaam hota hai. kubectl rollout restart.' },
+          { left: 'Do alag apps ke pods ko ek hi S3 bucket ki poori ijaazat mil gayi', right: 'Ijaazat node ke IAM role ko di gayi thi', explain: 'Node ka role us node ke har pod ka saanjha hai. App ki ijaazat kabhi node ke role par mat rakho.' },
+        ],
+      },
+      {
+        type: 'terminal',
+        title: '🖥️ Mission: AccessDenied — par kis ko?',
+        instructions: 'notify SQS queue nahi padh paa raha. DevOps team kehti hai "Pod Identity toh laga diya tha". Pata karo AWS ko asal mein kaun dikh raha hai.',
+        goal: `<b>notify</b> ko <code>notify-queue</code> padhne ki ijaazat nahi mil rahi. Pata karo ki pod AWS ke saamne <b>kaun</b> ban kar ja raha hai, galti dhoondho, aur theek karo.<br>
+          Kaam ke roop: <code>kubectl exec deploy/notify -- aws sts get-caller-identity</code> · <code>aws eks list-pod-identity-associations --cluster-name chaipay-prod</code>`,
+        tasks: T_ID,
+        cluster: {
+          nodes: [{ name: 'node-1', status: 'Ready', roles: '<none>', age: '40d', version: 'v1.33.4' }],
+          pods: [notifyPod('notify-5c9d4f-k3')],
+          deployments: [{ name: 'notify', ready: '1/1', upToDate: 1, available: 1, age: '40d' }],
+          custom: {
+            sa: { names: ['sa', 'serviceaccount', 'serviceaccounts'], cols: ['NAME', 'SECRETS', 'AGE'],
+              items: [{ name: 'default', row: ['0', '40d'] }, { name: 'notify-sa', row: ['0', '40d'], describe: 'Name:         notify-sa\nNamespace:    payments\nAnnotations:  <none>\n(Pod Identity mein ServiceAccount par annotation nahi hota — rishta AWS ki taraf "association" mein likha hota hai)' }] },
+          },
+        },
+        responses: [
+          { re: /^aws eks list-pod-identity-associations\b/,
+            out: s => 'ASSOCIATION ID   NAMESPACE   SERVICE ACCOUNT   ROLE\na-9k2m4x7q1w3e   payment     notify-sa         notify-sqs-role' +
+              (s.cluster.assoc ? '\na-5t8r2y6u0i4o   payments    notify-sa         notify-sqs-role' : '\n(NAMESPACE dhyaan se padho: "payment". notify ka namespace "payments" hai — ek akshar ka farak. Yeh association kisi pod se nahi milta, aur koi error bhi nahi deta.)') },
+          { re: /^kubectl rollout restart (deploy|deployment|deployments)[ \/]notify$/, mutate: s => recreateNotify(s),
+            out: s => 'deployment.apps/notify restarted' + (s.cluster.assoc ? '\n(naya pod notify-7a6b5c-m4 bana — is baar pod ko notify-sqs-role ke credentials mile)' : '\n(naya pod bana, par association abhi bhi galat namespace par hai — naye pod ko bhi node ka hi role mila)') },
+          { re: /^kubectl delete (pods?|po)[ \/]notify\S*$/, mutate: s => recreateNotify(s),
+            out: s => 'pod deleted\n(ReplicaSet ne naya pod notify-7a6b5c-m4 banaya' + (s.cluster.assoc ? ' — is baar notify-sqs-role ke credentials ke saath)' : ' — association abhi bhi galat hai, naye pod ko bhi node ka role mila)') },
+          { re: /^aws\b/, err: true, out: 'Is mission mein laptop se aws ka yeh command chalta hai:\n  aws eks list-pod-identity-associations --cluster-name chaipay-prod\nPod ke andar se:\n  kubectl exec deploy/notify -- aws sts get-caller-identity' },
+        ],
+        files: {
+          'fix-association.sh': {
+            desc: 'Sahi association banata hai: namespace payments + ServiceAccount notify-sa → notify-sqs-role',
+            content: '#!/bin/sh\naws eks create-pod-identity-association \\\n  --cluster-name chaipay-prod \\\n  --namespace payments \\\n  --service-account notify-sa \\\n  --role-arn arn:aws:iam::111122223333:role/notify-sqs-role\n# (galat wala association "payment" baad mein hata dena: aws eks delete-pod-identity-association …)',
+            apply: s => { s.cluster.assoc = true; return '{\n    "association": { "namespace": "payments", "serviceAccount": "notify-sa", "roleArn": "arn:aws:iam::111122223333:role/notify-sqs-role" }\n}\n(association ban gaya. Dhyaan do: jo notify pod abhi chal raha hai, use kuch nahi mila. Credentials pod BANNE ke waqt jodte hain.)'; },
+          },
+          'fix-node-role-sqs.sh': {
+            desc: 'Node ke IAM role (eks-node-role) ko sqs:* ki ijaazat deta hai',
+            content: '#!/bin/sh\naws iam attach-role-policy --role-name eks-node-role --policy-arn arn:aws:iam::aws:policy/AmazonSQSFullAccess',
+            apply: () => '(simulator ne roka) Isse notify chal jayega — aur is node ka HAR pod (pay-api, koi bhi naya pod, koi compromise hua pod) account ki har SQS queue padh aur mita sakega. Node ka role saanjha hai. Ijaazat pod ke apne role par honi chahiye.',
+          },
+          'fix-access-key-secret.yaml': {
+            desc: 'Ek IAM user ki access key ko Secret mein rakhta hai aur notify ko env mein deta hai',
+            apply: () => '(simulator ne roka) Access key kabhi expire nahi hoti. Secret, env, logs ya kisi backup se ek baar leak hui toh attacker ke paas hamesha ke liye hai — aur CloudTrail mein "notify" nahi, ek benaam user dikhega. Pod Identity ke credentials kuch ghanton mein khud badal jaate hain.',
+          },
+        },
+        success: KG.allOf(T_ID),
+        successText: `AccessDenied ka error khud bata raha tha ki AWS ko <code>eks-node-role</code> dikh raha hai, <code>notify</code> nahi. <code>get-caller-identity</code> ne pakka kiya.
+          Wajah: association namespace <code>payment</code> par bana tha, pods <code>payments</code> mein hain. Ek akshar. Koi error nahi.
+          Phir doosra jaal: association theek hone ke baad bhi purana pod node ke role par raha — <b>pod ko dobara banana pada</b>.
+          <b>Yaad rakho:</b> AWS ki ijaazat ki har problem mein pehla sawal "ijaazat kya hai?" nahi, <b>"main kaun hoon?"</b> hai.`,
+        hints: [
+          'kubectl logs deploy/notify — error mein "assumed-role/…" ke baad kaun sa role likha hai? Phir kubectl exec deploy/notify -- aws sts get-caller-identity',
+          'aws eks list-pod-identity-associations --cluster-name chaipay-prod — NAMESPACE column dhyaan se padho.',
+          'bash fix-association.sh, phir kubectl rollout restart deployment notify, phir get-caller-identity dobara.',
+        ],
+        solution: [
+          'kubectl logs deploy/notify',
+          'kubectl exec deploy/notify -- aws sts get-caller-identity',
+          'aws eks list-pod-identity-associations --cluster-name chaipay-prod',
+          'bash fix-association.sh',
+          'kubectl rollout restart deployment notify',
+          'kubectl exec deploy/notify -- aws sts get-caller-identity',
+        ],
+      },
+      {
+        type: 'quiz',
+        title: 'Pakka karo — pehchaan ke niyam',
+        questions: [
+          {
+            q: 'Team ne "jaldi mein" node ke IAM role ko S3 ki poori ijaazat de di taaki ek app chal jaye. Isme sabse bada khatra kya hai?',
+            choices: [
+              'Node ka role 12 ghante mein expire ho jaata hai aur app ruk jayegi',
+              'Us node par chalne wale har pod ko wahi S3 ijaazat mil jaati hai',
+              'S3 ke requests dheeme ho jaate hain kyunki node beech mein aata hai',
+              'Kuch nahi — node ka role sirf kubelet use kar sakta hai, pods nahi',
+            ],
+            answer: 1,
+            explain: 'Node ka role saanjha hai. Ek compromise hua pod, ya kisi doosri team ka pod, wahi ijaazat pa leta hai. Isi liye app ki ijaazat pod ke apne role par (Pod Identity / IRSA), aur node ke metadata tak pods ki pahunch band.',
+          },
+          {
+            q: 'IRSA wale cluster mein pod ko yeh error milta hai: "Not authorized to perform sts:AssumeRoleWithWebIdentity". Sabse pehle kya jaanchoge?',
+            choices: [
+              'IAM role ki permission policy — usme sqs:ReceiveMessage hai ya nahi',
+              'IAM role ka trust policy — namespace aur ServiceAccount ka naam sahi hai?',
+              'Pod ki CPU limit — AssumeRole CPU kam hone par fail hota hai',
+              'SQS queue ki encryption settings',
+            ],
+            answer: 1,
+            explain: 'Yeh error role "pehenne" ke waqt aata hai, kaam karne ke waqt nahi. Role ka trust policy tay karta hai ki kaun use pehen sakta hai: system:serviceaccount:NAMESPACE:SA. Naam ya namespace galat → AWS mana kar deta hai.',
+          },
+        ],
+      },
+    ],
+    interview: {
+      title: 'Interview Round — EKS par AWS ki ijaazat',
+      instructions: 'EKS wale role ke interview ka pakka sawal. 🎤',
+      questions: [
+        {
+          q: '"EKS par pod ko S3 ki ijaazat kaise dete ho? Aur kya nahi karte?"',
+          choices: [
+            'Access key ko ConfigMap mein rakhta hoon; ConfigMap encrypted hota hai isliye surakshit hai',
+            'Pod ke ServiceAccount ko ek chhota IAM role (Pod Identity ya IRSA); key ya node ka role nahi',
+            'Node ke IAM role ko S3 ki ijaazat deta hoon; sabse saada aur AWS ka sujhaya hua tareeka yahi hai',
+            'Har pod mein AWS CLI install karke aws configure chalata hoon',
+          ],
+          answer: 1,
+          explain: 'Teen baatein: (1) har app ka apna ServiceAccount aur apna role, (2) role ki ijaazat ek hi resource tak, (3) credentials temporary. "Kya nahi" bhi bolo: likhi hui keys nahi, node ka role nahi.',
+        },
+        {
+          q: '"EKS Pod Identity aur IRSA mein kya farak hai?"',
+          choices: [
+            'Pod Identity sirf Fargate par chalta hai aur IRSA sirf EC2 nodes par',
+            'IRSA mein credentials hamesha ke liye hote hain; Pod Identity mein temporary',
+            'IRSA: OIDC provider + SA par annotation. Pod Identity: agent + AWS ki taraf association',
+            'Koi farak nahi — Pod Identity IRSA ka sirf naya naam hai',
+          ],
+          answer: 2,
+          explain: 'Dono ka maqsad ek hai (pod ko apna role, temporary credentials). Pod Identity mein har cluster ke liye OIDC provider aur trust policy badalna nahi padta; ek hi role kai clusters mein chal jaata hai. IRSA ab bhi bahut jagah chal raha hai — dono padhna aana chahiye.',
+        },
+        {
+          q: '"Pod ko AccessDenied mil raha hai. Tumhara pehla command?"',
+          choices: [
+            'aws iam list-policies — account ki saari policies dekhunga',
+            'kubectl delete pod — naya pod aksar theek chal jaata hai',
+            'Pod ke andar aws sts get-caller-identity — AWS ko kaun dikh raha hai',
+            'kubectl top pod — AccessDenied aksar memory kam hone se aata hai',
+          ],
+          answer: 2,
+          explain: 'Pehle "kaun", phir "kya". Node ka role dikhe → pehchaan ki problem (association/annotation/restart). Sahi role dikhe → ijaazat ki problem (policy). Yeh ek command aadha debug bacha deta hai.',
+        },
+      ],
+    },
+    success: [
+      'Main bata sakta hoon ki pod AWS ke saamne kaun ban kar jaata hai',
+      'Main AccessDenied ko get-caller-identity se do hisson mein baant sakta hoon: pehchaan ya ijaazat',
+      'Main Pod Identity ka association bana kar pods ko naye credentials dila sakta hoon',
+    ],
+    homework: `<p>EKS cluster par:</p>
+      <pre>aws eks list-pod-identity-associations --cluster-name &lt;cluster&gt;
+kubectl get sa -A -o yaml | grep -B3 eks.amazonaws.com/role-arn     # IRSA wale ServiceAccounts
+kubectl exec deploy/&lt;app&gt; -- aws sts get-caller-identity            # kaun dikh raha hai?</pre>`,
+    cards: [
+      { front: 'Pod ko AWS ki ijaazat dene ke teen tareeke — kaun sa sahi?', back: 'Likhi hui key ❌ · node ka IAM role ❌ (saare pods ka saanjha) · pod ka apna role ✅ (Pod Identity / IRSA, temporary credentials).' },
+      { front: 'EKS Pod Identity ki teen cheezein?', back: 'Agent add-on · chhota IAM role (trust: <code>pods.eks.amazonaws.com</code>) · association (cluster + namespace + ServiceAccount → role).' },
+      { front: 'Association banane ke baad kya karna zaroori hai?', back: 'Pods ko dobara banana (<code>kubectl rollout restart</code>). Chalte pods ko naye credentials nahi milte.' },
+      { front: 'AccessDenied ka pehla command?', back: '<code>kubectl exec deploy/APP -- aws sts get-caller-identity</code> — node ka role dikhe → pehchaan ki problem; sahi role → policy ki problem.' },
+      { front: 'IRSA mein role aur ServiceAccount kaise jude hote hain?', back: 'SA par annotation <code>eks.amazonaws.com/role-arn</code>; role ke trust policy mein <code>system:serviceaccount:NS:SA</code>.' },
+    ],
+  },
+
+  /* ================================================================== */
+  {
+    id: 'eks-vpccni',
+    icon: '🔌',
+    title: 'VPC CNI — har pod ko VPC ka IP, aur IP khatam hona',
+    badge: 'IP Inspector',
+    objectives: [
+      'EKS mein har pod ko <b>VPC ka asli IP</b> milta hai — faayda aur keemat',
+      'Ek node par pods ki seema: <code>ENI × (IP − 1) + 2</code>',
+      'Subnet ke IP khatam hone ke lakshan aur ilaaj (prefix delegation, bada subnet)',
+      '600 pods ke liye cluster ka naap chunna (slider) + IP khatam hone ka case (triage)',
+    ],
+    lesson: [
+      `<h3>🏘️ Misaal: colony ke makaan number</h3>
+       <p>Ek colony mein <b>251 makaan number</b> hain. Har parivaar ko apna number chahiye — dak seedhi ghar aati hai.</p>
+       <p>EKS mein:</p>
+       <ul>
+         <li><b>Subnet</b> = colony. <code>/24</code> subnet mein 251 kaam ke IP.</li>
+         <li><b>Har pod</b> ko subnet ka ek <b>asli IP</b> milta hai (VPC CNI add-on deta hai).</li>
+       </ul>
+       <p><b>Faayda:</b> pod ka IP asli hai, toh RDS, security groups aur doosre VPC pod se seedhi baat karte hain. Koi overlay network nahi.</p>
+       <p><b>Keemat:</b> IP ginti ke hain. 251 number khatam → naya parivaar nahi bas sakta, chahe zameen (CPU, memory) kitni bhi khaali ho.</p>
+       <p><b>Asli baat:</b> EKS mein ek teesra resource hai jo CPU aur memory ki tarah khatam hota hai: <b>IP address</b>. Aur iska koi metric default dashboard par nahi hota.</p>`,
+      `<h3>🧮 Ek node par kitne pods?</h3>
+       <p>Node ke network cards (<b>ENI</b>) ginti ke hain, aur har ENI par IP ginti ke:</p>
+       <pre>max pods = ENI × (har ENI ke IP − 1) + 2</pre>
+       <table>
+         <tr><th>Instance</th><th>ENI</th><th>IP / ENI</th><th>Max pods</th></tr>
+         <tr><td>t3.medium</td><td>3</td><td>6</td><td>3 × 5 + 2 = <b>17</b></td></tr>
+         <tr><td>m5.large</td><td>3</td><td>10</td><td>3 × 9 + 2 = <b>29</b></td></tr>
+         <tr><td>m5.xlarge</td><td>4</td><td>15</td><td>4 × 14 + 2 = <b>58</b></td></tr>
+       </table>
+       <p><b>"Garam" IP:</b> VPC CNI naye pod ko tez shuru karne ke liye kuch IP pehle se pakad kar rakhta hai — default mein ek poore khaali ENI jitne.
+       Yaani 10 pods wala m5.large node bhi 20–30 IP gher sakta hai.</p>`,
+      `<h3>🩹 IP khatam: lakshan aur ilaaj</h3>
+       <pre>NAME              READY   STATUS              AGE
+pay-api-…-x7      0/1     ContainerCreating   9m
+
+Warning  FailedCreatePodSandBox  ... failed to assign an IP address to container</pre>
+       <table>
+         <tr><th>Ilaaj</th><th>Kya karta hai</th><th>Kya nahi karta</th></tr>
+         <tr><td><b>Prefix delegation</b></td><td>Har ENI slot par 1 IP ki jagah 16 IP ka guchha (/28). Ek node par 110 pods tak.</td><td>Naye IP <b>nahi banata</b>. Subnet chhota hai toh ab bhi khatam hoga.</td></tr>
+         <tr><td><b>Bada / naya subnet</b></td><td>VPC mein doosra CIDR (jaise 100.64.0.0/16) jodkar pods ko wahan se IP dena</td><td>Thoda setup (custom networking)</td></tr>
+         <tr><td><b>"Garam" IP kam karna</b></td><td><code>WARM_IP_TARGET</code> se har node ki jamakhori ghatana</td><td>Naya pod thoda dheere IP paata hai</td></tr>
+       </table>
+       <p><b>Yaad rakho:</b> prefix delegation "ek node par kitne pods" ka ilaaj hai. "Subnet mein kitne IP" ka ilaaj bada subnet hai. Dono alag problem hain.</p>`,
+    ],
+    stages: [
+      {
+        type: 'slider',
+        title: '🎚️ Lab: 600 pods ke liye cluster ka naap',
+        instructions: 'Chaar knob ghumao. Har number turant badalta hai. Yeh ek saada model hai — asli ginti VPC CNI ki "garam IP" settings par bhi nirbhar karti hai.',
+        scenario: `ChaiPay ko Diwali ke liye <b>600 pods</b> chalane hain. Abhi cluster: 6 nodes, <code>t3.medium</code>, ek <code>/24</code> subnet.
+          <ul><li>Budget: zyada se zyada <b>12 nodes</b></li>
+          <li>Subnet mein kam se kam <b>15% IP khaali</b> rehne chahiye (naye nodes aur deploys ke liye)</li></ul>`,
+        goal: 'Aisa naap chuno ki: 600 pods ki jagah ho, subnet ke IP kaafi hon (15% khaali), aur nodes 12 se zyada na hon.',
+        knobs: [
+          { id: 'type', label: 'Instance type', min: 0, max: 2, step: 1, value: 0, fmt: v => ITYPES[v].n },
+          { id: 'nodes', label: 'Nodes', min: 2, max: 25, step: 1, value: 6, unit: ' nodes' },
+          { id: 'pd', label: 'Prefix delegation', min: 0, max: 1, step: 1, value: 0, fmt: v => (v ? 'ON' : 'OFF') },
+          { id: 'subnet', label: 'Subnet ka size', min: 0, max: 2, step: 1, value: 0, fmt: v => SUBNETS[v].n + ' (' + SUBNETS[v].ips + ' IP)' },
+        ],
+        readouts: k => {
+          const m = cniModel(k);
+          return [
+            { label: 'Ek node par max pods', value: String(m.maxPods), state: 'neutral', hint: k.pd ? 'prefix delegation: 110 tak' : `${m.t.eni} × (${m.t.ip} − 1) + 2` },
+            { label: 'Cluster mein pods ki jagah', value: m.capacity + ' / 600', state: m.capacity >= 600 ? 'good' : 'bad', hint: `${k.nodes} nodes × ${m.maxPods}` },
+            { label: 'IP chahiye', value: m.ipNeed + ' / ' + m.sub.ips, state: m.fits ? (m.freePct >= 15 ? 'good' : 'warn') : 'bad', hint: m.fits ? `subnet mein ${m.freePct}% khaali` : 'subnet ke IP kam pad gaye — pods ContainerCreating mein atkenge' },
+            { label: 'Nodes', value: String(k.nodes), state: k.nodes <= 12 ? 'good' : 'bad', hint: k.nodes <= 12 ? 'budget ke andar' : 'budget 12 nodes ka hai' },
+          ];
+        },
+        bars: k => { const m = cniModel(k); return [{ label: 'Subnet ke IP', pct: Math.min(100, m.ipNeed / m.sub.ips * 100), state: m.fits && m.freePct >= 15 ? 'good' : 'bad', cap: `${m.ipNeed} / ${m.sub.ips}` }]; },
+        verdict: k => {
+          const m = cniModel(k);
+          if (m.capacity < 600) return { ok: false, text: `Sirf ${m.capacity} pods ki jagah hai. Har ${m.t.n} node par ${m.maxPods} se zyada pods nahi aa sakte — CPU khaali ho tab bhi.` };
+          if (!m.fits) return { ok: false, text: `Pods ki jagah toh hai, par ${m.ipNeed} IP chahiye aur subnet ${m.sub.n} mein sirf ${m.sub.ips} hain. Prefix delegation naye IP nahi banata — subnet bada karo.` };
+          if (m.freePct < 15) return { ok: false, text: `Subnet lagbhag bhar gaya (${m.freePct}% khaali). Agla node ya rolling deploy IP ke bina atkega.` };
+          if (k.nodes > 12) return { ok: false, text: `${k.nodes} nodes budget se bahar hain. Kam nodes par zyada pods chahiye: bada instance ya prefix delegation.` };
+          return { ok: true, text: '600 pods ki jagah, IP kaafi, aur nodes budget ke andar.' };
+        },
+        check: k => { const m = cniModel(k); return m.capacity >= 600 && m.fits && m.freePct >= 15 && k.nodes <= 12; },
+        lesson: 'Do alag seema thi. <b>Ek node par pods ki seema</b> (ENI aur IP) — iska ilaaj bada instance ya prefix delegation. <b>Subnet ke kul IP</b> — iska ilaaj sirf bada subnet. Prefix delegation ON karke bhi /24 mein 600 pods nahi aa sakte: 600 pods ko kam se kam 600 IP chahiye.',
+        quiz: {
+          q: 'm5.large par 3 ENI hain, har ENI par 10 IP. Bina prefix delegation ke ek m5.large node par zyada se zyada kitne pods?',
+          choices: ['30 — 3 × 10', '29 — 3 × (10 − 1) + 2', '110 — Kubernetes ki default seema', '27 — 3 × (10 − 1)'],
+          answer: 1,
+          explain: 'Har ENI ka pehla IP node ka apna hota hai, isliye (10 − 1). Aur 2 pods (jo host network use karte hain) ko alag IP nahi chahiye, isliye + 2. 3 × 9 + 2 = 29.',
+        },
+      },
+      {
+        type: 'triage',
+        title: '🩺 Case: node khaali hai, pod phir bhi atka',
+        instructions: 'Commands chuno. Saare clue milne par sawal khulega.',
+        symptom: `Deploy ke dauraan <code>pay-api</code> ke 8 naye pods 9 minute se <b>ContainerCreating</b> mein hain.<br>
+          Team ka kehna hai: "Nodes par 60% CPU khaali hai. Zaroor image pull dheema hai."`,
+        commands: [
+          { cmd: 'kubectl describe pod pay-api-7c9e8d-x7', clue: true,
+            out: 'Status:  Pending\nNode:    node-4\nEvents:\n  Normal   Scheduled               9m   default-scheduler  Successfully assigned payments/pay-api-7c9e8d-x7 to node-4\n  Warning  FailedCreatePodSandBox  8m (x34 over 9m)  kubelet  Failed to create pod sandbox: rpc error: plugin type="aws-cni" name="aws-cni" failed (add): add cmd: failed to assign an IP address to container',
+            note: 'Pod <b>schedule ho chuka hai</b> (node-4 mil gaya) — matlab CPU/memory ki problem nahi. Pod <b>IP</b> par atka hai: <code>failed to assign an IP address</code>. Image pull tak baat pahunchi hi nahi.' },
+          { cmd: 'aws ec2 describe-subnets --query "Subnets[].{Subnet:SubnetId,Free:AvailableIpAddressCount}"', clue: true,
+            out: '[\n  { "Subnet": "subnet-0a1b (10.0.1.0/24)", "Free": 0 },\n  { "Subnet": "subnet-0c2d (10.0.2.0/24)", "Free": 3 }\n]',
+            note: 'Dono subnets lagbhag khaali ho chuke hain: <b>0</b> aur <b>3</b> IP. Yahi asli wajah hai.' },
+          { cmd: 'kubectl -n kube-system get ds aws-node -o yaml | grep -A1 WARM', clue: true,
+            out: '        - name: WARM_ENI_TARGET\n          value: "1"\n        - name: WARM_PREFIX_TARGET\n          value: "1"',
+            note: '<code>WARM_ENI_TARGET=1</code>: har node ek poora khaali ENI (10 IP) "garam" rakhta hai. 18 nodes × 10 = 180 IP sirf intezaar mein gheri hui hain.' },
+          { cmd: 'kubectl top nodes', clue: false,
+            out: 'NAME     CPU(cores)   CPU(%)   MEMORY(bytes)   MEMORY(%)\nnode-1   780m         39%      4100Mi          52%\nnode-4   810m         40%      3900Mi          49%',
+            note: 'CPU aur memory khaali hain — team sahi thi. Par IP ek alag resource hai, aur woh is output mein dikhta hi nahi.' },
+          { cmd: 'kubectl get events --field-selector reason=Failed | grep -i pull', clue: false,
+            out: 'No resources found in payments namespace.',
+            note: 'Image pull ka koi error nahi. Pull shuru hi nahi hua — sandbox (aur uska IP) pull se pehle banta hai.' },
+        ],
+        questions: [
+          {
+            q: 'Pods kyun atke hain?',
+            choices: [
+              'Image registry dheemi hai; pull poora hone ka intezaar hai',
+              'Subnets ke IP khatam; VPC CNI naye pods ko IP nahi de paa raha',
+              'Nodes par CPU kam hai; Scheduler ko jagah nahi mil rahi',
+              'pay-api ka readiness probe fail ho raha hai',
+            ],
+            answer: 1,
+            explain: 'Teen saboot: event "failed to assign an IP address", subnets mein 0 aur 3 IP, aur har node ki "garam" IP ki jamakhori. Pod schedule ho chuka tha, isliye CPU wajah nahi ho sakta.',
+          },
+          {
+            q: 'Sabse sahi, tikau ilaaj?',
+            choices: [
+              'Nodes ko bade instance type par le jao taaki har node par zyada CPU ho',
+              'Prefix delegation ON kar do — isse subnet mein naye IP ban jaate hain',
+              'VPC mein naya CIDR jodkar pods ke liye bade subnets banao',
+              'pay-api ke replicas kam kar do taaki IP ki zaroorat hi na pade',
+            ],
+            answer: 2,
+            explain: 'Problem subnet ke kul IP ki hai, toh ilaaj bhi IP badhana hai: naya CIDR + bade subnets (pods ke liye alag subnets). WARM settings kam karne se turant kuch IP wapas milte hain. Prefix delegation naye IP nahi banata.',
+          },
+        ],
+      },
+      {
+        type: 'quiz',
+        title: 'Pakka karo — IP ka hisaab',
+        questions: [
+          {
+            q: 'Ek /24 subnet mein AWS ke hisaab se kitne IP kaam ke hote hain, aur kyun?',
+            choices: ['256 — /24 mein 256 pate hote hain', '254 — pehla aur aakhri pata network ke liye', '251 — AWS har subnet ke 5 pate rakhta hai', '250 — har ENI ek pata aur le leta hai'],
+            answer: 2,
+            explain: '/24 = 256 pate. AWS har subnet ke pehle 4 aur aakhri 1 pata apne paas rakhta hai → 251. Chhote subnets (/27, /28) mein yeh 5 ka nuksaan bahut bada ho jaata hai.',
+          },
+          {
+            q: 'Team ne prefix delegation ON kiya, par nayi nodes par bhi pods ko IP nahi mil raha. Subnet mein 40 IP khaali dikhte hain. Sabse sambhav wajah?',
+            choices: [
+              'Prefix delegation sirf t3 instances par chalta hai',
+              'Khaali IP bikhre hue hain; 16 lagataar IP ka koi guchha nahi bacha',
+              'Prefix delegation ke liye cluster ko dobara banana padta hai',
+              '40 IP kaafi hain; problem kahin aur hogi',
+            ],
+            answer: 1,
+            explain: 'Prefix delegation /28 ke guchhe (16 lagataar IP) maangta hai. Purane, bikhre hue subnet mein 40 IP khaali ho sakte hain par ek bhi poora /28 nahi. Isi liye prefix delegation ke liye naye, khaali subnets sabse achhe hain.',
+          },
+        ],
+      },
+    ],
+    interview: {
+      title: 'Interview Round — EKS networking',
+      instructions: 'Yeh sawal EKS chalane wale aur EKS sirf padhne wale mein fark karta hai. 🎤',
+      questions: [
+        {
+          q: '"EKS ka default networking (VPC CNI) doosre CNIs se kaise alag hai, aur iski keemat kya hai?"',
+          choices: [
+            'VPC CNI overlay network banata hai; keemat yeh ki har packet par encapsulation ka bojh padta hai',
+            'Har pod ko VPC ka asli IP milta hai; keemat yeh ki subnet ke IP khatam ho sakte hain',
+            'VPC CNI pods ko public IP deta hai; keemat yeh ki har pod internet se dikhta hai',
+            'VPC CNI sirf NetworkPolicy lagu karta hai; pods ko IP kubelet deta hai',
+          ],
+          answer: 1,
+          explain: 'Faayda: pod VPC ka pehle darje ka nagrik hai (RDS, security groups, VPC peering sab seedhe). Keemat: IP address ek ginti ka resource ban jaata hai — subnet ka size cluster ki seema tay karta hai.',
+        },
+        {
+          q: '"Pods ContainerCreating mein atke hain aur event mein \'failed to assign an IP address\' hai. Kya jaanchoge?"',
+          choices: [
+            'Image ka size aur registry ki speed',
+            'Subnets ke khaali IP aur aws-node ke logs',
+            'Pod ki memory limit aur OOMKilled events',
+            'CoreDNS ke replicas aur DNS ke logs',
+          ],
+          answer: 1,
+          explain: 'Yeh error seedha VPC CNI ka hai. Do jagah: (1) subnet mein IP bache hain? (2) node apni ENI/IP ki seema par hai? aws-node ke logs aur WARM_* settings batate hain ki IP kahan gheri hui hain.',
+        },
+        {
+          q: '"Prefix delegation kya hal karta hai aur kya nahi?"',
+          choices: [
+            'Hal karta hai: subnet ke kul IP badhata hai. Nahi karta: ek node par pods ki ginti',
+            'Hal karta hai: pods ko IPv6 deta hai. Nahi karta: IPv4 ka koi kaam',
+            'Hal karta hai: ek node par pods ki ginti (110 tak). Nahi karta: subnet ke kul IP nahi badhata',
+            'Hal karta hai: NetworkPolicy ki speed. Nahi karta: IP ka koi kaam',
+          ],
+          answer: 2,
+          explain: 'Prefix delegation har ENI slot par /28 (16 IP) deta hai, isliye chhote node par bhi bahut pods aa jaate hain. Par 600 pods ko ab bhi 600+ IP chahiye. Subnet chhota ho toh naya CIDR / bade subnets hi ilaaj hain.',
+        },
+      ],
+    },
+    success: [
+      'Main ek instance type ke liye max pods ka hisaab laga sakta hoon',
+      'Main "failed to assign an IP address" ko subnet ke IP se jod sakta hoon',
+      'Main bata sakta hoon ki prefix delegation kya hal karta hai aur kya nahi',
+    ],
+    homework: `<p>EKS cluster par IP ki haalat dekho:</p>
+      <pre>aws ec2 describe-subnets --query "Subnets[].{Id:SubnetId,Cidr:CidrBlock,Free:AvailableIpAddressCount}"
+kubectl get nodes -o custom-columns=NAME:.metadata.name,MAXPODS:.status.allocatable.pods
+kubectl -n kube-system get ds aws-node -o yaml | grep -A1 -E "WARM|PREFIX"</pre>`,
+    cards: [
+      { front: 'EKS mein pod ka IP kahan se aata hai?', back: 'VPC CNI node ke subnet se <b>asli VPC IP</b> deta hai (ENI ke secondary IP).' },
+      { front: 'Ek node par max pods ka formula (bina prefix delegation)?', back: '<code>ENI × (har ENI ke IP − 1) + 2</code>. m5.large: 3 × 9 + 2 = 29.' },
+      { front: 'IP khatam hone ka lakshan?', back: 'Pod <code>ContainerCreating</code> mein atka; event <code>failed to assign an IP address to container</code>. CPU/memory khaali hote hain.' },
+      { front: 'Prefix delegation kya hal karta hai, kya nahi?', back: 'Hal: ek node par pods (110 tak). Nahi: subnet ke kul IP nahi badhata.' },
+      { front: '/24 subnet mein kaam ke IP?', back: '251 — AWS har subnet ke 5 pate rakhta hai.' },
+    ],
+  },
+]);
+
 })();

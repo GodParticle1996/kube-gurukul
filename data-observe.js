@@ -1143,7 +1143,8 @@ spec:
          <tr><td><b>Karpenter</b> / Cluster Autoscaler</td><td><b>Nodes</b> ki ginti</td><td>Pods Pending hain kyunki nodes par jagah nahi</td></tr>
        </table>
        <p><b>VPA</b> pichhle usage ko dekh kar batata hai ki requests kitni honi chahiye. <code>updateMode: "Off"</code> mein VPA sirf <b>salaah</b> deta hai
-       (<code>kubectl describe vpa</code>) — yahi sabse surakshit shuruaat hai. Doosre modes mein VPA pod ko naye size ke saath dobara banata hai.</p>
+       (<code>kubectl describe vpa</code>) — yahi sabse surakshit shuruaat hai. Purane modes (<code>Recreate</code>, <code>Auto</code>) mein VPA pod ko naye size ke saath <b>dobara banata</b> hai.
+       Kubernetes v1.33+ par naya mode <code>InPlaceOrRecreate</code> pehle bina restart ke size badalne ki koshish karta hai.</p>
        <p><b>Jaal:</b> ek hi Deployment par HPA (CPU) aur VPA (CPU) dono mat lagao. HPA "CPU zyada hai, pods badhao" kehta hai;
        VPA "CPU zyada hai, request badhao" kehta hai — aur request badhte hi HPA ka % gir jaata hai. Dono ek doosre ko kaat-te hain.</p>`,
     ],

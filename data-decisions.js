@@ -853,7 +853,7 @@ spec:
         why: 'Problem size ki hai, ginti ki nahi.',
         when: ['Requests guesswork par hain — data-based right-sizing', 'Stateful/singleton apps jo horizontally scale nahi hote'],
         avoid: ['Usi metric par HPA bhi chal raha ho'],
-        gotchas: ['Pehle <code>updateMode: "Off"</code> — sirf recommendation padho, phir decide', 'Auto mode pods ko recreate karke resize karta hai (disruption) — PDB lagao'],
+        gotchas: ['Pehle <code>updateMode: "Off"</code> — sirf recommendation padho, phir decide', 'Auto mode pods ko recreate karke resize karta hai (disruption) — PDB lagao', 'Kubernetes v1.33+ par naya mode <code>InPlaceOrRecreate</code> pehle bina restart ke size badalne ki koshish karta hai'],
         yaml: `apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata: { name: api }

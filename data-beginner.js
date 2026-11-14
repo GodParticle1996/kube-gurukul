@@ -305,7 +305,7 @@ kubelet ────┘</pre>
               'Jitne worker nodes utne control planes — har worker ko apna local API Server chahiye',
             ],
             answer: 0,
-            explain: 'etcd Raft consensus use karta hai — decisions ke liye majority chahiye. 3 mein se 1 mar jaaye toh 2 ki majority hai; 2 mein se 1 mare toh 1 akela majority nahi bana sakta (split-brain). Isliye HA = 3 ya 5.',
+            explain: 'etcd Raft consensus use karta hai — decisions ke liye majority chahiye. 3 mein se 1 mar jaaye toh 2 ki majority hai; 2 mein se 1 mare toh bacha hua 1 akela majority nahi bana sakta — etcd likhna band kar deta hai. Yaani 2 instances, 1 instance se zyada surakshit nahi. Isliye HA = 3 ya 5.',
           },
         ],
       },
@@ -1144,6 +1144,8 @@ kubectl expose deployment web --name=web-svc --port=80    # sahi (selector auto)
 kubectl get endpoints web-svc      # ab IPs dikhengi ✓
 kubectl run test --rm -it --image=busybox -- wget -qO- web-svc   # andar se test!
 kubectl delete deployment web; kubectl delete svc web-svc</pre>
+      <p>ℹ️ <b>Naye cluster (v1.33+) par:</b> <code>kubectl get endpoints</code> chalta hai, par ek <code>Warning</code> dikhata hai — Endpoints API ab purani ho chuki hai.
+      Naya command: <code>kubectl get endpointslices -l kubernetes.io/service-name=web-svc</code>. Dono command ek hi baat batate hain: Service ke peeche kaun se pod IP hain.</p>
       <p>✅ Self-check: wget se nginx ka HTML aaya? Congrats — tumne Service DNS + endpoints dono verify kiye.</p>`,
     cards: [
       { front: 'Service pods ko kaise dhundta hai?', back: '<b>Label selector</b> se — selector <code>app=web</code> matlab "app=web label wale saare READY pods mere endpoints hain". Endpoints list live update hoti hai.' },

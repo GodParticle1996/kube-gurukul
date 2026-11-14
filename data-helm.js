@@ -81,6 +81,8 @@ helm install web bitnami/nginx      # release "web" bana
 helm list                           # kya-kya chal raha hai
 helm status web                     # ek release ki halat + NOTES
 helm uninstall web                  # bye</pre>
+       <p>ℹ️ <b>2025 ka badlaav:</b> Bitnami ki free catalog 28 August 2025 se jami hui (frozen) hai. Yahan <code>bitnami/nginx</code> sirf commands ka flow sikhane ke liye hai.
+       Production mein chart us project ki apni repo se lo (jaise <code>cert-manager</code>, <code>prometheus-community</code>, <code>argo</code> ki apni repos), aur dekho ki chart ki images kahan se aati hain.</p>
        <p>⚠️ <b>Sabse pehla habit:</b> koi bhi naya chart install karne se pehle
        <code>helm show values &lt;chart&gt;</code> chalao — woh chart ka "menu card" hai.
        Bina menu dekhe order mat karo!</p>`,
@@ -252,18 +254,21 @@ helm install shop ./shop -f values-prod.yaml --set image.tag=2.5
       'Main repo add → search → show values → install → verify ka flow chala sakta hoon',
       'Main -f aur --set se values override kar sakta hoon',
     ],
-    homework: `<p>Asli Helm, apne minikube par:</p>
-      <pre>helm repo add bitnami https://charts.bitnami.com/bitnami
+    homework: `<p>Asli Helm, apne minikube par. (Yahan chart <b>podinfo</b> hai, <code>bitnami/nginx</code> nahi — wajah neeche likhi hai.)</p>
+      <pre>helm repo add podinfo https://stefanprodan.github.io/podinfo
 helm repo update
-helm search repo nginx
-helm show values bitnami/nginx | head -40      # menu card padho!
-helm install web bitnami/nginx --set replicaCount=2 --set service.type=ClusterIP
+helm search repo podinfo
+helm show values podinfo/podinfo | head -40    # menu card padho!
+helm install web podinfo/podinfo --set replicaCount=2 --set service.type=ClusterIP
 helm list
 helm status web
 kubectl get pods                                # Helm ne banaye!
 helm get values web                             # sirf tumhari values
 helm uninstall web</pre>
-      <p>✅ Self-check: <code>helm get values web</code> mein sirf woh 2 values dikhi jo tumne di? (Chart ke defaults nahi — woh <code>--all</code> se dikhte hain.)</p>`,
+      <p>✅ Self-check: <code>helm get values web</code> mein sirf woh 2 values dikhi jo tumne di? (Chart ke defaults nahi — woh <code>--all</code> se dikhte hain.)</p>
+      <p>ℹ️ <b>bitnami/nginx kyun nahi?</b> 28 August 2025 se Bitnami apni free catalog mein naye images aur charts nahi daalta. Purane version wale images
+      <code>docker.io/bitnamilegacy</code> mein chale gaye aur unhe ab koi security update nahi milta. Isliye asli cluster par <code>bitnami/nginx</code> ka pod
+      <code>ImagePullBackOff</code> mein atak sakta hai. Is level ke simulator mein <code>bitnami/nginx</code> sirf Helm ka flow sikhane ke liye hai.</p>`,
     cards: [
       { front: 'Chart vs Release vs Revision?', back: '📦 <b>Chart</b> = blueprint (templates+defaults). 🚢 <b>Release</b> = cluster mein us chart ka named instance (ek chart → kai releases). 🔢 <b>Revision</b> = release ka version, har install/upgrade/rollback par +1 (isliye rollback possible).' },
       { front: 'Naya chart install karne se PEHLE kaunsa command?', back: '<code>helm show values &lt;chart&gt;</code> — chart ka "menu card". Har chart ke apne key naam hote hain (<code>replicaCount</code> vs <code>replicas</code>!). Bina menu dekhe install = andha install.' },

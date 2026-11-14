@@ -68,7 +68,9 @@ function diagramFor(id, hero) {
   const v = (typeof VISUALS !== 'undefined') && VISUALS[id];
   if (!v) return null;
   const d = el('div', 'diagram' + (hero ? ' hero' : ''));
-  d.innerHTML = `<div class="dg-title">📊 ${v.t}</div>${v.html}`;
+  // scene = kadam-dar-kadam SVG diagram (scene.js). Purane diagrams ka static `html` waise hi chalta hai.
+  d.innerHTML = `<div class="dg-title">📊 ${v.t}</div>${v.scene ? '' : v.html}`;
+  if (v.scene) d.appendChild(KG.renderScene(v.scene));
   return d;
 }
 

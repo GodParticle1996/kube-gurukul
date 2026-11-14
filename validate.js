@@ -62,7 +62,7 @@ global.localStorage = { getItem: k => store[k] || null, setItem: (k, v) => { sto
 global.confirm = () => false;
 global.Element = function () {}; Element.prototype = {};
 
-const FILES = ['core.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'terminal.js',
+const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'terminal.js',
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
   'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-gaps.js', 'data-ext-sdd.js',
@@ -448,6 +448,26 @@ labStages.forEach(l => renderLab(l.at, l.stage));
 
 // orphan visuals
 Object.keys(VISUALS).forEach(k => { if (!seenIds.has(k)) problems.push('VISUALS["' + k + '"]: koi level use nahi karta'); });
+/* scenes (scene.js): data sahi hai, aur har kadam sach mein render hota hai (teer NaN na ho, dabbe ek doosre par na hon) */
+let sceneCount = 0;
+Object.keys(VISUALS).forEach(k => {
+  const v = VISUALS[k];
+  if (!v.scene) { if (!v.html) problems.push('VISUALS["' + k + '"]: na html hai na scene'); return; }
+  sceneCount++;
+  KG.sceneProblems(v.scene).forEach(m => problems.push('VISUALS["' + k + '"].scene: ' + m));
+  if (KG.sceneProblems(v.scene).length) return;
+  try {
+    for (let i = -1; i < v.scene.steps.length; i++) {
+      const svg = KG.sceneSvg(v.scene, i, 'v');
+      if (/NaN|undefined|Infinity/.test(svg)) problems.push('VISUALS["' + k + '"].scene: step ' + (i + 1) + ' ke SVG mein NaN/undefined hai');
+    }
+    const box = KG.renderScene(v.scene);
+    const next = walk(box).find(x => x.classList && x.classList.contains('btn') && /kadam/.test(x.textContent || x.innerHTML));
+    for (let i = 0; i < v.scene.steps.length + 2; i++) next.click();
+    if (!/Aakhri/.test(next.textContent)) problems.push('VISUALS["' + k + '"].scene: "Agla kadam" se aakhri kadam tak nahi pahunche');
+  } catch (e) { problems.push('VISUALS["' + k + '"].scene: render throw — ' + e.message); }
+  v.scene.steps.forEach((st, i) => { if (/\b(yeh|woh|isse|usse|isko|usko)\b/i.test(String(st.say).replace(/<[^>]+>/g, ''))) problems.push('VISUALS["' + k + '"].scene step ' + (i + 1) + ': "say" mein yeh/woh/isse hai — dabbe ka naam likho'); });
+});
 
 
 /* ============ 1c. DECISION DOJO — trees sahi bane hain? ============

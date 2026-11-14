@@ -34,6 +34,34 @@ const VISUALS = {
 
   controlplane: {
     t: 'Control Plane — cluster ka dimaag',
+    scene: {
+      intro: '<b>Sawal:</b> <code>kubectl apply</code> ke baad pod chalne tak kaun-kaun kya karta hai?',
+      aria: 'kubectl apply se pod Running tak ke 9 kadam',
+      groups: [
+        { label: '🧠 Control Plane', cols: [1, 2], rows: [0, 1], tone: 'accent' },
+        { label: '💪 Worker Node', cols: [1, 2], rows: [2, 2], tone: 'good' },
+      ],
+      nodes: [
+        { id: 'kubectl', col: 0, row: 1, icon: '💻', label: 'kubectl', sub: 'tumhara laptop', about: 'Command-line tool. kubectl sirf API Server se baat karta hai — kisi node ya etcd se seedha nahi.' },
+        { id: 'sched', col: 1, row: 0, icon: '⚖️', label: 'Scheduler', sub: 'pod → kaunsa node?', about: 'Scheduler sirf <b>faisla</b> karta hai ki pod kis node par jayega. Scheduler pod ko chalata nahi.' },
+        { id: 'api', col: 1, row: 1, icon: '🚪', label: 'API Server', sub: 'ek hi darwaza', tone: 'accent', about: 'Cluster ka ek hi darwaza. Har component (kubectl, Scheduler, Controller Manager, kubelet) sirf API Server se baat karta hai.' },
+        { id: 'etcd', col: 2, row: 0, icon: '📔', label: 'etcd', sub: 'cluster ki diary', tone: 'gold', about: 'Key-value database. Cluster ka saara state yahin likha hai. etcd se sirf API Server baat karta hai.' },
+        { id: 'cm', col: 2, row: 1, icon: '👮', label: 'Controller Manager', sub: 'chahiye vs hai', about: 'Kai controllers ka group. Har controller ek hi kaam karta hai: "kitne chahiye" aur "kitne hain" ka farak mitana.' },
+        { id: 'kubelet', col: 1, row: 2, icon: '🧑‍🔧', label: 'kubelet', sub: 'node ka manager', tone: 'good', about: 'Har worker node par ek kubelet chalta hai. kubelet us node ke pods ke containers chalwata hai.' },
+        { id: 'pod', col: 2, row: 2, icon: '📦', label: 'Pod: web', sub: 'abhi nahi bana', tone: 'muted', about: 'Tumhari app ka container isi ke andar chalta hai.' },
+      ],
+      steps: [
+        { from: 'kubectl', to: 'api', label: 'apply -f', say: '<b>kubectl</b> Deployment ka YAML <b>API Server</b> ko bhejta hai. API Server pehle jaanchta hai: tum kaun ho, aur tumhe Deployment banane ki ijaazat hai ya nahi.' },
+        { from: 'api', to: 'etcd', label: 'likho', tone: 'gold', say: '<b>API Server</b> Deployment ko <b>etcd</b> mein likhta hai. Ab "web ke 3 pods chahiye" cluster ka <b>desired state</b> hai. Abhi tak koi pod nahi bana.' },
+        { from: 'api', to: 'cm', label: 'naya Deployment', say: '<b>Controller Manager</b> API Server ko lagataar dekhta rehta hai (watch). Controller Manager ko naya Deployment dikhta hai: chahiye 3 pods, hain 0.' },
+        { from: 'cm', to: 'api', label: '3 Pod objects', bend: 26, set: { pod: { sub: 'Pending (node nahi)', tone: '' } }, say: '<b>Controller Manager</b> API Server se 3 Pod objects banwata hai (Deployment controller → ReplicaSet → Pods). Pods abhi sirf likhe gaye hain — kisi node par nahi chal rahe. Status: <code>Pending</code>.' },
+        { from: 'api', to: 'sched', label: 'Pending pod', say: '<b>Scheduler</b> bhi API Server ko dekh raha tha. Scheduler ko dikhta hai ki 3 pods ke paas koi node nahi hai.' },
+        { from: 'sched', to: 'api', label: 'node-1 chuna', bend: 26, set: { pod: { sub: 'node-1 mila' } }, say: '<b>Scheduler</b> har pod ke liye ek node chunta hai (CPU/memory aur rules dekh kar) aur node ka naam <b>API Server</b> ko likhwa deta hai. Scheduler ka kaam yahin khatam.' },
+        { from: 'api', to: 'kubelet', label: 'tumhara pod', say: 'node-1 ka <b>kubelet</b> API Server ko dekh raha tha. kubelet ko dikhta hai ki ek pod node-1 ko diya gaya hai.' },
+        { from: 'kubelet', to: 'pod', label: 'container start', tone: 'good', set: { pod: { sub: 'Running ✓', tone: 'good' } }, say: '<b>kubelet</b> container runtime (containerd) se image pull karwata hai aur container chalwata hai. Ab <b>Pod: web</b> sach mein chal raha hai.' },
+        { from: 'kubelet', to: 'api', label: 'status: Running', tone: 'good', bend: -26, say: '<b>kubelet</b> pod ka status <b>API Server</b> ko wapas bhejta hai. Isi liye <code>kubectl get pods</code> mein <code>Running</code> dikhta hai. Dhyaan do: har teer API Server se hokar gaya — components aapas mein seedhi baat nahi karte.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node is-accent"><span class="ni">💻</span><span class="nl">kubectl</span><span class="ns">apply -f app.yaml</span></div>
@@ -111,6 +139,26 @@ const VISUALS = {
 
   deploy: {
     t: 'Deployment → ReplicaSet → Pods',
+    scene: {
+      intro: '<b>Sawal:</b> raat ko ek pod mar jaye toh naya pod kaun banata hai?',
+      aria: 'Deployment, ReplicaSet aur self-healing ke 6 kadam',
+      nodes: [
+        { id: 'dep', col: 1, row: 0, icon: '🚀', label: 'Deployment: web', sub: 'replicas: 3', tone: 'accent', about: 'Tum Deployment likhte ho. Deployment ek ReplicaSet banata hai, aur naye version par rolling update + rollback sambhalta hai.' },
+        { id: 'rs', col: 1, row: 1, icon: '👯', label: 'ReplicaSet', sub: 'ginti: hamesha 3', tone: 'gold', about: 'ReplicaSet ka ek hi kaam hai: pods ki ginti utni rakhna jitni likhi hai. Pod kam hua → naya banao. Zyada hua → ek hatao.' },
+        { id: 'p1', col: 0, row: 2, icon: '📦', label: 'web-pod-1', sub: 'Running', tone: 'good' },
+        { id: 'p2', col: 1, row: 2, icon: '📦', label: 'web-pod-2', sub: 'Running', tone: 'good' },
+        { id: 'p3', col: 2, row: 2, icon: '📦', label: 'web-pod-3', sub: 'Running', tone: 'good' },
+        { id: 'p4', col: 3, row: 2, icon: '✨', label: 'web-pod-4', sub: 'abhi nahi bana', tone: 'muted' },
+      ],
+      steps: [
+        { from: 'dep', to: 'rs', label: 'replicas: 3', say: '<b>Deployment: web</b> ek <b>ReplicaSet</b> banata hai aur use ginti deta hai: 3 pods.' },
+        { at: ['rs', 'p1', 'p2', 'p3'], say: '<b>ReplicaSet</b> 3 pods banata hai: web-pod-1, web-pod-2, web-pod-3. Teeno <code>Running</code> hain. Chahiye 3, hain 3 — ReplicaSet shaant hai.' },
+        { at: ['p2'], set: { p2: { tone: 'bad', sub: 'mar gaya 💀' } }, say: 'Raat 3 baje <b>web-pod-2</b> ka node crash ho jaata hai. web-pod-2 mar gaya. Tum so rahe ho.' },
+        { from: 'p2', to: 'rs', label: 'ab sirf 2 hain', tone: 'bad', say: '<b>ReplicaSet</b> ginta hai: chahiye 3, hain 2. Ek pod kam hai.' },
+        { from: 'rs', to: 'p4', label: 'naya pod banao', tone: 'good', set: { p4: { tone: 'good', sub: 'Running ✓' } }, say: '<b>ReplicaSet</b> turant ek naya pod banata hai: <b>web-pod-4</b>. Dhyaan do: purana web-pod-2 zinda nahi hota — ek <b>naya</b> pod banta hai, naye naam aur naye IP ke saath.' },
+        { at: ['dep', 'rs'], say: 'Ginti phir 3 ho gayi, bina tumhare uthe. Yahi <b>self-healing</b> hai. <b>Deployment</b> ka apna kaam alag hai: image badalne par naya ReplicaSet banana (rolling update) aur zaroorat par purane par lautna (rollback).' },
+      ],
+    },
     html: `
       <div class="dg-col">
         <div class="dg-node is-accent pulse"><span class="ni">🚀</span><span class="nl">Deployment: web</span><span class="ns">replicas: 3, image: v2</span></div>
@@ -128,6 +176,26 @@ const VISUALS = {
 
   service: {
     t: 'Service — pods ka ek stable phone number',
+    scene: {
+      intro: '<b>Sawal:</b> pods ka IP badalta rehta hai — toh frontend hamesha sahi pod tak kaise pahunchta hai?',
+      aria: 'Service label selector se pods tak traffic kaise pahunchata hai, 6 kadam',
+      nodes: [
+        { id: 'client', col: 0, row: 1, icon: '🧑‍💻', label: 'frontend pod', sub: 'client', about: 'Cluster ke andar ka koi bhi pod jo web app ko call karna chahta hai.' },
+        { id: 'dns', col: 1, row: 0, icon: '📖', label: 'CoreDNS', sub: 'naam → IP', about: 'Cluster ka DNS server. Service ka naam (web-svc) dekar Service ka ClusterIP milta hai.' },
+        { id: 'svc', col: 1, row: 1, icon: '📞', label: 'Service: web-svc', sub: 'selector: app=web', tone: 'accent', about: 'Ek stable naam + ek stable IP (ClusterIP). Service khud koi process nahi hai — Service ek niyam hai: "app=web label wale pods ko traffic do".' },
+        { id: 'w1', col: 2, row: 0, icon: '📦', label: 'pod 10.244.1.7', sub: 'label: app=web', tone: 'good' },
+        { id: 'w2', col: 2, row: 1, icon: '📦', label: 'pod 10.244.2.9', sub: 'label: app=web', tone: 'good' },
+        { id: 'db', col: 2, row: 2, icon: '📦', label: 'pod 10.244.3.4', sub: 'label: app=db', tone: 'muted' },
+      ],
+      steps: [
+        { from: 'client', to: 'dns', label: 'web-svc kahan hai?', say: '<b>frontend pod</b> ko sirf naam pata hai: <code>http://web-svc</code>. frontend pod <b>CoreDNS</b> se poochhta hai ki web-svc ka IP kya hai.' },
+        { from: 'dns', to: 'client', label: '10.96.0.20', bend: 24, say: '<b>CoreDNS</b> Service ka <b>ClusterIP</b> lautata hai: <code>10.96.0.20</code>. ClusterIP kabhi nahi badalta, chahe pods kitni baar marein aur banein.' },
+        { from: 'client', to: 'svc', label: 'request', say: '<b>frontend pod</b> request ko ClusterIP <code>10.96.0.20</code> par bhejta hai — yaani <b>Service: web-svc</b> par.' },
+        { at: ['svc', 'w1', 'w2', 'db'], say: '<b>Service: web-svc</b> ka selector hai <code>app=web</code>. Do pods par label <code>app=web</code> hai — dono Service ke peeche jud jaate hain (Endpoints). Teesre pod par label <code>app=db</code> hai — teesra pod nahi judta.' },
+        { from: 'svc', to: 'w1', label: 'is baar pod 1', tone: 'good', say: 'node par <b>kube-proxy</b> ke niyam request ko judey hue pods mein se ek par bhej dete hain. Is baar request <code>10.244.1.7</code> par gayi.' },
+        { from: 'svc', to: 'w2', label: 'agli baar pod 2', tone: 'good', say: 'Agli request doosre pod <code>10.244.2.9</code> par ja sakti hai — load bant jaata hai. Koi pod mar kar naye IP ke saath bane, toh Service ki list apne aap badal jaati hai. frontend pod ko kuch badalna nahi padta.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node"><span class="ni">🧑‍💻</span><span class="nl">Client</span><span class="ns">frontend pod</span></div>

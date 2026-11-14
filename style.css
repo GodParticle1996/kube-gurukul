@@ -1358,3 +1358,7 @@ button:focus:not(:focus-visible) { outline: none; }
 /* triage: lambi command (PromQL) phone par button ko screen se bahar dhakel deti thi */
 .tg-cmd { max-width: 100%; }
 .tg-cmd code, .tg-cmdline { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+/* terminal mission: lambe naam (system:serviceaccount:…, pod ke naam) phone par screen se bahar nikalte the */
+.term-goal, .term-tasks li { overflow-wrap: anywhere; }
+.term-goal code, .term-tasks code { overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+.tp-chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }

@@ -130,6 +130,18 @@ KG.tracks = [
     alwaysUnlocked: true,
   },
   {
+    id: 'secure',
+    group: 'prod',
+    icon: '🛡️',
+    name: 'Security Gurukul',
+    blurb: 'Attacker ek pod mein ghus gaya — ab kahan tak ja sakta hai? Chaar deewarein: ServiceAccount token aur least privilege, darwaze par admission policy, image ki jaanch aur signature, aur andar ka CCTV (runtime detection) + ghatna ka jawab.',
+    certTitle: 'KAVACH KARTA',
+    certSub: 'Certificate of Cluster Security',
+    motto: 'Maan kar chalo ki koi ghusega. Sawal yeh hai ki ghusne ke baad use kya milega.',
+    formula: 'Suraksha = least privilege + policy + jaanchi hui image + runtime nazar',
+    alwaysUnlocked: true,
+  },
+  {
     id: 'kodekloud',
     group: 'scenario',
     icon: '🩺',

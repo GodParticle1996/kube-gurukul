@@ -738,6 +738,9 @@ ServiceMonitor, HTTPRoute, Certificate, ClusterPolicy, PodIdentityAssociation �
 5. **Fill template**: `{0}..{n}` har placeholder theek ek baar. Template ko string functions se jodkar mat banao — seedha likho.
 6. **Phone width.** Lambi cheezein (PromQL, `system:serviceaccount:…`, ARN) 390px par page ko chauda kar deti thi. CSS mein
    `overflow-wrap: anywhere` laga hai; naya chauda element banao toh 390px par dekho.
+7. **Validator mein naya niyam jodo toh use ek baar FAIL karke dekho.** `validate.js` ka content wala block ek aam template string hai:
+   uske andar regex ka backslash **double** likhna padta hai (`\\b`, `\\s`). Single `\b` chupchaap backspace ban jaata hai aur niyam
+   kabhi nahi chalta — "caption mein yeh/woh mana" wala niyam isi wajah se likhe jaane ke din se hi band tha, aur 13 galat captions nikal gaye the. (`TESTS` block `String.raw` hai; wahan single theek hai.)
 
 ### 17.6 Browser mein jaanchna (validator ke alawa)
 

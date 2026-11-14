@@ -1,0 +1,16 @@
+# Lab 19, Step 5 — quarantine wali NetworkPolicy. Do TODO bharo, phir:
+#   kubectl apply -f quarantine-starter.yaml
+#
+# Niyam yaad karo: jis pod ko policy CHUNTI hai, us pod ke liye sirf "allow" likha traffic chalta hai.
+# Is policy mein koi allow nahi likha → chune hue pod ka SAARA traffic band.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: quarantine
+  namespace: lab19
+spec:
+  podSelector:
+    matchLabels:
+      TODO-label-ka-naam: "TODO-label-ki-value"     # 👈 TODO 1: Step 4 mein pod par kaunsa label lagaya tha?
+  policyTypes:
+    - TODO                                          # 👈 TODO 2: aana (Ingress) aur jaana (Egress) — dono likho, do alag lines mein

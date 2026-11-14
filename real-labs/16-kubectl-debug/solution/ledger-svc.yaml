@@ -1,0 +1,12 @@
+# Lab 16 ka fix — sirf EK line badli: targetPort 8081 → 8080
+#   kubectl apply -f solution/ledger-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger-svc
+  namespace: lab16
+spec:
+  selector: { app: ledger }
+  ports:
+    - port: 8080              # Service ka port (pay-api isi par bulata hai)
+      targetPort: 8080        # ✅ ledger container ka port

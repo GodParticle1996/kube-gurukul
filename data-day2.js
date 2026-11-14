@@ -524,7 +524,7 @@ rate(container_cpu_cfs_throttled_periods_total[5m])
       'Main CPU throttling ko pehchaan sakta hoon aur metric se saabit kar sakta hoon',
       'Main usage ke data se request aur limit ka naap nikaal sakta hoon',
     ],
-    homework: `<p>Asli cluster par: <b>🧪 Real Lab 17 — CPU throttling aur OOMKilled</b>. Wahan tum container ka <code>cpu.stat</code> khud padhoge.</p>
+    homework: `<p>Asli cluster par: <b>🧪 Real Lab 17 — CPU throttling</b>. Wahan tum container ka <code>cpu.stat</code> khud padhoge.</p>
       <pre>kubectl top pod --containers
 kubectl describe pod &lt;pod&gt; | grep -A6 Limits
 kubectl exec &lt;pod&gt; -- cat /sys/fs/cgroup/cpu.stat   # nr_throttled, throttled_usec</pre>`,

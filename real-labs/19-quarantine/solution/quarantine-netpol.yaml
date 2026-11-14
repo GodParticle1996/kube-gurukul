@@ -1,0 +1,15 @@
+# Lab 19 ka jawab — quarantine=true label wale pod ka aana-jaana dono band.
+#   kubectl apply -f solution/quarantine-netpol.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: quarantine
+  namespace: lab19
+spec:
+  podSelector:
+    matchLabels:
+      quarantine: "true"        # ⚠️ quotes zaroori: bina quotes ke YAML ise boolean samajhta hai, label ki value string hoti hai
+  policyTypes:
+    - Ingress                   # koi is pod tak nahi aa sakta
+    - Egress                    # yeh pod kahin nahi ja sakta (DNS bhi nahi)
+  # ingress: / egress: likha hi nahi → koi allow nahi → sab band

@@ -1365,3 +1365,9 @@ button:focus:not(:focus-visible) { outline: none; }
 /* lambe shabd (securityContext ke naam, image paths) phone par chip/option ko screen se bahar dhakelte the */
 .chip, .mcard, .choice, .bin-label, .slot-text { overflow-wrap: anywhere; }
 .chip { max-width: 100%; }
+
+/* Real lab jo asli cluster par test nahi hua (catalogue: untested: true) */
+.rl-untested {
+  background: #ffb3470f; border: 1px solid #ffb34759; border-radius: 12px;
+  padding: 12px 16px; margin: 14px 0; line-height: 1.6; font-size: .92rem; overflow-wrap: anywhere;
+}

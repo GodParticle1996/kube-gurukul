@@ -1,0 +1,19 @@
+# Lab 18, Step 6 — Policy lab18-require-requests ko JAGAO, par sirf CHETAVNI mode mein.
+#   kubectl apply -f binding-warn.yaml
+#
+# validationActions ke 3 mode:
+#   Warn  = request paas hoti hai, kubectl par "Warning:" dikhta hai
+#   Audit = request paas hoti hai, API server ke audit log mein note likha jaata hai
+#   Deny  = request ROK di jaati hai
+# (Warn aur Audit saath chal sakte hain. Deny aur Warn saath NAHI likh sakte.)
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: lab18-require-requests
+spec:
+  policyName: lab18-require-requests
+  validationActions: ["Warn", "Audit"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: lab18

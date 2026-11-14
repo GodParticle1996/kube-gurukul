@@ -321,7 +321,7 @@ kubectl auth can-i get secrets \\
       'Main <code>kubectl auth can-i --list --as=…</code> se kisi ServiceAccount ki ijaazat nikaal sakta hoon',
       'Main ek ServiceAccount ko least privilege par la sakta hoon',
     ],
-    homework: `<p>Asli cluster par: <b>🧪 Real Lab 18 — ServiceAccount audit</b> (Home → Real Cluster Labs).</p>
+    homework: `<p>Asli cluster par: <b>🧪 Real Lab 08 — RBAC</b> (Home → Real Cluster Labs). Wahan <code>kubectl auth can-i --as</code> se ServiceAccount ki taaqat khud jaancho.</p>
       <pre>kubectl get rolebindings,clusterrolebindings -A -o wide | grep -i serviceaccount
 kubectl auth can-i --list --as=system:serviceaccount:&lt;ns&gt;:&lt;sa&gt; -n &lt;ns&gt;</pre>`,
     cards: [
@@ -578,7 +578,7 @@ disallow-latest-tag:
       'Main block hue deploy ke error se policy aur wajah nikaal sakta hoon',
       'Main nayi policy ko Audit → report → fix → Enforce ke kram mein la sakta hoon',
     ],
-    homework: `<p>Asli cluster par: <b>🧪 Real Lab 19 — ValidatingAdmissionPolicy</b> (kuch install nahi karna; Kubernetes ke andar hi hai).</p>
+    homework: `<p>Asli cluster par: <b>🧪 Real Lab 18 — Admission policy</b> (kuch install nahi karna; Kubernetes ke andar hi hai).</p>
       <pre>kubectl get validatingadmissionpolicy,validatingadmissionpolicybinding
 kubectl get clusterpolicy            # Kyverno laga ho toh
 kubectl get policyreport -A          # Audit ke nateeje</pre>`,
@@ -1345,7 +1345,7 @@ KG.registerLevels('secure', [
       'Main bata sakta hoon ki kaun si deewar kaun sa hamla rokti hai',
       'Main ghatna ke baad rotate hone wale raazon ka daayra nikaal sakta hoon',
     ],
-    homework: `<p>Asli cluster par: <b>🧪 Real Lab 20 — pod ko quarantine karna</b> (Home → Real Cluster Labs). Wahan tum label aur NetworkPolicy ka asar khud dekhoge.</p>
+    homework: `<p>Asli cluster par: <b>🧪 Real Lab 19 — Quarantine</b> (Home → Real Cluster Labs). Wahan tum label aur NetworkPolicy ka asar khud dekhoge.</p>
       <pre>kubectl label pod &lt;pod&gt; app- quarantine=true
 kubectl get endpoints &lt;svc&gt;          # pod ka IP gayab?
 kubectl get pods -L app,quarantine   # naya pod ban gaya?</pre>`,

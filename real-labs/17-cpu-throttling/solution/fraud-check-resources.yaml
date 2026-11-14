@@ -1,0 +1,14 @@
+# Lab 17 ka fix — sirf "resources" badla hai. Lagao:
+#   kubectl -n lab17 patch deploy fraud-check --patch-file solution/fraud-check-resources.yaml
+#
+# 1. CPU request 100m → 1     : fraud-check sach mein 1 core use karta hai. Request sach bole, tabhi scheduler sahi node chunta hai.
+# 2. CPU limit 200m → hataya  : "cpu: null" = yeh field hata do. Ab kernel fraud-check ko rokta nahi.
+# 3. Memory limit wahi (32Mi) : memory limit kabhi mat hatao — memory "compress" nahi hoti, node hi gir sakta hai.
+spec:
+  template:
+    spec:
+      containers:
+        - name: fraud-check
+          resources:
+            requests: { cpu: "1", memory: 16Mi }
+            limits:   { cpu: null, memory: 32Mi }

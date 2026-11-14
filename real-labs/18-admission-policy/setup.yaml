@@ -1,0 +1,64 @@
+# =====================================================================
+#  Lab 18 — Admission policy: galat YAML ko darwaze par hi roko
+#  Shuru:  kubectl apply -f setup.yaml
+#  Tool:   ValidatingAdmissionPolicy — Kubernetes ke andar hi hai (v1.30+), kuch install nahi karna.
+#
+#  Is file mein 3 cheezein hain:
+#   1. Policy  lab18-no-latest         + uska Binding (Deny)  → lab18 mein ":latest" image wale Pod mana
+#   2. Policy  lab18-require-requests  (Binding NAHI hai)     → abhi so rahi hai. Binding tum lagaoge.
+#  Dono policies sirf namespace lab18 par lagti hain (binding ka namespaceSelector). Baaki labs par asar nahi.
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab18
+---
+# ---------- Policy 1: Pod ki image par pakka tag ho ----------
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: lab18-no-latest
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]                  # 👈 yeh policy PODS ko dekhti hai (Deployment ko nahi)
+  validations:
+    - expression: "object.spec.containers.all(c, c.image.contains(':') && !c.image.endsWith(':latest'))"
+      message: "Image par pakka tag likho (jaise nginx:1.27-alpine). ':latest' ya bina tag wali image mana hai."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: lab18-no-latest
+spec:
+  policyName: lab18-no-latest
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: lab18
+---
+# ---------- Policy 2: Deployment ke har container mein CPU + memory request ho ----------
+# Iska Binding is file mein NAHI hai. Bina Binding ke policy kuch nahi karti.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: lab18-require-requests
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]           # 👈 yeh policy DEPLOYMENTS ko dekhti hai
+  validations:
+    - expression: >-
+        object.spec.template.spec.containers.all(c,
+        has(c.resources) && has(c.resources.requests) &&
+        'cpu' in c.resources.requests && 'memory' in c.resources.requests)
+      message: "Har container mein resources.requests.cpu aur resources.requests.memory likho."

@@ -1,0 +1,65 @@
+# =====================================================================
+#  Lab 16 — kubectl debug: bina shell wale pod ke andar se jaanch
+#  Shuru:  kubectl apply -f setup.yaml
+#  Kahani: ChaiPay ka pay-api, ledger ko bulata hai → "connection refused".
+#          pay-api ki image mein shell NAHI hai (sirf ek Go binary) → kubectl exec kaam nahi karta.
+#  Chhupa bug: Service ledger-svc ka targetPort 8081 hai, par ledger container 8080 par sunta hai.
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab16
+---
+# pay-api — bina shell wali image (traefik/whoami = sirf ek binary, na sh, na wget)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pay-api
+  namespace: lab16
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: pay-api }
+  template:
+    metadata:
+      labels: { app: pay-api }
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: pay-api
+          image: traefik/whoami:v1.10.1
+          ports: [{ containerPort: 80 }]
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 64Mi } }   # debug container bhi isi pod ke hisse se memory leta hai
+---
+# ledger — port 8080 par sunta hai, /healthz par "ok" deta hai
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger
+  namespace: lab16
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: ledger }
+  template:
+    metadata:
+      labels: { app: ledger }
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: ledger
+          image: busybox:1.36
+          command: ["sh", "-c", "mkdir -p /w && echo ok > /w/healthz && exec httpd -f -h /w -p 8080"]
+          ports: [{ containerPort: 8080 }]
+          resources: { requests: { cpu: 10m, memory: 8Mi }, limits: { memory: 16Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger-svc
+  namespace: lab16
+spec:
+  selector: { app: ledger }
+  ports:
+    - port: 8080
+      targetPort: 8081        # 🐛 ledger container 8080 par sunta hai

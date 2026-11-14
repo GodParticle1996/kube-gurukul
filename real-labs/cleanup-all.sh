@@ -3,7 +3,7 @@
 # lab14: finalizer wale objects pehle chhudao — warna namespace hamesha Terminating mein atka rahega
 kubectl -n lab14 patch configmap orders-cache --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
 kubectl -n lab14-legacy patch configmap legacy-cache --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
-for ns in lab01 lab02 lab03 lab04 lab04-frontend lab05 lab06 lab07 lab08 lab09 lab10 lab11 lab12 lab13 lab14 lab14-legacy lab15 netpol-check; do
+for ns in lab01 lab02 lab03 lab04 lab04-frontend lab05 lab06 lab07 lab08 lab09 lab10 lab11 lab12 lab13 lab14 lab14-legacy lab15 lab16 lab17 lab18 lab19 netpol-check; do
   kubectl delete ns "$ns" --ignore-not-found --wait=false
 done
 kubectl taint nodes -l disktype=ssd dedicated- 2>/dev/null || true                      # lab05 ka taint
@@ -11,4 +11,6 @@ kubectl get clusterrolebinding,clusterrole -o name 2>/dev/null | grep -i lab08 |
 for n in $(kubectl get nodes -o jsonpath='{range .items[?(@.spec.unschedulable==true)]}{.metadata.name}{" "}{end}'); do
   kubectl uncordon "$n"                                                                   # lab11 ka drain
 done
+kubectl delete validatingadmissionpolicybinding lab18-no-latest lab18-require-requests --ignore-not-found 2>/dev/null || true   # lab18
+kubectl delete validatingadmissionpolicy lab18-no-latest lab18-require-requests --ignore-not-found 2>/dev/null || true
 echo "🧹 Saare labs saaf (namespaces background mein delete ho rahe hain)"

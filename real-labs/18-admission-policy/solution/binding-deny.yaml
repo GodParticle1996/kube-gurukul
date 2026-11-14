@@ -1,0 +1,14 @@
+# Lab 18 ka aakhri kadam — wahi Binding, ab Deny mode mein.
+#   kubectl apply -f solution/binding-deny.yaml
+# ⚠️ Pehle purane Deployments theek karo (commands.md, kadam 4). Warna unka agla deploy/rollback atkega.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: lab18-require-requests
+spec:
+  policyName: lab18-require-requests
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: lab18

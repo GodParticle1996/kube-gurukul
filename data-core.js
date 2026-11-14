@@ -142,6 +142,18 @@ KG.tracks = [
     alwaysUnlocked: true,
   },
   {
+    id: 'eksnet',
+    group: 'prod',
+    icon: '🌐',
+    name: 'Networking & EKS Gurukul',
+    blurb: 'Bahar ka user pod tak kaise pahunchta hai, aur pod AWS tak kaise? Gateway API, HTTPS certificate aur DNS apne aap (cert-manager, ExternalDNS), pod ko AWS ki pehchaan (Pod Identity / IRSA), VPC CNI mein IP khatam hona, aur ALB ke saath bina 502 ke deploy.',
+    certTitle: 'NETWORK NAWAB',
+    certSub: 'Certificate of EKS Networking',
+    motto: 'Network ki problem mein andaaza mat lagao — har object apne status mein sach likhta hai.',
+    formula: 'User → DNS → Load Balancer → Gateway → Route → Service → Pod → AWS',
+    alwaysUnlocked: true,
+  },
+  {
     id: 'kodekloud',
     group: 'scenario',
     icon: '🩺',

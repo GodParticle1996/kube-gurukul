@@ -91,6 +91,31 @@ const VISUALS = {
 
   workernode: {
     t: 'Worker Node ke andar kya chalta hai',
+    scene: {
+      intro: '<b>Sawal:</b> Scheduler ne kaha "pod: web node-1 par chalega". Ab node-1 ke andar kaun kya karta hai?',
+      aria: 'Worker node ke andar kubelet, containerd aur kube-proxy ka kaam, 9 kadam',
+      groups: [{ label: '🖥️ Worker Node: node-1', cols: [1, 2], rows: [0, 1], tone: 'good' }],
+      nodes: [
+        { id: 'api', col: 0, row: 0, icon: '🧠', label: 'API Server', sub: 'control plane mein', tone: 'accent', about: 'Cluster ka ek hi darwaza. Node ke teeno hisse (kubelet, kube-proxy) API Server se hi jaankari lete hain.' },
+        { id: 'kubelet', col: 1, row: 0, icon: '🧑‍🔧', label: 'kubelet', sub: 'node ka manager', about: 'Har node par ek kubelet. kubelet API Server se apne node ke pods ki list leta hai, container runtime se pods chalwata hai, probes chalata hai aur node ki sehat ki report bhejta hai.' },
+        { id: 'crt', col: 2, row: 0, icon: '⚙️', label: 'containerd', sub: 'container runtime', about: 'Asli kaam karne wala: image kheenchna aur container shuru/band karna. kubelet containerd se CRI naam ke raaste se baat karta hai.' },
+        { id: 'client', col: 0, row: 1, icon: '🧑', label: 'Client', sub: 'web-svc ko bulata hai', about: 'Cluster ke andar ka koi doosra pod jo Service: web-svc ko call karta hai.' },
+        { id: 'proxy', col: 1, row: 1, icon: '🚦', label: 'kube-proxy', sub: 'traffic ke niyam', about: 'Har node par ek kube-proxy. kube-proxy node par niyam (iptables / IPVS) likhta hai: "Service ka IP → in pod IPs par bhejo".' },
+        { id: 'pod', col: 2, row: 1, icon: '📦', label: 'pod: web', sub: 'abhi bana nahi', tone: 'muted', about: 'pod: web ko Scheduler ne node-1 par rakha hai.' },
+      ],
+      steps: [
+        { at: ['api'], say: 'Scheduler ka faisla <b>API Server</b> mein likha hai: "pod: web → node-1". Abhi tak node-1 par kuch nahi chala.' },
+        { from: 'kubelet', to: 'api', label: 'mere liye naya pod?', say: '<b>kubelet</b> node-1 ka manager hai. <b>kubelet</b> lagataar <b>API Server</b> ko dekhta rehta hai: "node-1 ke liye koi naya pod hai?" API Server kubelet ko call nahi karta — kubelet khud dekhta hai.' },
+        { from: 'kubelet', to: 'crt', label: 'image lao, chalao', say: '<b>kubelet</b> khud container nahi chalata. <b>kubelet</b> <b>containerd</b> ko kehta hai: "image kheencho aur container shuru karo".' },
+        { from: 'crt', to: 'pod', label: 'container shuru', tone: 'good', set: { pod: { tone: 'good', sub: 'Running · 10.244.1.7' } }, say: '<b>containerd</b> image kheenchta hai aur container shuru karta hai. <b>pod: web</b> ab Running hai.' },
+        { from: 'kubelet', to: 'pod', label: 'probes', say: '<b>kubelet</b> <b>pod: web</b> par probes chalata hai: "zinda ho? traffic le sakte ho?" Container mar jaye toh kubelet hi container ko dobara shuru karwata hai.' },
+        { from: 'kubelet', to: 'api', label: 'status: Running', tone: 'good', say: '<b>kubelet</b> <b>API Server</b> ko batata hai: "pod: web Running hai". kubelet node-1 ki sehat ki report bhi bhejta rehta hai. Report band → node NotReady.' },
+        { from: 'proxy', to: 'api', label: 'Service ki list', say: '<b>kube-proxy</b> bhi <b>API Server</b> ko dekhta hai: kis Service ke peeche kaun se pod IP hain. kube-proxy us list se node par traffic ke niyam likhta hai.' },
+        { from: 'client', to: 'proxy', label: 'web-svc:80', say: '<b>Client</b> Service web-svc ka IP bulata hai. Node par <b>kube-proxy</b> ke likhe niyam us request ko pakad lete hain.' },
+        { from: 'proxy', to: 'pod', label: 'pod ke IP par', tone: 'good', say: 'Niyam request ko <b>pod: web</b> ke asli IP (10.244.1.7) par bhej dete hain. Dhyaan do: kube-proxy khud traffic nahi uthata. kube-proxy sirf niyam likhta hai; traffic Linux kernel bhejta hai.' },
+        { at: ['kubelet', 'crt', 'proxy'], say: 'Yaad rakho — har worker node par teen cheezein: <b>kubelet</b> (manager), <b>containerd</b> (container chalane wala), <b>kube-proxy</b> (Service ke traffic ke niyam).' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node is-accent"><span class="ni">🧠</span><span class="nl">Control Plane</span><span class="ns">API Server</span></div>
@@ -113,6 +138,29 @@ const VISUALS = {
 
   pod: {
     t: 'Pod — ek ghar, ek se zyada kamre',
+    scene: {
+      intro: '<b>Sawal:</b> Kubernetes container ko seedha kyun nahi chalata? Pod naam ka dabba beech mein kyun hai?',
+      aria: 'Ek pod ke do containers: saajha IP, localhost aur volume; container restart, 8 kadam',
+      groups: [{ label: '📦 Pod: web · IP 10.244.1.7', cols: [1, 2], rows: [0, 1], tone: 'good' }],
+      nodes: [
+        { id: 'client', col: 0, row: 0, icon: '🧑', label: 'Client', sub: 'request bhejta hai' },
+        { id: 'app', col: 1, row: 0, icon: '🍳', label: 'container: app', sub: 'port 8080', tone: 'accent', about: 'Pod ka mukhya container. Asli kaam (API, website) yahi karta hai.' },
+        { id: 'ship', col: 2, row: 0, icon: '🧹', label: 'container: shipper', sub: 'sidecar (madadgaar)', about: 'Madadgaar container. container: app ki log file padh kar logs ko bahar bhejta hai. Aise madadgaar container ko sidecar kehte hain.' },
+        { id: 'loki', col: 3, row: 0, icon: '🗃️', label: 'Loki', sub: 'central logs', about: 'Pod ke bahar ka system jahan saare logs jama hote hain.' },
+        { id: 'kubelet', col: 0, row: 1, icon: '🧑‍🔧', label: 'kubelet', sub: 'node ka manager', about: 'kubelet pod ke containers par nazar rakhta hai. Container mare toh kubelet usi container ko dobara shuru karta hai.' },
+        { id: 'vol', col: 1, row: 1, icon: '📂', label: 'volume: logs', sub: 'emptyDir (saajha)', about: 'Pod ke andar ka saajha folder. Pod ke dono containers is folder ko dekh sakte hain. emptyDir pod ke saath banta hai aur pod ke saath hi mit jaata hai.' },
+      ],
+      steps: [
+        { at: ['app', 'ship'], say: '<b>Pod: web</b> ke andar do containers hain: <b>container: app</b> aur <b>container: shipper</b>. Kubernetes dono ko hamesha ek saath, ek hi node par rakhta hai.' },
+        { from: 'client', to: 'app', label: '10.244.1.7:8080', say: 'Pod ka <b>ek hi IP</b> hai: 10.244.1.7. <b>Client</b> us IP ke port 8080 par <b>container: app</b> se baat karta hai.' },
+        { from: 'app', to: 'vol', label: 'log file likho', say: '<b>container: app</b> apni log file <b>volume: logs</b> mein likhta hai.' },
+        { from: 'ship', to: 'vol', label: 'log file padho', say: '<b>container: shipper</b> wahi file <b>volume: logs</b> se padhta hai. Dono containers ki filesystem alag-alag hai. Sirf saajha volume dono ko dikhta hai.' },
+        { from: 'ship', to: 'app', label: 'localhost:8080', say: 'Dono containers ek hi network mein hain. <b>container: shipper</b> <b>container: app</b> ko <code>localhost:8080</code> par bula sakta hai. Isliye ek pod ke do containers ek hi port nahi le sakte.' },
+        { from: 'ship', to: 'loki', label: 'logs bhejo', tone: 'good', say: '<b>container: shipper</b> logs ko <b>Loki</b> tak bhejta hai. container: app ko Loki ke baare mein kuch pata nahi. Yahi sidecar pattern hai: madadgaar kaam alag container mein.' },
+        { from: 'kubelet', to: 'app', label: 'crash → restart', tone: 'bad', set: { app: { tone: 'gold', sub: 'restart #3' } }, say: 'Maan lo <b>container: app</b> crash ho gaya. <b>kubelet</b> sirf container: app ko dobara shuru karta hai. Pod wahi rehta hai: IP wahi, <b>volume: logs</b> ka data wahi. Baar-baar crash ho toh status <b>CrashLoopBackOff</b> dikhta hai.' },
+        { at: ['app', 'ship', 'vol'], say: 'Yaad rakho: pod = saath jeene-marne wale containers ka ghar. <b>Saajha:</b> IP, localhost, volumes. <b>Alag:</b> filesystem aur CPU / memory limits. Pod delete hua → emptyDir volume ka data bhi gaya.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-box is-accent"><span class="bx-label">📦 Pod (ek IP: 10.244.1.7)</span>
@@ -212,6 +260,28 @@ const VISUALS = {
 
   config: {
     t: 'Config alag, code alag',
+    scene: {
+      intro: '<b>Sawal:</b> Image <code>shop:1.4</code> staging aur production dono mein wahi hai. Toh pod ko DB ka address aur password kahan se milta hai?',
+      aria: 'ConfigMap aur Secret pod tak env var aur volume ke raaste se; config badalne par kya hota hai, 9 kadam',
+      nodes: [
+        { id: 'cm', col: 0, row: 0, icon: '🗒️', label: 'ConfigMap: app-cfg', sub: 'DB_HOST=postgres', tone: 'accent', about: 'Saadi (gair-gupt) config: address, feature flags, config files.' },
+        { id: 'kubelet', col: 1, row: 0, icon: '🧑‍🔧', label: 'kubelet', sub: 'pod shuru karta hai', about: 'Pod shuru karte samay kubelet hi ConfigMap aur Secret ki keemat pod ke andar pahunchata hai.' },
+        { id: 'pod', col: 2, row: 0, icon: '📦', label: 'pod: web', sub: 'image: shop:1.4', tone: 'muted', about: 'Image ke andar koi address ya password nahi likha. Wahi image har environment mein chalti hai.' },
+        { id: 'sec', col: 0, row: 1, icon: '🔑', label: 'Secret: app-secret', sub: 'DB_PASS (base64)', tone: 'gold', about: 'Gupt keemat: password, token, key. Secret ki keemat base64 mein hoti hai — base64 sirf encoding hai, encryption nahi.' },
+        { id: 'vol', col: 2, row: 1, icon: '📂', label: 'volume: /etc/app', sub: 'config ki files', about: 'ConfigMap ya Secret ko folder ki tarah mount karne ka tareeka. Har key ek file ban jaati hai.' },
+      ],
+      steps: [
+        { at: ['pod'], say: 'Image <b>shop:1.4</b> ke andar DB ka address ya password nahi likha. Config image ke <b>bahar</b> rakhi jaati hai, taaki wahi image staging aur production dono mein chal sake.' },
+        { from: 'cm', to: 'kubelet', label: 'DB_HOST=postgres', say: 'Pod shuru hone se pehle <b>kubelet</b> <b>ConfigMap: app-cfg</b> padhta hai.' },
+        { from: 'sec', to: 'kubelet', label: 'DB_PASS', tone: 'gold', say: '<b>kubelet</b> <b>Secret: app-secret</b> bhi padhta hai. Secret ki keemat sirf base64 mein hai. base64 encryption nahi hai — koi bhi 2 second mein khol sakta hai.' },
+        { from: 'kubelet', to: 'pod', label: 'env vars', tone: 'good', set: { pod: { tone: 'good', sub: 'env: DB_HOST, DB_PASS' } }, say: 'Pehla tareeka: <b>kubelet</b> dono keemat <b>pod: web</b> ko environment variables ki tarah deta hai. Env vars sirf pod ke <b>shuru hote samay</b> set hote hain.' },
+        { from: 'kubelet', to: 'vol', label: 'files ki tarah', say: 'Doosra tareeka: <b>kubelet</b> ConfigMap ko <b>volume: /etc/app</b> mein files ki tarah rakhta hai. pod: web un files ko padhta hai.' },
+        { at: ['cm'], set: { cm: { tone: 'gold', sub: 'DB_HOST=postgres-v2' } }, say: 'Ab koi <b>ConfigMap: app-cfg</b> badal deta hai: DB_HOST=postgres-v2. Chalte hue pod ka kya hoga?' },
+        { from: 'kubelet', to: 'vol', label: 'file update (~1 min)', tone: 'good', say: '<b>kubelet</b> <b>volume: /etc/app</b> ki file ko lagbhag ek minute mein naya kar deta hai. Jaal: <code>subPath</code> se mount ki gayi file <b>kabhi</b> update nahi hoti.' },
+        { at: ['pod'], set: { pod: { tone: 'gold', sub: 'env: purana DB_HOST' } }, say: 'Par <b>pod: web</b> ke env vars <b>purane</b> hi rehte hain. Nayi keemat ke liye pod ko dobara banana padta hai: <code>kubectl rollout restart deploy/web</code>.' },
+        { at: ['cm', 'sec', 'pod'], say: 'Yaad rakho: image ek, config alag. <b>Env var</b> = badlaav ke liye restart chahiye. <b>Volume ki file</b> = khud update hoti hai (subPath ko chhod kar). <b>Secret</b> = base64, encryption nahi.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-col">
@@ -597,6 +667,29 @@ const VISUALS = {
 
   secrets: {
     t: 'Secrets — git se bahar, vault se andar',
+    scene: {
+      intro: '<b>Sawal:</b> DB ka password pod tak kaise pahunche — bina password ko Git mein likhe?',
+      aria: 'External Secrets Operator: Git mein sirf pointer, asli password AWS Secrets Manager se cluster ke Secret tak, 9 kadam',
+      nodes: [
+        { id: 'git', col: 0, row: 0, icon: '📁', label: 'Git repo', sub: 'YAML yahan rehta hai', about: 'GitOps mein cluster ka saara YAML Git mein hota hai. Isliye Git mein asli password likhna = password sabko dikhana.' },
+        { id: 'es', col: 1, row: 0, icon: '📄', label: 'ExternalSecret', sub: 'sirf pata: prod/db', tone: 'accent', about: 'Ek chhota object jisme password nahi hota. Sirf likha hota hai: "is store ke is path se keemat lo, aur is naam ka Secret banao".' },
+        { id: 'vault', col: 2, row: 0, icon: '🏦', label: 'AWS Secrets Manager', sub: 'asli password yahan', tone: 'gold', about: 'Cluster ke bahar ki tijori. Asli password, uski history aur rotation yahin hote hain. (Vault bhi aisi hi tijori hai.)' },
+        { id: 'pod', col: 0, row: 1, icon: '📦', label: 'pod: payments', sub: 'DB_PASS chahiye', tone: 'muted', about: 'App ko bas ek aam Kubernetes Secret dikhta hai. App ko pata nahi ki password kahan se aaya.' },
+        { id: 'sec', col: 1, row: 1, icon: '🔑', label: 'Secret: db-creds', sub: 'abhi bana nahi', tone: 'muted', about: 'Aam Kubernetes Secret. Farak itna hai ki is Secret ko kisi insaan ne nahi, operator ne banaya hai.' },
+        { id: 'eso', col: 2, row: 1, icon: '🔁', label: 'ESO (operator)', sub: 'External Secrets Operator', about: 'Cluster mein chalne wala controller. ESO ExternalSecret padhta hai, tijori se keemat laata hai, aur cluster mein Secret banata / naya karta hai.' },
+      ],
+      steps: [
+        { at: ['git'], say: 'Secret ka YAML <b>Git repo</b> mein daalna = leak. Secret ki keemat sirf base64 mein hoti hai, aur base64 koi bhi 2 second mein khol leta hai.' },
+        { from: 'git', to: 'es', label: 'sirf pointer', say: '<b>Git repo</b> se cluster mein sirf <b>ExternalSecret</b> jaata hai. ExternalSecret mein password nahi hai. Sirf pata likha hai: "AWS Secrets Manager ke path prod/db se lo".' },
+        { from: 'eso', to: 'es', label: 'pata padho', say: '<b>ESO (operator)</b> cluster ke andar chalta hai. ESO <b>ExternalSecret</b> ko padhta hai.' },
+        { from: 'eso', to: 'vault', label: 'prod/db ki keemat do', tone: 'gold', say: 'ESO <b>AWS Secrets Manager</b> se asli password maangta hai. ESO ko AWS ki ijaazat Pod Identity ya IRSA se milti hai — kisi likhi hui key se nahi.' },
+        { from: 'eso', to: 'sec', label: 'Secret banao', tone: 'good', set: { sec: { tone: 'good', sub: 'DB_PASS ✓' } }, say: 'ESO cluster mein <b>Secret: db-creds</b> bana deta hai.' },
+        { from: 'sec', to: 'pod', label: 'env / volume', tone: 'good', set: { pod: { tone: 'good', sub: 'DB_PASS mil gaya' } }, say: '<b>pod: payments</b> <b>Secret: db-creds</b> ko aam Secret ki tarah use karta hai.' },
+        { at: ['vault'], set: { vault: { sub: 'password badla (rotate)' } }, say: 'Teen mahine baad password <b>AWS Secrets Manager</b> mein badla jaata hai (rotation). Git mein kuch nahi badla.' },
+        { from: 'eso', to: 'sec', label: 'nayi keemat', tone: 'gold', say: 'ESO <code>refreshInterval</code> ke baad nayi keemat laata hai aur <b>Secret: db-creds</b> ko naya kar deta hai. Jaal: jo pod password ko env var se leta hai, us pod ko restart chahiye.' },
+        { at: ['git', 'es', 'vault'], say: 'Yaad rakho: Git mein sirf <b>pointer</b> (ExternalSecret). Asli keemat sirf tijori mein. Rotation tijori mein karo — cluster khud naya ho jaata hai.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node is-gold"><span class="ni">🏦</span><span class="nl">Vault / AWS SM</span><span class="ns">asli secrets yahan</span></div>
@@ -670,6 +763,29 @@ const VISUALS = {
 
   operators: {
     t: 'CRD + Controller = Operator',
+    scene: {
+      intro: '<b>Sawal:</b> PostgreSQL chalana sirf "3 pods" nahi hai. Failover, backup aur upgrade ek DBA ke kaam hain. Kya DBA ka gyaan code ban sakta hai?',
+      aria: 'CRD aur Operator: custom resource se StatefulSet, failover aur backup tak, 9 kadam',
+      nodes: [
+        { id: 'user', col: 0, row: 0, icon: '🧑', label: 'Platform engineer', sub: 'kubectl apply', about: 'Insaan sirf "kya chahiye" likhta hai: 3 replicas, roz backup. "Kaise" operator ka kaam hai.' },
+        { id: 'api', col: 1, row: 0, icon: '🚪', label: 'API Server', sub: 'kind: PostgresCluster', tone: 'accent', about: 'CRD (CustomResourceDefinition) API Server ko ek naya kind sikhata hai. Uske baad PostgresCluster bhi Pod ya Deployment ki tarah ek object hai: kubectl get, describe, RBAC — sab chalta hai.' },
+        { id: 'op', col: 2, row: 0, icon: '🤖', label: 'Operator', sub: 'controller pod', tone: 'gold', about: 'Cluster mein chalne wala ek program. Operator apne kind ke objects ko dekhta hai aur "chahiye" aur "hai" ka farak mitata rehta hai. DBA ka gyaan is program ke code mein likha hai.' },
+        { id: 'bkp', col: 0, row: 1, icon: '☁️', label: 'S3: backups', sub: 'roz ka backup', about: 'Cluster ke bahar ki jagah jahan operator database ka backup rakhta hai.' },
+        { id: 'pods', col: 1, row: 1, icon: '📦', label: 'pods: pg-0…pg-2', sub: 'abhi bane nahi', tone: 'muted', about: 'PostgreSQL ke teen pods. Ek primary (likhna + padhna), do replicas (sirf padhna).' },
+        { id: 'sts', col: 2, row: 1, icon: '🗄️', label: 'StatefulSet: pg', sub: 'abhi bana nahi', tone: 'muted', about: 'Operator khud pods nahi banata. Operator Kubernetes ke aam objects banata hai — StatefulSet, PVC, Service — aur baaki kaam Kubernetes karta hai.' },
+      ],
+      steps: [
+        { at: ['api'], say: '<b>CRD</b> ne <b>API Server</b> ko ek naya kind sikha diya hai: <code>PostgresCluster</code>. Ab cluster "PostgresCluster" shabd samajhta hai.' },
+        { from: 'user', to: 'api', label: 'replicas: 3, backup: daily', say: '<b>Platform engineer</b> sirf itna likhta hai: "3 replicas, roz backup". StatefulSet, PVC ya failover ke baare mein ek line bhi nahi.' },
+        { from: 'op', to: 'api', label: 'watch', say: '<b>Operator</b> ek controller pod hai. Operator <b>API Server</b> par PostgresCluster objects ko dekhta (watch) rehta hai.' },
+        { from: 'op', to: 'sts', label: 'banao', tone: 'good', set: { sts: { tone: 'good', sub: 'replicas: 3' } }, say: 'Operator dekhta hai: "3 replicas chahiye, abhi 0 hain". Operator <b>StatefulSet: pg</b>, PVCs aur Services bana deta hai.' },
+        { from: 'sts', to: 'pods', label: '3 pods', tone: 'good', set: { pods: { tone: 'good', sub: 'pg-0 primary' } }, say: '<b>StatefulSet: pg</b> teen pods banata hai: pg-0 (primary), pg-1 aur pg-2 (replicas).' },
+        { at: ['pods'], set: { pods: { tone: 'bad', sub: 'pg-0 mar gaya' } }, say: 'Raat 3 baje pg-0 (primary) mar jaata hai. Saada StatefulSet sirf pod ko dobara banata — par database ka naya primary kaun hoga, StatefulSet ko nahi pata.' },
+        { from: 'op', to: 'pods', label: 'pg-1 ko primary banao', tone: 'gold', set: { pods: { tone: 'good', sub: 'pg-1 ab primary' } }, say: '<b>Operator</b> farak dekhta hai aur wahi karta hai jo ek DBA karta: pg-1 ko primary banata hai. Koi insaan nahi jaaga.' },
+        { from: 'pods', to: 'bkp', label: 'roz ka backup', say: 'Operator roz backup bhi chalata hai. Data <b>S3: backups</b> mein jaata hai.' },
+        { at: ['api', 'op'], say: 'Yaad rakho: <b>CRD</b> = API mein naya kind. <b>Operator</b> = us kind ko dekh kar kaam karne wala controller. Wahi purana loop: "chahiye" vs "hai". cert-manager, Prometheus Operator aur Karpenter — sab operators hain.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-node is-accent"><span class="ni">📄</span><span class="nl">Custom Resource</span><span class="ns">kind: PostgresCluster<br>replicas: 3, backup: daily</span></div>
@@ -723,6 +839,35 @@ const VISUALS = {
 
   istio: {
     t: 'Service Mesh — har pod ka bodyguard proxy',
+    scene: {
+      intro: '<b>Sawal:</b> app: orders ko app: products se baat karni hai. Encryption, retry aur 90/10 canary chahiye — par app ka code nahi badalna.',
+      aria: 'Service mesh: istiod se certificate aur niyam, sidecar proxy ke beech mTLS, aur 10 pratishat canary, 9 kadam',
+      groups: [
+        { label: '📦 pod A', cols: [0, 1], rows: [0, 0], tone: 'accent' },
+        { label: '📦 pod B (v1)', cols: [2, 3], rows: [0, 0], tone: 'good' },
+        { label: '📦 pod C (v2, canary)', cols: [2, 3], rows: [1, 1], tone: 'gold' },
+      ],
+      nodes: [
+        { id: 'appA', col: 0, row: 0, icon: '🍳', label: 'app: orders', sub: 'saada HTTP bolta hai', about: 'App ka code mesh ke baare mein kuch nahi jaanta. app: orders bas http://products bulata hai.' },
+        { id: 'envA', col: 1, row: 0, icon: '🕵️', label: 'envoy (pod A)', sub: 'sidecar proxy', tone: 'accent', about: 'Pod A ke andar ka doosra container. Pod A se nikalne wali aur aane wali har request envoy (pod A) se guzarti hai.' },
+        { id: 'envB', col: 2, row: 0, icon: '🕵️', label: 'envoy (pod B)', sub: 'sidecar proxy', tone: 'accent', about: 'Pod B ke andar ka proxy. Bahar se aane wali request pehle envoy (pod B) ke paas aati hai.' },
+        { id: 'appB', col: 3, row: 0, icon: '🍳', label: 'app: products v1', sub: 'purana version', about: 'products ka chalta hua version. 90% traffic yahan aata hai.' },
+        { id: 'istiod', col: 1, row: 1, icon: '🧠', label: 'istiod', sub: 'certificate + niyam', tone: 'gold', about: 'Mesh ka control plane. istiod har proxy ko certificate (pehchaan) aur traffic ke niyam bhejta hai. Requests istiod se hokar nahi guzarti.' },
+        { id: 'envC', col: 2, row: 1, icon: '🕵️', label: 'envoy (pod C)', sub: 'sidecar proxy', tone: 'accent', about: 'Pod C (naya version v2) ke andar ka proxy.' },
+        { id: 'appC', col: 3, row: 1, icon: '🍳', label: 'app: products v2', sub: 'naya version', about: 'products ka naya version. Shuru mein sirf 10% traffic yahan aata hai.' },
+      ],
+      steps: [
+        { at: ['appA', 'appB'], say: 'Bina mesh ke <b>app: orders</b> seedha <b>app: products v1</b> ko saada HTTP bhejta. Na encryption, na retry, na canary. Mesh har pod mein ek proxy container jod deta hai.' },
+        { from: 'istiod', to: 'envA', label: 'certificate + niyam', tone: 'gold', say: '<b>istiod</b> <b>envoy (pod A)</b> ko do cheezein deta hai: ek certificate (pod A ki pehchaan) aur traffic ke niyam.' },
+        { from: 'istiod', to: 'envB', label: 'certificate + niyam', tone: 'gold', say: '<b>istiod</b> wahi do cheezein <b>envoy (pod B)</b> ko bhi deta hai. Dhyaan do: requests istiod se hokar nahi jaati. istiod sirf niyam baant-ta hai.' },
+        { from: 'appA', to: 'envA', label: 'saada HTTP', say: '<b>app: orders</b> saada HTTP request bhejta hai. Pod A ke andar <b>envoy (pod A)</b> us request ko pakad leta hai. app: orders ko pata bhi nahi chalta.' },
+        { from: 'envA', to: 'envB', label: 'mTLS (encrypted)', tone: 'good', say: '<b>envoy (pod A)</b> request ko encrypt karke <b>envoy (pod B)</b> ko bhejta hai. Dono proxy ek doosre ka certificate jaanchte hain. Is do-tarfa jaanch ka naam <b>mTLS</b> hai.' },
+        { from: 'envB', to: 'appB', label: 'saada HTTP', say: '<b>envoy (pod B)</b> request ko kholta hai aur <b>app: products v1</b> ko saada HTTP mein de deta hai.' },
+        { from: 'envA', to: 'envC', label: '10% canary', tone: 'gold', say: 'Traffic ka niyam kehta hai: 90% v1 ko, 10% v2 ko. <b>envoy (pod A)</b> har 10 mein se 1 request <b>envoy (pod C)</b> ko bhejta hai.' },
+        { from: 'envC', to: 'appC', label: 'saada HTTP', say: '<b>envoy (pod C)</b> request <b>app: products v2</b> ko deta hai. v2 mein errors badhen toh niyam mein 10% ko 0% kar do — deploy wapas lene ki zaroorat nahi.' },
+        { at: ['envA', 'envB', 'istiod'], say: 'Yaad rakho: proxy har request ke beech mein baitha hai. Isliye mTLS, retries, canary aur metrics <b>bina app code badle</b> milte hain. Keemat: har pod mein ek extra container, aur ek naya system jise chalana seekhna padta hai.' },
+      ],
+    },
     html: `
       <div class="dg-flow">
         <div class="dg-box is-accent"><span class="bx-label">📦 pod A</span>

@@ -14,7 +14,8 @@ This section is the current state. Everything below the next heading is older hi
   and 0 horizontal overflow. Every recommendation (127 leaves) of all 23 decision trees was walked at both widths too.
 - **Not verified:** real labs 16–19 were written on a machine without Docker/kind and have never run on a cluster
   (flag `untested: true` in `reallabs.js`; remove it after a real run). The lesson text of the 58 older levels was not
-  re-fact-checked line by line. 11 of the 58 older diagrams were converted to step-by-step scenes; the other 47 are still static HTML.
+  re-fact-checked line by line; a targeted search for version-sensitive claims found and fixed four items (commit 286260c).
+  17 of the 58 older diagrams are now step-by-step scenes (39 scenes in total); the other 41 are still static HTML.
 - **Git:** all work is local commits on `main`; nothing was pushed.
 
 ---

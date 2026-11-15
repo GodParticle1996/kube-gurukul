@@ -761,7 +761,9 @@ ServiceMonitor, HTTPRoute, Certificate, ClusterPolicy, PodIdentityAssociation �
 (Playwright) se 1180px aur 390px par kholi gayi: page errors 0, horizontal overflow 0. Bada UI badlaav karo toh wahi dobara karo:
 har level ka intro + har stage kholo, `document.documentElement.scrollWidth - clientWidth` 2px se kam ho, aur console/page error na ho.
 
-**Jo is pass mein nahi hua:** purane 58 levels ka lesson text line-by-line dobara fact-check nahi hua; 58 purane diagrams mein se
-11 scene bane (`controlplane`, `deploy`, `service`, `scheduler`, `probes`, `storage`, `ingress`, `netpol`, `autoscale`, `rbac`, `gitops`),
-baaki 47 abhi static `html` hain; real labs 16–19 cluster par nahi chale.
+**Jo is pass mein nahi hua:** purane 58 levels ka lesson text line-by-line dobara fact-check nahi hua (sirf version se jude
+daavon ki khoj hui — etcd quorum, EndpointSlice, VPA in-place, Bitnami catalog theek hue); 58 purane diagrams mein se
+17 scene bane (`controlplane`, `workernode`, `pod`, `deploy`, `service`, `config`, `scheduler`, `probes`, `storage`, `ingress`,
+`netpol`, `autoscale`, `rbac`, `secrets`, `gitops`, `operators`, `istio`), baaki 41 abhi static `html` hain (Helm, ArgoCD,
+Karpenter, KodeKloud tracks aur boss levels); real labs 16–19 cluster par nahi chale.
 

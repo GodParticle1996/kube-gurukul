@@ -531,7 +531,8 @@ pre {
 .term-editor { border-top: 1px solid var(--border); background: #070c16; }
 .te-head { padding: 8px 14px; font-size: .8rem; color: var(--muted); border-bottom: 1px solid #1a2438; }
 .te-head b { color: var(--gold); }
-.te-body { display: flex; max-height: 420px; overflow: auto; }
+/* flex-start: warna flex textarea ko 420px par kheench deta (stretch) aur lambi file mein woh andar scroll hota — gutter ke numbers peeche reh jaate */
+.te-body { display: flex; align-items: flex-start; max-height: 420px; overflow: auto; }
 .te-gutter {
   margin: 0; padding: 10px 8px 10px 12px; text-align: right; user-select: none;
   color: #4b5a78; background: #05080f; border-right: 1px solid #1a2438;

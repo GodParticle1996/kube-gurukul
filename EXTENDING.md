@@ -242,6 +242,12 @@ solution: [ ..., { edit: 'app-config.yaml', change: [['purana text', 'naya text'
 - `{ edit }` step: validator aur `tools/replay-missions.js` `vi <file>` chalate hain, `change` ke jode text mein badalte hain,
   aur asli 💾 Save button dabate hain. `change` ka purana text file mein **exactly** hona chahiye.
 - `kubectl edit` simulator mein nahi hai; editable files hon toh terminal `vi` wala raasta batata hai.
+- **`onSave(sim, text, docs, parseErr)`** (2026-11-24): file ko koi aur khud padhta hai — jaise static pod ki file
+  (`/etc/kubernetes/manifests/…`) jise kubelet padhta hai. Save par yeh chalta hai; `kubectl apply` wala tip nahi aata.
+  `parseErr` = toota YAML (`.line`, `.message`). Asli tool ka log lautao (`kubelet: "Could not process manifest file"`).
+- **`saveTip: 'text'`**: save ke baad apna tip (jaise Kustomize overlay: "kubectl kustomize … phir kubectl apply -k …").
+  `noApplyTip: true` = koi tip nahi.
+- Editor ka `.te-body` `align-items: flex-start` hai — lambi file (50+ lines) mein gutter aur text saath scroll hote hain.
 
 `solution` ko actual goal/tasks ke mutabik likho: validator asli renderer mein commands replay
 karta hai aur **win aakhri command par** hona chahiye. Jeetne ke baad input disable hota hai;
@@ -815,5 +821,21 @@ Status (2026-11-23):
   dono taraf allow), `autoscale` (HPA `<unknown>` = CPU request nahi).
 - Batch 2 (✏️ YAML editor, §4): `config` (ConfigMap string + env ke liye rollout restart), `workloads` (CronJob UTC → `timeZone`),
   `podsecurity` (PSA restricted: `securityContext` sahi jagah + `runAsUser`), `secrets` (ExternalSecret `remoteRef.key` + pod restart).
-- Baaki 8 levels + naye lab types (random breakage, on-call shift, kubectl speed drill) aage ke batches mein.
+- Batch 3 (2026-11-24): `whyk8s` (pod delete → self-healing; `replicas` file mein, `kubectl scale` = drift), `controlplane`
+  (scheduler ki static pod file mein flag typo → pods Pending + `Events: <none>`; `onSave`), `affinity` (anti-affinity ka selector
+  typo + zone `topologyKey` → asli rolling update atakta hai), `observability` (alert rule ka label + `for`; `promtool test rules`
+  outage replay), `helm` (Kustomize `images:` ka naam image se match nahi → chupchaap 1.8.0).
+- Baaki: `helmtemplating` (chhota Go-template engine chahiye), `operators`, `istio` + naye lab types (kubectl speed drill,
+  random breakage, on-call shift) aage ke batches mein.
+
+Batch 3 ke chhote engines (sab `data-labs.js` ke andar, mission-specific):
+- `tbl(rows)` — kubectl jaisi table. `deployChecks(file, doc)` — Deployment file ke aam API errors (strict decoding `spec.*`,
+  `replicas` ka type, selector immutable, template labels).
+- **affinity:** `afSchedule` (taint → CPU → required anti-affinity filter; preferred weight + free CPU score; asli
+  `0/4 nodes are available: …` message) aur `afRoll` (maxSurge / maxUnavailable wala rolling update; atke pods dobara try).
+- **observability:** `pqParse` / `pqEval` — chhota PromQL (selector + matchers, `rate/irate/increase`, `sum/avg/max/min/count by|without`,
+  `+ - * /`, comparisons). `obTest` = `promtool test rules`: test file ke asli `input_series` (`0+1000x2` notation) se har minute
+  alert ki state, `for` ke saath; output promtool jaisa (`FAILED: … exp:[…], got:[]`).
+- **helm (Kustomize):** `kzBuild` (resources → patches (strategic merge) → namespace → commonLabels/labels → replicas → images,
+  asli `IsImageMatched` niyam) aur `kzDump` (kustomize jaisa YAML: apiVersion/kind/metadata upar, baaki keys A→Z).
 

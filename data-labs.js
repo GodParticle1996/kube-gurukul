@@ -1228,4 +1228,1796 @@ ${c.synced ? '  Warning  UpdateFailed  4m (x7 over 7h)   external-secrets  error
     cards: [{ front: 'ExternalSecret <code>SecretSyncedError</code> — Kubernetes Secret ka kya hota hai?', back: 'ESO Secret ko <b>chhoota hi nahi</b> — <b>purana value</b> reh jaata hai. App tab tak chalti hai jab tak restart na ho. Isliye SecretSyncedError par alert lagao.' }],
   });
 
+  /* ---------- batch 3 ke shared helpers ---------- */
+  // kubectl jaisi table: har column sabse lambe cell + 3 space
+  function tbl(rows) {
+    const w = rows[0].map((_, i) => Math.max(...rows.map(r => String(r[i] == null ? '' : r[i]).length)));
+    return rows.map(r => r.map((x, i) => i === r.length - 1 ? String(x) : String(x).padEnd(w[i] + 3)).join('')).join('\n');
+  }
+  const deployBadReq = (file, msg) => ({ err: `Error from server (BadRequest): error when patching "${file}": Deployment in version "v1" cannot be handled as a Deployment: ${msg}` });
+  const DEPLOY_SPEC_KEYS = ['replicas', 'selector', 'template', 'strategy', 'minReadySeconds', 'revisionHistoryLimit', 'paused', 'progressDeadlineSeconds'];
+  // Deployment ki file ke aam checks: kind/naam, strict decoding (spec.*), replicas ka type, selector immutable
+  function deployChecks(file, d) {
+    if (!d || d.kind !== 'Deployment') return { err: `error: is file mein Deployment chahiye (kind: ${(d && d.kind) || 'khaali'})` };
+    if (!d.metadata || d.metadata.name !== 'pay-api') return { err: `(simulator ne roka) Deployment ka naam "${(d.metadata && d.metadata.name) || ''}" ho gaya — naya Deployment banega aur pay-api waisa hi rahega. metadata.name wapas pay-api karo.` };
+    const spec = d.spec || {};
+    const unk = Object.keys(spec).find(k => !DEPLOY_SPEC_KEYS.includes(k));
+    if (unk) return deployBadReq(file, `strict decoding error: unknown field "spec.${unk}"` + (/^replica$/i.test(unk) ? '\n(field ka naam "replicas" hai — aakhir mein s)' : ''));
+    if (spec.replicas != null && typeof spec.replicas !== 'number') return deployBadReq(file, `json: cannot unmarshal ${typeof spec.replicas === 'boolean' ? 'bool' : 'string'} into Go struct field DeploymentSpec.spec.replicas of type int32` + (typeof spec.replicas === 'string' ? '\n(replicas number hai — quotes hatao: replicas: 6)' : ''));
+    if (typeof spec.replicas === 'number' && spec.replicas < 0) return { err: `The Deployment "pay-api" is invalid: spec.replicas: Invalid value: ${spec.replicas}: must be greater than or equal to 0` };
+    const sel = (spec.selector && spec.selector.matchLabels) || {};
+    if (sel.app !== 'pay-api' || Object.keys(sel).length !== 1) return { err: `The Deployment "pay-api" is invalid: spec.selector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string{${Object.keys(sel).map(k => `"${k}":"${sel[k]}"`).join(', ')}}, MatchExpressions:[]v1.LabelSelectorRequirement(nil)}: field is immutable\n(selector Deployment banne ke baad badal nahi sakta — wapas app: pay-api karo)` };
+    const tl = (((spec.template || {}).metadata || {}).labels) || {};
+    if (tl.app !== 'pay-api') return { err: `The Deployment "pay-api" is invalid: spec.template.metadata.labels: Invalid value: map[string]string{${Object.keys(tl).map(k => `"${k}":"${tl[k]}"`).join(', ')}}: \`selector\` does not match template \`labels\`` };
+    return null;
+  }
+
+  /* =====================================================================
+     🐳 whyk8s — desired state apni aankhon se: pod maaro → K8s wapas laata hai;
+     sale ke liye replicas FILE mein likho (kubectl scale = file se drift)
+     ===================================================================== */
+  const W_IMG = '111122223333.dkr.ecr.ap-south-1.amazonaws.com/pay-api:1.8.0';
+  const W_SUF = ['d4', 'e5', 'f6', 'g7', 'h8', 'j9', 'k1', 'm2', 'n3', 'p4', 'q5', 'r6', 's7', 't8', 'u9', 'v1'];
+  const W_FILE = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pay-api
+  namespace: payments
+spec:
+  replicas: 3            # desired state: kitne pods chahiye
+  selector:
+    matchLabels:
+      app: pay-api
+  template:
+    metadata:
+      labels:
+        app: pay-api
+    spec:
+      containers:
+      - name: pay-api
+        image: ${W_IMG}
+        ports:
+        - containerPort: 8080
+`;
+  const W_B2_DESC = `Name:             pay-api-6b8d7c-b2
+Namespace:        payments
+Priority:         0
+Service Account:  default
+Node:             node-2/10.0.13.5
+Start Time:       Tue, 18 Nov 2026 11:02:41 +0530
+Labels:           app=pay-api
+                  pod-template-hash=6b8d7c
+Status:           Running
+IP:               10.0.13.21
+Controlled By:    ReplicaSet/pay-api-6b8d7c
+Containers:
+  pay-api:
+    Image:          ${W_IMG}
+    Port:           8080/TCP
+    State:          Running
+      Started:      Mon, 24 Nov 2026 03:12:09 +0530
+    Last State:     Terminated
+      Reason:       Error
+      Exit Code:    2
+      Started:      Tue, 18 Nov 2026 11:02:44 +0530
+      Finished:     Mon, 24 Nov 2026 03:12:07 +0530
+    Ready:          True
+    Restart Count:  1
+Events:
+  Type    Reason   Age   From     Message
+  ----    ------   ----  ----     -------
+  Normal  Pulled   6h    kubelet  Container image "${W_IMG}" already present on machine
+  Normal  Created  6h    kubelet  Created container: pay-api
+  Normal  Started  6h    kubelet  Started container pay-api`;
+  const W_B2_PREV = `2026-11-23T21:41:58Z INFO  upi: collect request txn=CPX93817 amount=249.00
+2026-11-23T21:42:07Z ERROR upi: NPCI response parse failed txn=CPX93822
+panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation code=0x1 addr=0x18 pc=0x9c4b2e]
+
+goroutine 4127 [running]:
+chaipay/pay-api/upi.(*Client).Collect(...)
+	/src/upi/client.go:214 +0x2ae`;
+  const W_LOG = '2026-11-24T04:02:11Z INFO  upi: collect ok txn=CPX95120 amount=120.00\n2026-11-24T04:02:12Z INFO  upi: collect ok txn=CPX95121 amount=35.00';
+  const wDeployDesc = c => `Name:                   pay-api
+Namespace:              payments
+CreationTimestamp:      Tue, 14 Oct 2026 11:20:05 +0530
+Labels:                 app=pay-api
+Selector:               app=pay-api
+Replicas:               ${c.replicas} desired | ${c.replicas} updated | ${c.replicas} total | ${c.replicas} available | 0 unavailable
+StrategyType:           RollingUpdate
+RollingUpdateStrategy:  25% max unavailable, 25% max surge
+Pod Template:
+  Labels:  app=pay-api
+  Containers:
+   pay-api:
+    Image:        ${W_IMG}
+    Port:         8080/TCP
+OldReplicaSets:  <none>
+NewReplicaSet:   pay-api-6b8d7c (${c.replicas}/${c.replicas} replicas created)
+Events:` + (c.dEvents.length ? '\n  Type    Reason             Age   From                   Message\n  ----    ------             ----  ----                   -------\n' + c.dEvents.map(e => `  Normal  ScalingReplicaSet  4s    deployment-controller  ${e}`).join('\n') : '          <none>');
+  // ReplicaSet controller: pods ko desired count tak lao (kam ho toh naya banao, zyada ho toh naye wale hatao)
+  function wSync(c, n) {
+    const before = c.replicas;
+    while (c.pods.length < n) {
+      let nm;
+      do { nm = 'pay-api-6b8d7c-' + W_SUF[c.podN % W_SUF.length]; c.podN++; } while (c.pods.some(p => p.name === nm));
+      const k = c.pods.length;
+      c.pods.push({ name: nm, ready: '1/1', status: 'Running', restarts: 0, age: '4s', node: NODES[k % 3].name, ip: '10.0.1' + (2 + k % 3) + '.' + (30 + c.podN), logs: W_LOG });
+    }
+    if (c.pods.length > n) c.pods.splice(n);
+    if (before !== n) c.dEvents.push(`Scaled ${n > before ? 'up' : 'down'} replica set pay-api-6b8d7c from ${before} to ${n}`);
+    c.replicas = n;
+    Object.assign(c.deployments[0], { ready: n + '/' + n, upToDate: n, available: n });
+    c.deployments[0].describe = wDeployDesc(c);
+  }
+  const wFileRep = s => {
+    try { const d = KG.yaml.parse((s.edited || {})['pay-api-deploy.yaml'] || W_FILE); return d && d.spec ? d.spec.replicas : null; } catch (e) { return null; }
+  };
+  const T_WHY = [
+    { text: 'Desired state padho: <code>kubectl get deployment pay-api</code> (READY = chal rahe / chahiye)', check: s => ran(s, /^kubectl get (deploy|deployments?)\b/) },
+    { text: 'Ek pod ka RESTARTS 1 hai. <code>kubectl describe pod</code> se dekho raat ko kya hua (Last State)', check: s => ran(s, /^kubectl describe (pods?|po)[ \/]pay-api-6b8d7c-b2\b/) || ran(s, /^kubectl logs .*pay-api-6b8d7c-b2.*(--previous|-p)\b|^kubectl logs (--previous|-p) .*pay-api-6b8d7c-b2/) },
+    { text: 'Self-healing khud dekho: ek <code>pay-api</code> pod delete karo', check: s => !!s.cluster.healed },
+    { text: 'Delete ke baad <code>kubectl get pods</code> — kitne pods hain? Kiska naam naya hai?', check: s => !!s.cluster.healed && ranAfter(s, s.cluster.healedAt, /^kubectl get (pods?|po)\b/) },
+    { text: 'Sale ke liye 6 pods: <code>vi pay-api-deploy.yaml</code> mein <code>replicas: 6</code>, phir <code>kubectl apply</code>', check: s => s.cluster.applied === 6 && s.cluster.replicas === 6 },
+    { text: '<code>kubectl get deployment pay-api</code> se pakka karo: <b>6/6</b>', check: s => s.cluster.applied === 6 && s.cluster.replicas === 6 && ranAfter(s, s.cluster.appliedAt, /^kubectl get (deploy|deployments?)\b/) },
+  ];
+  addLab('whyk8s', {
+    type: 'terminal',
+    title: '🖥️ Mission: pod maaro — Kubernetes wapas laayega',
+    instructions: 'Yeh tumhara pehla Kubernetes terminal hai. ChaiPay (UPI payments startup) ki pay-api pehle ek Docker server par chalti thi — container marta, toh koi raat ko uth kar docker restart karta. Ab pay-api Kubernetes par hai, 3 pods mein. Aaj raat 3:12 baje ek pod crash hua tha. Kisi ko phone nahi aaya. Kal Diwali sale hai — 6 pods chahiye.',
+    goal: `Teen cheezein apni aankhon se dekho: (1) <b>desired state</b> — Deployment kitne pods maangta hai, (2) <b>self-healing</b> — pod delete karo aur dekho Kubernetes kya karta hai,
+      (3) sale ke liye <code>pay-api</code> ko <b>6 pods</b> par le jao — <b>file mein</b> likh kar.
+      File badalne ka tareeka: <code>vi pay-api-deploy.yaml</code> → line badlo → <b>💾 Save</b> → <code>kubectl apply -f pay-api-deploy.yaml</code>.`,
+    tasks: T_WHY,
+    cluster: {
+      nodes: NODES, replicas: 3, podN: 0, applied: 3, dEvents: [],
+      pods: [
+        { name: 'pay-api-6b8d7c-a1', ready: '1/1', status: 'Running', restarts: 0, age: '6d', node: 'node-1', ip: '10.0.12.21', logs: W_LOG },
+        { name: 'pay-api-6b8d7c-b2', ready: '1/1', status: 'Running', restarts: '1 (6h ago)', age: '6d', node: 'node-2', ip: '10.0.13.21', logs: W_LOG, prevLogs: W_B2_PREV, describe: W_B2_DESC },
+        { name: 'pay-api-6b8d7c-c3', ready: '1/1', status: 'Running', restarts: 0, age: '6d', node: 'node-3', ip: '10.0.14.21', logs: W_LOG },
+      ],
+      deployments: [{ name: 'pay-api', ready: '3/3', upToDate: 3, available: 3, age: '40d', describe: wDeployDesc({ replicas: 3, dEvents: [] }) }],
+    },
+    responses: [
+      { re: rx('kubectl delete (?:pods?|po)[ /](pay-api-\\S+?)'),
+        out: (s, m) => {
+          const c = s.cluster, name = String((m && m[1]) || ''), i = c.pods.findIndex(p => p.name === name);
+          if (i < 0) return `Error from server (NotFound): pods "${name}" not found\n(pods: ${c.pods.map(p => p.name).join(', ')})`;
+          c.pods.splice(i, 1);
+          wSync(c, c.replicas);   // ReplicaSet: 3 chahiye, 2 bache → 1 naya (Deployment ka koi event nahi banta)
+          c.healed = true; c.healedAt = s.history.length;
+          return `pod "${name}" deleted\n(ab kubectl get pods chalao — kitne pay-api pods hain?)`;
+        } },
+      { re: rx('kubectl delete (?:deploy(?:ment)?s?)[ /]pay-api'), err: true,
+        out: '(simulator ne roka) Deployment delete karna = desired state hi mita dena. Phir koi pod wapas nahi aata — saare 3 pods chale jaate aur payments band. Is mission mein sirf ek POD delete karo: kubectl delete pod pay-api-6b8d7c-a1' },
+      { re: /^kubectl scale\b.*\bpay-api\b.*$/,
+        out: (s, m) => {
+          const c = s.cluster, mm = String((m && m[0]) || '').match(/--replicas[ =](\S+)/);
+          if (!mm) return 'error: required flag(s) "replicas" not set';
+          const n = Number(mm[1]);
+          if (!/^\d+$/.test(mm[1])) return `error: invalid argument "${mm[1]}" for "--replicas" flag: strconv.ParseInt: parsing "${mm[1]}": invalid syntax`;
+          if (n === 0) return '(simulator ne roka) replicas=0 matlab koi pod nahi — sale se pehle payments band. 6 karo.';
+          if (n > 12) return `(simulator) 3 nodes par ${n} pods ki jagah nahi — is mission mein 6 karo.`;
+          wSync(c, n); c.imperative = true;
+          const fr = wFileRep(s);
+          return 'deployment.apps/pay-api scaled\n' + (fr === n
+            ? `(File pay-api-deploy.yaml mein bhi replicas: ${n} hai — cluster aur file ek jaise.)`
+            : `(Dhyan do: cluster mein ab ${n} pods hain, par git wali file pay-api-deploy.yaml mein abhi bhi "replicas: ${fr}" likha hai. Agli baar koi woh file apply karega, cluster wapas ${fr} par aa jayega. Desired state FILE mein likho: vi pay-api-deploy.yaml)`);
+        } },
+      { re: rx('kubectl get (?:rs|replicasets?)(?:[ /]pay-api-6b8d7c)?'),
+        out: s => tbl([['NAME', 'DESIRED', 'CURRENT', 'READY', 'AGE'], ['pay-api-6b8d7c', s.cluster.replicas, s.cluster.pods.length, s.cluster.pods.length, '40d']]) },
+      { re: /^docker\b/, err: true,
+        out: 'bash: docker: command not found\n(Yeh Kubernetes cluster hai — containers ko yahan kubectl sambhalta hai:\n  docker ps          →  kubectl get pods\n  docker logs X      →  kubectl logs X\n  docker restart X   →  kubectl delete pod X   (Kubernetes naya pod khud banata hai)\n  3 baar docker run  →  Deployment mein replicas: 3)' },
+    ],
+    files: {
+      'pay-api-deploy.yaml': {
+        editable: true,
+        desc: 'pay-api ka Deployment (git se) — vi se badlo',
+        content: W_FILE,
+        apply: (s, text, docs) => {
+          const c = s.cluster, d = (docs || [])[0];
+          const bad = deployChecks('pay-api-deploy.yaml', d);
+          if (bad) return bad;
+          const ctr = (((d.spec.template || {}).spec || {}).containers || [])[0] || {};
+          if (ctr.image !== W_IMG) return { err: '(simulator ne roka) image badalne se naya version rollout hoga — is mission mein sirf replicas badlo.' };
+          let n = d.spec.replicas, note = '';
+          if (n == null) { n = 1; note = '\n(replicas line hi hata di! Pichhli apply mein 3 tha → kubectl apply ne field hataya → API ne default 1 laga diya. Sirf 1 pod bacha. replicas: 6 wapas likho.)'; }
+          if (n === 0) return { err: '(simulator ne roka) replicas: 0 matlab koi pod nahi — payments band. 6 likho.' };
+          if (n > 12) return { err: `(simulator) 3 nodes par ${n} pods ki jagah nahi — is mission mein 6 likho.` };
+          const was = c.replicas, same = n === was && c.applied === n;
+          wSync(c, n); c.applied = n; c.appliedAt = s.history.length;
+          if (same) return 'deployment.apps/pay-api unchanged';
+          if (n < was && !note) note += `\n(File mein replicas: ${n} tha — cluster ke ${was} mein se ${was - n} pods Terminating. Jo file mein likha, wahi sach — yahi desired state hai.)`;
+          return 'deployment.apps/pay-api configured' + note;
+        },
+      },
+    },
+    success: KG.allOf(T_WHY),
+    successText: `<b>Desired state</b> = file mein likha "mujhe 6 pods chahiye". Kubernetes ka <b>controller</b> (ReplicaSet) har waqt ginta hai: chal rahe pods ≠ chahiye → farak khud bhar deta hai.<br>
+      Isliye pod delete karne par naya pod (naye naam ke saath) turant aa gaya — aur raat 3:12 ka crash bhi kubelet ne khud restart kar diya. Docker par yeh kaam ek insaan karta tha.<br>
+      <b>Imperative vs declarative:</b> <code>kubectl scale --replicas=6</code> bhi chalta, par git ki file 3 hi bolti. Agla deploy cluster ko wapas 3 kar deta — sale ke beech mein! File mein likho, phir apply: <b>file = sach</b>.`,
+    hints: [
+      'kubectl get deployment pay-api, phir kubectl get pods. RESTARTS 1 wale pod ka: kubectl describe pod pay-api-6b8d7c-b2 (Last State dekho).',
+      'kubectl delete pod pay-api-6b8d7c-a1, phir turant kubectl get pods — pods ginti karo aur naam dekho.',
+      'vi pay-api-deploy.yaml — "replicas: 3" ko "replicas: 6" karo, 💾 Save. Phir kubectl apply -f pay-api-deploy.yaml aur kubectl get deployment pay-api.',
+    ],
+    solution: ['kubectl get deployment pay-api', 'kubectl get pods', 'kubectl describe pod pay-api-6b8d7c-b2', 'kubectl delete pod pay-api-6b8d7c-a1', 'kubectl get pods',
+      { edit: 'pay-api-deploy.yaml', change: [['replicas: 3', 'replicas: 6']] }, 'kubectl apply -f pay-api-deploy.yaml', 'kubectl get deployment pay-api'],
+  }, {
+    objectives: ['🖥️ <b>Pehla terminal mission:</b> pod delete karke self-healing dekho, aur replicas file mein likh kar desired state badlo'],
+    success: ['Maine apni aankhon se dekha ki Kubernetes mara hua pod khud wapas laata hai, aur desired state file se badalta hai'],
+    cards: [
+      { front: 'Pod delete kiya, naya pod naye naam ke saath aa gaya — kisne banaya?', back: '<b>ReplicaSet controller</b> ne. Deployment ne "3 chahiye" likha hai; 2 bache toh controller ne 1 naya bana diya. Yahi <b>desired state</b> aur self-healing hai.' },
+      { front: '<code>kubectl scale --replicas=6</code> chalaya, par git ki file mein <code>replicas: 3</code> — kya hoga?', back: '<b>Drift.</b> Agla <code>kubectl apply -f</code> cluster ko wapas 3 kar dega. Desired state file mein likho, phir apply karo.' },
+    ],
+  });
+
+  /* =====================================================================
+     🧠 controlplane — scheduler ki static pod file mein flag ka typo.
+     Pods Pending + "Events: <none>"; kubelet file khud padhta hai
+     (file ka onSave — kubectl apply nahi lagta)
+     ===================================================================== */
+  const CP_PATH = '/etc/kubernetes/manifests/kube-scheduler.yaml';
+  const CP_IMG = 'registry.k8s.io/kube-scheduler:v1.33.4';
+  const CP_NODES = [
+    { name: 'cp-1', status: 'Ready', roles: 'control-plane', age: '90d', version: 'v1.33.4' },
+    { name: 'worker-1', status: 'Ready', roles: '<none>', age: '90d', version: 'v1.33.4' },
+    { name: 'worker-2', status: 'Ready', roles: '<none>', age: '90d', version: 'v1.33.4' },
+  ];
+  const CP_FILE = `apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    component: kube-scheduler
+    tier: control-plane
+  name: kube-scheduler
+  namespace: kube-system
+spec:
+  containers:
+  - command:
+    - kube-scheduler
+    - --authentication-kubeconfig=/etc/kubernetes/scheduler.conf
+    - --authorization-kubeconfig=/etc/kubernetes/scheduler.conf
+    - --bind-address=127.0.0.1
+    - --kubeconfig=/etc/kubernetes/scheduler.conf
+    - --leader-elect=true
+    - --leader-elect-lease-duraton=30s    # Amit, aaj 9:40 AM: failover tez karne ke liye
+    image: ${CP_IMG}
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 8
+      httpGet:
+        host: 127.0.0.1
+        path: /livez
+        port: 10259
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 15
+    name: kube-scheduler
+    resources:
+      requests:
+        cpu: 100m
+    volumeMounts:
+    - mountPath: /etc/kubernetes/scheduler.conf
+      name: kubeconfig
+      readOnly: true
+  hostNetwork: true
+  priority: 2000001000
+  priorityClassName: system-node-critical
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+  - hostPath:
+      path: /etc/kubernetes/scheduler.conf
+      type: FileOrCreate
+    name: kubeconfig
+status: {}
+`;
+  const CP_CMD0 = ['kube-scheduler', '--authentication-kubeconfig=/etc/kubernetes/scheduler.conf', '--authorization-kubeconfig=/etc/kubernetes/scheduler.conf',
+    '--bind-address=127.0.0.1', '--kubeconfig=/etc/kubernetes/scheduler.conf', '--leader-elect=true', '--leader-elect-lease-duraton=30s'];
+  const CP_FLAGS = ['--authentication-kubeconfig', '--authorization-kubeconfig', '--bind-address', '--kubeconfig', '--leader-elect', '--leader-elect-lease-duration',
+    '--leader-elect-renew-deadline', '--leader-elect-retry-period', '--leader-elect-resource-lock', '--leader-elect-resource-name', '--leader-elect-resource-namespace',
+    '--config', '--v', '--secure-port', '--profiling', '--feature-gates', '--master', '--log-flush-frequency', '--client-ca-file', '--requestheader-client-ca-file',
+    '--tls-cert-file', '--tls-private-key-file', '--authentication-tolerate-lookup-failure', '--contention-profiling'];
+  // flag parse fail hone par cobra pehle usage chhapta hai, error SABSE AAKHIR mein (component-base/cli/run.go)
+  const CP_USAGE = `Usage:
+  kube-scheduler [flags]
+
+Misc flags:
+
+      --config string            The path to the configuration file.
+      --master string            The address of the Kubernetes API server (overrides any value in kubeconfig)
+      --write-config-to string   If set, write the configuration values to this file and exit.
+
+Secure serving flags:
+
+      --bind-address ip          The IP address on which to listen for the --secure-port port. (default 0.0.0.0)
+      --secure-port int          The port on which to serve HTTPS with authentication and authorization. (default 10259)
+  (… yahan ~150 lines aur flags ki …)
+
+Leader election flags:
+
+      --leader-elect                               Start a leader election client and gain leadership before executing the main loop. (default true)
+      --leader-elect-lease-duration duration       The duration that non-leader candidates will wait after observing a leadership renewal until attempting to acquire leadership. (default 15s)
+      --leader-elect-renew-deadline duration       The interval between attempts by the acting master to renew a leadership slot before it stops leading. (default 10s)
+      --leader-elect-retry-period duration         The duration the clients should wait between attempting acquisition and renewal of a leadership. (default 2s)
+  (… baaki flags …)
+
+`;
+  const KLOG = (lvl, at, msg) => `${lvl}1124 04:49:02.${String(118204 + msg.length).padStart(6, '0')}       1 ${at}] ${msg}`;
+  const durOk = v => /^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+$/.test(v || '');
+  const durSec = v => { let t = 0; String(v).replace(/(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g, (_, n, u) => { t += Number(n) * { ns: 1e-9, us: 1e-6, 'µs': 1e-6, ms: 1e-3, s: 1, m: 60, h: 3600 }[u]; }); return t; };
+  // naye command se scheduler chalega ya crash hoga? crash ho toh uske logs lautao
+  function cpCrash(cmd) {
+    const flags = cmd.slice(1);
+    for (const f of flags) {
+      const m = String(f).match(/^(--[A-Za-z0-9-]+)(?:=(.*))?$/);
+      if (!m) return CP_USAGE + `Error: "kube-scheduler" does not take any arguments, got ["${f}"]`;
+      if (!CP_FLAGS.includes(m[1])) return CP_USAGE + `Error: unknown flag: ${m[1]}`;
+      if (/^--leader-elect-(lease-duration|renew-deadline|retry-period)$/.test(m[1]) && !durOk(m[2]))
+        return CP_USAGE + `Error: invalid argument "${m[2] || ''}" for "${m[1]}" flag: time: ${/^\d+$/.test(m[2] || '') ? 'missing unit in duration' : 'invalid duration'} "${m[2] || ''}"`;
+      if (m[1] === '--leader-elect' && m[2] != null && !/^(1|0|t|f|true|false|TRUE|FALSE|True|False)$/.test(m[2]))
+        return CP_USAGE + `Error: invalid argument "${m[2]}" for "--leader-elect" flag: strconv.ParseBool: parsing "${m[2]}": invalid syntax`;
+    }
+    const val = k => { const f = flags.find(x => String(x).startsWith(k + '=')); return f ? String(f).slice(k.length + 1) : null; };
+    const kc = val('--kubeconfig');
+    if (!kc) return KLOG('W', 'client_config.go:667', 'Neither --kubeconfig nor --master was specified.  Using the inClusterConfig.  This might not work.') + '\n' +
+      KLOG('E', 'run.go:72', '"command failed" err="unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined"');
+    if (kc !== '/etc/kubernetes/scheduler.conf') return KLOG('E', 'run.go:72', `"command failed" err="stat ${kc}: no such file or directory"`);
+    const lease = val('--leader-elect-lease-duration'), renew = val('--leader-elect-renew-deadline');
+    if (durSec(lease || '15s') <= durSec(renew || '10s'))
+      return KLOG('E', 'run.go:72', `"command failed" err="leaderElection.leaseDuration: Invalid value: \\"${renew || '10s'}\\": LeaseDuration must be greater than RenewDeadline"`);
+    return null;
+  }
+  const CP_OKLOG = `I1124 04:52:31.402117       1 serving.go:386] Generated self-signed cert in-memory
+I1124 04:52:31.911204       1 server.go:167] "Starting Kubernetes Scheduler" version="v1.33.4"
+I1124 04:52:31.915720       1 secure_serving.go:211] Serving securely on 127.0.0.1:10259
+I1124 04:52:32.016384       1 leaderelection.go:257] attempting to acquire leader lease kube-system/kube-scheduler...
+I1124 04:52:32.031947       1 leaderelection.go:271] successfully acquired lease kube-system/kube-scheduler
+I1124 04:52:32.122650       1 schedule_one.go:314] "Successfully bound pod to node" pod="payments/settlement-api-7c9f6d5b8-x4k2m" node="worker-1" evaluatedNodes=3 feasibleNodes=2
+I1124 04:52:32.124028       1 schedule_one.go:314] "Successfully bound pod to node" pod="payments/settlement-api-7c9f6d5b8-p7r9t" node="worker-2" evaluatedNodes=3 feasibleNodes=2`;
+  const ksRows = c => [
+    ['coredns-674b8bbfcf-8xk2p', '1/1', 'Running', '0', '90d', '10.244.0.3', 'cp-1'],
+    ['coredns-674b8bbfcf-q9w4t', '1/1', 'Running', '0', '90d', '10.244.0.4', 'cp-1'],
+    ['etcd-cp-1', '1/1', 'Running', '0', '90d', '10.20.0.10', 'cp-1'],
+    ['kube-apiserver-cp-1', '1/1', 'Running', '0', '90d', '10.20.0.10', 'cp-1'],
+    ['kube-controller-manager-cp-1', '1/1', 'Running', '0', '90d', '10.20.0.10', 'cp-1'],
+    ['kube-proxy-5xk8w', '1/1', 'Running', '0', '90d', '10.20.0.10', 'cp-1'],
+    ['kube-proxy-h2m9q', '1/1', 'Running', '0', '90d', '10.20.0.21', 'worker-1'],
+    ['kube-proxy-t7v4n', '1/1', 'Running', '0', '90d', '10.20.0.22', 'worker-2'],
+    c.schedOk ? ['kube-scheduler-cp-1', '1/1', 'Running', '0', '9s', '10.20.0.10', 'cp-1']
+      : ['kube-scheduler-cp-1', '0/1', 'CrashLoopBackOff', c.edits ? c.edits + ' (6s ago)' : '12 (2m14s ago)', c.edits ? '7s' : '41m', '10.20.0.10', 'cp-1'],
+  ];
+  function ksTable(c, cmd) {
+    const wide = /-o ?wide|-owide|--output=wide/.test(cmd);
+    const toks = cmd.split(' ').filter(t => t !== 'kube-system' && !/^--?n(amespace)?=?/.test(t));
+    let rows = ksRows(c);
+    const named = rows.filter(r => toks.includes(r[0]) || toks.includes('pod/' + r[0]));
+    if (named.length) rows = named;
+    else if (toks.some(t => /^kube-|^etcd-|^coredns-/.test(t))) {
+      const want = toks.find(t => /^kube-|^etcd-|^coredns-/.test(t));
+      return `Error from server (NotFound): pods "${want}" not found`;
+    }
+    const head = ['NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE'].concat(wide ? ['IP', 'NODE', 'NOMINATED NODE', 'READINESS GATES'] : []);
+    return tbl([head].concat(rows.map(r => r.slice(0, 5).concat(wide ? [r[5], r[6], '<none>', '<none>'] : []))));
+  }
+  const schedDesc = c => {
+    const cmd = c.cmd || CP_CMD0;
+    return `Name:                 kube-scheduler-cp-1
+Namespace:            kube-system
+Priority:             2000001000
+Priority Class Name:  system-node-critical
+Node:                 cp-1/10.20.0.10
+Labels:               component=kube-scheduler
+                      tier=control-plane
+Annotations:          kubernetes.io/config.hash: 9b1f3c7e5a2d4f6b8c0e1a3d5f7b9c2e
+                      kubernetes.io/config.mirror: 9b1f3c7e5a2d4f6b8c0e1a3d5f7b9c2e
+                      kubernetes.io/config.seen: 2026-11-24T09:40:12.551203+05:30
+                      kubernetes.io/config.source: file
+Status:               Running
+IP:                   10.20.0.10
+Controlled By:        Node/cp-1
+Containers:
+  kube-scheduler:
+    Image:         ${CP_IMG}
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+${cmd.map(x => '      ' + x).join('\n')}
+` + (c.schedOk ? `    State:          Running
+      Started:      Mon, 24 Nov 2026 10:22:31 +0530
+    Ready:          True
+    Restart Count:  0
+Events:
+  Type    Reason   Age   From     Message
+  ----    ------   ----  ----     -------
+  Normal  Pulled   10s   kubelet  Container image "${CP_IMG}" already present on machine
+  Normal  Created  10s   kubelet  Created container: kube-scheduler
+  Normal  Started  10s   kubelet  Started container kube-scheduler` : `    State:          Waiting
+      Reason:       CrashLoopBackOff
+    Last State:     Terminated
+      Reason:       Error
+      Exit Code:    1
+    Ready:          False
+    Restart Count:  ${c.edits || 12}
+Events:
+  Type     Reason   Age                   From     Message
+  ----     ------   ----                  ----     -------
+  Normal   Pulled   ${c.edits ? '6s' : '2m14s (x13 over 41m)'}   kubelet  Container image "${CP_IMG}" already present on machine
+  Warning  BackOff  ${c.edits ? '4s' : '9s (x187 over 41m)'}    kubelet  Back-off restarting failed container kube-scheduler in pod kube-scheduler-cp-1_kube-system(9b1f3c7e5a2d4f6b8c0e1a3d5f7b9c2e)`);
+  };
+  const SET_IMG = '111122223333.dkr.ecr.ap-south-1.amazonaws.com/settlement-api:2.3.0';
+  const setDesc = (sfx, node) => `Name:             settlement-api-7c9f6d5b8-${sfx}
+Namespace:        payments
+Priority:         0
+Service Account:  default
+Node:             ${node ? node + '/10.20.0.' + (node === 'worker-1' ? 21 : 22) : '<none>'}
+Labels:           app=settlement-api
+                  pod-template-hash=7c9f6d5b8
+Annotations:      <none>
+Status:           ${node ? 'Running' : 'Pending'}
+IP:               ${node ? '10.244.' + (node === 'worker-1' ? 1 : 2) + '.37' : ''}
+Controlled By:    ReplicaSet/settlement-api-7c9f6d5b8
+Containers:
+  settlement-api:
+    Image:      ${SET_IMG}
+    Port:       8080/TCP
+    Requests:
+      cpu:      250m
+      memory:   256Mi
+QoS Class:       Burstable
+Node-Selectors:  <none>
+Tolerations:     node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                 node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+` + (node ? `Events:
+  Type    Reason     Age   From               Message
+  ----    ------     ----  ----               -------
+  Normal  Scheduled  8s    default-scheduler  Successfully assigned payments/settlement-api-7c9f6d5b8-${sfx} to ${node}
+  Normal  Pulling    8s    kubelet            Pulling image "${SET_IMG}"
+  Normal  Pulled     4s    kubelet            Successfully pulled image "${SET_IMG}" in 3.912s (3.912s including waiting). Image size: 48213907 bytes.
+  Normal  Created    4s    kubelet            Created container: settlement-api
+  Normal  Started    4s    kubelet            Started container settlement-api` : 'Events:          <none>');
+  const CP_EV0 = [['LAST SEEN', 'TYPE', 'REASON', 'OBJECT', 'MESSAGE'],
+    ['14m', 'Normal', 'ScalingReplicaSet', 'deployment/settlement-api', 'Scaled up replica set settlement-api-7c9f6d5b8 from 0 to 2'],
+    ['14m', 'Normal', 'SuccessfulCreate', 'replicaset/settlement-api-7c9f6d5b8', 'Created pod: settlement-api-7c9f6d5b8-x4k2m'],
+    ['14m', 'Normal', 'SuccessfulCreate', 'replicaset/settlement-api-7c9f6d5b8', 'Created pod: settlement-api-7c9f6d5b8-p7r9t']];
+  const setPod = (sfx, node) => ({ name: 'settlement-api-7c9f6d5b8-' + sfx, ready: node ? '1/1' : '0/1', status: node ? 'Running' : 'Pending', restarts: 0, age: node ? '8s' : '14m',
+    node: node || '<none>', ip: node ? '10.244.' + (node === 'worker-1' ? 1 : 2) + '.37' : '<none>', describe: setDesc(sfx, node),
+    logs: node ? '{"level":"info","msg":"settlement-api 2.3.0 listening on :8080"}' : undefined });
+  const KS = '(?=.*(?:-n|--namespace)[ =]kube-system\\b)';
+  const T_CP = [
+    { text: 'Pods ka haal dekho (<code>kubectl get pods</code>) — <code>settlement-api</code> kahan atka hai?', check: s => s.history.some(h => /^kubectl get (pods?|po)\b/.test(h) && !/kube-system|-A\b|--all-namespaces/.test(h)) },
+    { text: 'Pending pod ka describe padho — <b>Node</b> aur <b>Events</b> mein kya likha hai?', check: s => ran(s, /^kubectl describe (pods?|po)[ \/]settlement-api/) },
+    { text: 'Control plane ke pods dekho (<code>kubectl get pods -n kube-system</code>)', check: s => !!s.cluster.sawKs },
+    { text: 'Jo control plane pod crash ho raha hai, uske logs padho — <b>aakhri line</b>', check: s => !!s.cluster.sawLogs },
+    { text: 'cp-1 par us pod ki file theek karo (<code>vi ' + CP_PATH + '</code>)', check: s => !!s.cluster.schedOk },
+    { text: 'Pakka karo: <code>settlement-api</code> ke dono pods <b>Running</b>', check: s => !!s.cluster.schedOk && ranAfter(s, s.cluster.fixedAt, /^kubectl get (pods?|po)\b(?!.*kube-system)/) },
+  ];
+  addLab('controlplane', {
+    type: 'terminal',
+    title: '🖥️ Mission: pods Pending, aur Events bilkul khaali',
+    instructions: 'ChaiPay ka staging cluster chaipay-staging kubeadm se bana hai (EKS mein control plane AWS chalata hai aur dikhta nahi — yahan sab dikhta hai). 14 minute pehle CI ne settlement-api ka naya version deploy kiya. Dono pods tab se Pending hain. pay-api ke purane pods theek chal rahe hain. Aaj subah 9:40 par Amit ne control plane par "kuch tuning" ki thi.',
+    goal: `<code>settlement-api</code> ke pods ko <b>Running</b> karo. Pehle socho: pod ko node <b>kaun</b> chunta hai? Phir dekho woh component zinda hai ya nahi.
+      Control plane ke pods <code>kube-system</code> namespace mein hain (<code>-n kube-system</code>). Unki files cp-1 node par <code>/etc/kubernetes/manifests/</code> mein hain — <code>vi</code> se khulti hain.`,
+    tasks: T_CP,
+    cluster: {
+      nodes: CP_NODES, schedOk: false, edits: 0,
+      pods: [
+        { name: 'pay-api-6b8d7c-a1', ready: '1/1', status: 'Running', restarts: 0, age: '6d', node: 'worker-1', ip: '10.244.1.21' },
+        { name: 'pay-api-6b8d7c-b2', ready: '1/1', status: 'Running', restarts: 0, age: '6d', node: 'worker-2', ip: '10.244.2.21' },
+        setPod('x4k2m', null), setPod('p7r9t', null),
+      ],
+      deployments: [
+        { name: 'pay-api', ready: '2/2', upToDate: 2, available: 2, age: '40d' },
+        { name: 'settlement-api', ready: '0/2', upToDate: 2, available: 0, age: '14m' },
+      ],
+      events: tbl(CP_EV0).split('\n'),
+    },
+    responses: [
+      { re: new RegExp('^kubectl ' + KS + '(?:(?:-n|--namespace)[ =]kube-system )?get (?:pods?|po)\\b.*$'),
+        out: (s, m) => { s.cluster.sawKs = true; return ksTable(s.cluster, String((m && m[0]) || '')); } },
+      { re: /^kubectl get (?:pods?|po)\b.*(?:-A|--all-namespaces)\b.*$/,
+        out: s => { s.cluster.sawKs = true; const c = s.cluster;
+          return tbl([['NAMESPACE', 'NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE']].concat(ksRows(c).map(r => ['kube-system'].concat(r.slice(0, 5))))
+            .concat(c.pods.map(p => ['payments', p.name, p.ready, p.status, String(p.restarts), p.age]))); } },
+      { re: new RegExp('^kubectl ' + KS + '.*\\blogs\\b.*$'),
+        out: (s, m) => {
+          const c = s.cluster, cmd = String((m && m[0]) || '');
+          if (/kube-scheduler/.test(cmd)) { c.sawLogs = true; return c.schedOk ? CP_OKLOG : (c.crash || cpCrash(CP_CMD0)); }
+          if (/kube-controller-manager/.test(cmd)) return 'I1124 04:37:41.118204       1 event.go:389] "Event occurred" object="payments/settlement-api" fieldPath="" kind="Deployment" apiVersion="apps/v1" type="Normal" reason="ScalingReplicaSet" message="Scaled up replica set settlement-api-7c9f6d5b8 from 0 to 2"\nI1124 04:37:41.162530       1 event.go:389] "Event occurred" object="payments/settlement-api-7c9f6d5b8" fieldPath="" kind="ReplicaSet" apiVersion="apps/v1" type="Normal" reason="SuccessfulCreate" message="Created pod: settlement-api-7c9f6d5b8-x4k2m"\nI1124 04:37:41.171944       1 event.go:389] "Event occurred" object="payments/settlement-api-7c9f6d5b8" fieldPath="" kind="ReplicaSet" apiVersion="apps/v1" type="Normal" reason="SuccessfulCreate" message="Created pod: settlement-api-7c9f6d5b8-p7r9t"';
+          if (/etcd-cp-1/.test(cmd)) return '{"level":"info","ts":"2026-11-24T04:49:58.204Z","caller":"mvcc/index.go:214","msg":"compact tree index","revision":8812456}\n{"level":"info","ts":"2026-11-24T04:49:58.311Z","caller":"mvcc/kvstore_compaction.go:72","msg":"finished scheduled compaction","compact-revision":8812456,"took":"98.1ms"}';
+          if (/kube-apiserver/.test(cmd)) return 'I1124 04:50:12.004118       1 alloc.go:330] "allocated clusterIPs" service="payments/settlement-api" clusterIPs={"IPv4":"10.96.141.22"}';
+          return '(is pod ke logs mein kuch khaas nahi — sab theek chal raha hai)';
+        } },
+      { re: new RegExp('^kubectl ' + KS + '.*\\bdescribe\\b.*$'),
+        out: (s, m) => /kube-scheduler/.test(String((m && m[0]) || '')) ? schedDesc(s.cluster) : '(is mission mein sirf kube-scheduler-cp-1 ka describe hai — baaki control plane pods Running hain)' },
+      { re: new RegExp('^kubectl ' + KS + '.*\\bdelete\\b.*kube-scheduler.*$'),
+        out: s => 'pod "kube-scheduler-cp-1" deleted\n(kubelet ne mirror pod turant wapas bana diya — kyunki yeh pod cp-1 ki FILE se banta hai. File wahi hai, toh container phir ' + (s.cluster.schedOk ? 'chalega.)' : 'crash hoga. Ilaaj file mein hai.)') },
+      { re: new RegExp('^kubectl ' + KS + '.*\\bedit\\b.*kube-scheduler.*$'), err: true,
+        out: `error: pods "kube-scheduler-cp-1" is invalid: spec: Forbidden: pod updates may not change fields other than \`spec.containers[*].image\`, \`spec.initContainers[*].image\`, \`spec.activeDeadlineSeconds\`, \`spec.tolerations\` (only additions to existing tolerations), \`spec.terminationGracePeriodSeconds\` (allow it to be set to 1 if it was previously negative)\n(Yeh mirror pod hai — API mein sirf parchhai. Asli pod cp-1 ki file se banta hai: vi ${CP_PATH})` },
+      { re: /^kubectl (?:logs|describe (?:pods?|po))[ /](?:pods?\/)?((?:kube-(?:scheduler|apiserver|controller-manager)|etcd)-cp-1|kube-proxy-\S+|coredns-\S+)\b.*$/, err: true,
+        out: (s, m) => `Error from server (NotFound): pods "${(m && m[1]) || ''}" not found\n(Yeh pod kube-system namespace mein hai. Command ke aakhir mein -n kube-system jodo.)` },
+      { re: /^kubectl get (?:cs|componentstatus(?:es)?)\b.*$/,
+        out: s => 'Warning: v1 ComponentStatus is deprecated in v1.19+\n' + tbl([['NAME', 'STATUS', 'MESSAGE', 'ERROR'],
+          s.cluster.schedOk ? ['scheduler', 'Healthy', 'ok', ''] : ['scheduler', 'Unhealthy', 'Get "https://127.0.0.1:10259/healthz": dial tcp 127.0.0.1:10259: connect: connection refused', ''],
+          ['controller-manager', 'Healthy', 'ok', ''], ['etcd-0', 'Healthy', 'ok', '']]) },
+      { re: /^ssh (?:\S+@)?(cp-1|worker-[12])$/,
+        out: (s, m) => `Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-1015-aws x86_64)\n(simulator: tum isi terminal mein ho — ${(m && m[1]) || 'cp-1'} ki files yahin khulti hain. Control plane ki files: ls /etc/kubernetes/manifests)` },
+      { re: /^ls(?: -l| -la)? \/etc\/kubernetes\/manifests\/?$/, out: 'etcd.yaml  kube-apiserver.yaml  kube-controller-manager.yaml  kube-scheduler.yaml' },
+      { re: /^(?:cat|vi|vim|nano) \/etc\/kubernetes\/manifests\/(etcd|kube-apiserver|kube-controller-manager)\.yaml$/,
+        out: (s, m) => `(simulator: ${(m && m[1]) || 'yeh'} theek chal raha hai, uski file is mission mein nahi kholi jaati. Crash ho raha component kaunsa hai? kubectl get pods -n kube-system)` },
+      { re: /^crictl ps\b.*$/,
+        out: s => tbl([['CONTAINER', 'IMAGE', 'CREATED', 'STATE', 'NAME', 'ATTEMPT', 'POD ID', 'POD'],
+          ['4f1c9a2b7d3e1', '0c1a9e7d2f4b8', '2 days ago', 'Running', 'kube-apiserver', '0', 'a7d2c91e4b3f5', 'kube-apiserver-cp-1'],
+          ['8b2e5d1f9c7a3', '3e9b1c5a7d2f4', '2 days ago', 'Running', 'etcd', '0', 'c4e8a2d6f1b9e', 'etcd-cp-1'],
+          s.cluster.schedOk ? ['b91d4e7c2a5f8', '5d8e2a1f7c9b3', '9 seconds ago', 'Running', 'kube-scheduler', '0', 'e2f7b4c9a1d6e', 'kube-scheduler-cp-1']
+            : ['b91d4e7c2a5f8', '5d8e2a1f7c9b3', '6 seconds ago', 'Exited', 'kube-scheduler', String(s.cluster.edits || 12), 'e2f7b4c9a1d6e', 'kube-scheduler-cp-1']]) },
+    ],
+    files: {
+      [CP_PATH]: {
+        editable: true,
+        desc: 'cp-1 node par kube-scheduler ki static pod file — kubelet isse pod banata hai',
+        content: CP_FILE,
+        apply: () => ({ err: `(simulator ne roka) Static pod ki file kubectl apply se nahi lagti. Yeh file cp-1 ka kubelet khud padhta hai — vi mein 💾 Save karte hi kubelet scheduler ka pod dobara banata hai.\n(kubectl apply karte toh kube-system mein "kube-scheduler" naam ka ek ALAG, aam pod ban jaata — asli scheduler waisa hi toota rehta.)` }),
+        onSave: (s, text, docs, perr) => {
+          const c = s.cluster;
+          if (perr) return { err: `(cp-1 par kubelet ka log) "Could not process manifest file" err="${CP_PATH}: couldn't parse as pod(${perr.message}), please check config file"\n(kubelet file padh hi nahi paaya — scheduler ab bhi toota hai. vi se line ${perr.line} dekho.)` };
+          const d = (docs || [])[0] || {}, ctr = ((d.spec || {}).containers || [])[0] || {};
+          if (d.kind !== 'Pod') return { err: `(cp-1 par kubelet ka log) "Could not process manifest file" err="${CP_PATH}: invalid pod: kind ${d.kind || 'khaali'} hai, Pod chahiye"` };
+          if (ctr.image !== CP_IMG) return { err: '(simulator ne roka) image badal gaya — control plane ka version kubeadm upgrade se badalta hai, haath se nahi. Sirf flag theek karo.' };
+          const cmd = Array.isArray(ctr.command) ? ctr.command.map(String) : [];
+          if (cmd[0] !== 'kube-scheduler') return { err: '(simulator ne roka) command ki pehli line "kube-scheduler" honi chahiye — wahi program chalta hai.' };
+          c.cmd = cmd; c.edits = (c.edits || 0) + 1;
+          c.crash = cpCrash(cmd);
+          const was = c.schedOk;
+          c.schedOk = !c.crash;
+          if (c.schedOk && !was) {
+            c.fixedAt = s.history.length;
+            c.pods = c.pods.filter(p => !/^settlement-api-/.test(p.name)).concat([setPod('x4k2m', 'worker-1'), setPod('p7r9t', 'worker-2')]);
+            c.deployments[1] = Object.assign({}, c.deployments[1], { ready: '2/2', available: 2 });
+            c.events = tbl(CP_EV0.concat([
+              ['9s', 'Normal', 'Scheduled', 'pod/settlement-api-7c9f6d5b8-x4k2m', 'Successfully assigned payments/settlement-api-7c9f6d5b8-x4k2m to worker-1'],
+              ['9s', 'Normal', 'Scheduled', 'pod/settlement-api-7c9f6d5b8-p7r9t', 'Successfully assigned payments/settlement-api-7c9f6d5b8-p7r9t to worker-2'],
+              ['5s', 'Normal', 'Started', 'pod/settlement-api-7c9f6d5b8-x4k2m', 'Started container settlement-api'],
+              ['5s', 'Normal', 'Started', 'pod/settlement-api-7c9f6d5b8-p7r9t', 'Started container settlement-api']])).split('\n');
+          }
+          return `(cp-1 par kubelet ne ${CP_PATH} ka badlaav dekha → purana kube-scheduler container hataya, naya chalaya.)\nAb dekho chala ya nahi: kubectl get pods -n kube-system`;
+        },
+      },
+    },
+    success: KG.allOf(T_CP),
+    successText: `<b>Chain:</b> CI ne <code>kubectl apply</code> kiya → API server ne Deployment <b>etcd</b> mein likha → <b>controller-manager</b> ne ReplicaSet aur 2 pods banaye (Events mein "Created pod") →
+      <b>scheduler</b> ko node chunna tha — par scheduler crash ho raha tha. Isliye pod par <code>Node: &lt;none&gt;</code> aur <code>Events: &lt;none&gt;</code>: kisi ne pod ko dekha hi nahi.
+      (Scheduler zinda ho par node na mile, toh <code>FailedScheduling</code> event aata hai.)<br>
+      <b>Static pod:</b> control plane ke pods cp-1 ki files (<code>/etc/kubernetes/manifests</code>) se banate hain. kubelet file padhta hai — <code>kubectl edit/apply/delete</code> se ilaaj nahi hota. File theek karo, kubelet khud naya pod bana deta hai.<br>
+      <b>Dhyan do:</b> scheduler down tha, phir bhi pay-api chalti rahi. Control plane down = <b>naye kaam ruk jaate hain</b>, chal rahe pods nahi marte.
+      EKS mein yeh logs CloudWatch ke "control plane logging" mein milte hain (scheduler log type ON karna padta hai).`,
+    hints: [
+      'kubectl get pods, phir kubectl describe pod settlement-api-7c9f6d5b8-x4k2m. Node: <none> aur Events: <none> — kisi ne is pod ke liye node chuna hi nahi. Node kaun chunta hai?',
+      'kubectl get pods -n kube-system — kaunsa pod CrashLoopBackOff mein hai? kubectl logs kube-scheduler-cp-1 -n kube-system — sabse aakhri line padho.',
+      'vi /etc/kubernetes/manifests/kube-scheduler.yaml — flag ki spelling: "duraton" ko "duration" karo, 💾 Save. kubectl apply nahi — kubelet file khud padhta hai. Phir kubectl get pods.',
+    ],
+    solution: ['kubectl get pods', 'kubectl describe pod settlement-api-7c9f6d5b8-x4k2m', 'kubectl get pods -n kube-system', 'kubectl logs kube-scheduler-cp-1 -n kube-system',
+      { edit: CP_PATH, change: [['--leader-elect-lease-duraton=30s', '--leader-elect-lease-duration=30s']] }, 'kubectl get pods'],
+  }, {
+    objectives: ['🖥️ <b>Mission:</b> pods Pending aur Events khaali — control plane ka kaunsa hissa mara hai? Static pod ki file khud theek karo'],
+    success: ['Main "Events: &lt;none&gt;" wale Pending pod se pehchaan leta hoon ki scheduler down hai, aur static pod ki file theek kar sakta hoon'],
+    cards: [
+      { front: 'Pod Pending, <code>Node: &lt;none&gt;</code>, aur <code>Events: &lt;none&gt;</code> — sabse pehle kya shak karo?', back: '<b>Scheduler</b> chal hi nahi raha. Scheduler zinda ho aur node na mile toh <code>FailedScheduling</code> event aata hai. <code>kubectl get pods -n kube-system</code> dekho.' },
+      { front: 'kubeadm cluster mein kube-scheduler ki config kahan badalte hain?', back: 'cp node par <code>/etc/kubernetes/manifests/kube-scheduler.yaml</code> — <b>static pod</b>. kubelet file dekhta hai aur pod khud dobara banata hai. <code>kubectl edit/apply</code> kaam nahi karta (woh sirf mirror pod hai).' },
+    ],
+  });
+
+  /* =====================================================================
+     🧲 affinity — Ravi ka podAntiAffinity do galtiyon ke saath:
+     (1) labelSelector "app: payapi" — kisi pod se match nahi → rule khaali
+     (2) topologyKey zone — 2 zones, 2 replicas + maxSurge 1 → rollout atakta hai
+     Chhota scheduler: taint → CPU → required anti-affinity (filter), preferred + free CPU (score).
+     Rolling update: maxSurge / maxUnavailable asli hisaab se.
+     ===================================================================== */
+  const AF_FILE_NAME = 'pay-api-deploy.yaml';
+  const AF_IMG = '111122223333.dkr.ecr.ap-south-1.amazonaws.com/pay-api:1.8.0';
+  const AF_FILE = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pay-api
+  namespace: payments
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pay-api
+  template:
+    metadata:
+      labels:
+        app: pay-api
+    spec:
+      # Ravi (PR #482): "pay-api ke dono pods kabhi ek saath na marein"
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: payapi
+            topologyKey: topology.kubernetes.io/zone
+      containers:
+      - name: pay-api
+        image: ${AF_IMG}
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+`;
+  const AF_N = [
+    { name: 'node-1', zone: 'ap-south-1a', free: 1.0, ip: '10.0.12.5' },
+    { name: 'node-2', zone: 'ap-south-1a', free: 0.8, ip: '10.0.13.5' },
+    { name: 'node-3', zone: 'ap-south-1b', free: 2.5, ip: '10.0.44.5' },
+    { name: 'node-4', zone: 'ap-south-1b', free: 2.5, ip: '10.0.45.5', taint: true },
+  ];
+  const afLabels = n => Object.assign({ 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': n.name, 'kubernetes.io/os': 'linux',
+    'node.kubernetes.io/instance-type': 'm6i.xlarge', 'topology.kubernetes.io/region': 'ap-south-1', 'topology.kubernetes.io/zone': n.zone }, n.taint ? { workload: 'ledger' } : {});
+  const AF_RS = ['7f9c4d', '5d2b8e', '8a3f1c', '9c6e2a', '4b7d9f', '3e8a5c', '2c9e7b', '6f1a3d'];
+  const AF_SUF = ['k2', 'm4', 'p6', 'r8', 't1', 'v3', 'x5', 'z7', 'b9', 'd3', 'f5', 'h7'];
+  const AF_PS_KEYS = ['affinity', 'containers', 'tolerations', 'nodeSelector', 'topologySpreadConstraints', 'serviceAccountName', 'terminationGracePeriodSeconds',
+    'securityContext', 'volumes', 'initContainers', 'priorityClassName', 'nodeName', 'restartPolicy', 'dnsPolicy', 'schedulerName'];
+  const AF_TERM_KEYS = ['labelSelector', 'namespaceSelector', 'namespaces', 'topologyKey', 'matchLabelKeys', 'mismatchLabelKeys'];
+  const AFP = 'spec.template.spec.affinity.podAntiAffinity';
+  const afBad = msg => deployBadReq(AF_FILE_NAME, msg);
+  const intOrPct = (v, n, up) => {
+    if (v == null) return null;
+    const m = String(v).match(/^(\d+)%$/);
+    if (m) return up ? Math.ceil(Number(m[1]) * n / 100) : Math.floor(Number(m[1]) * n / 100);
+    return /^\d+$/.test(String(v)) ? Number(v) : NaN;
+  };
+  // ek anti-affinity term ko check + normalize karo (asli API errors ke saath)
+  function afTerm(t, path) {
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return { err: afBad(`json: cannot unmarshal ${Array.isArray(t) ? 'array' : 'string'} into Go struct field PodAffinityTerm.${path} of type v1.PodAffinityTerm`) };
+    const k = Object.keys(t).find(x => !AF_TERM_KEYS.includes(x));
+    if (k) return { err: afBad(`strict decoding error: unknown field "${path}.${k}"`) };
+    const ls = t.labelSelector;
+    if (ls && typeof ls === 'object') {
+      const lk = Object.keys(ls).find(x => !['matchLabels', 'matchExpressions'].includes(x));
+      if (lk) return { err: afBad(`strict decoding error: unknown field "${path}.labelSelector.${lk}"`) };
+    }
+    if (!t.topologyKey) return { err: { err: `The Deployment "pay-api" is invalid: ${path}.topologyKey: Required value: can not be empty` } };
+    if (t.namespaces || t.namespaceSelector || t.matchLabelKeys || t.mismatchLabelKeys) return { err: { err: '(simulator ne roka) namespaces / matchLabelKeys is mission mein nahi chahiye — labelSelector aur topologyKey hi theek karo.' } };
+    return { term: { sel: ls || null, key: String(t.topologyKey) } };
+  }
+  // poori file → template (rule + rollout strategy) ya {err}
+  function afParse(d) {
+    const bad = deployChecks(AF_FILE_NAME, d);
+    if (bad) return { err: bad };
+    if (d.spec.replicas !== 2) return { err: { err: '(simulator ne roka) is mission mein replicas: 2 rakho — sawaal spread ka hai, ginti ka nahi.' } };
+    const ps = (d.spec.template && d.spec.template.spec) || {};
+    const pk = Object.keys(ps).find(k => !AF_PS_KEYS.includes(k));
+    if (pk) return { err: afBad(`strict decoding error: unknown field "spec.template.spec.${pk}"`) };
+    const ctr = (ps.containers || [])[0] || {};
+    if (ctr.image !== AF_IMG || String((((ctr.resources || {}).requests) || {}).cpu) !== '500m') return { err: { err: '(simulator ne roka) container (image / requests) mat badlo — sirf affinity theek karo.' } };
+    if (ps.tolerations) return { err: { err: '(simulator ne roka) toleration se pay-api node-4 par ja sakti hai — node-4 sirf ledger ke liye reserved hai (taint dedicated=ledger). pay-api ko wahan bhejna ledger ki CPU khaana hai. tolerations hatao.' } };
+    if (ps.nodeSelector || ps.nodeName) return { err: { err: '(simulator ne roka) pods ko haath se node par baandhna (nodeSelector / nodeName) spread nahi hai — node mara toh woh pod bhi gaya. podAntiAffinity theek karo.' } };
+    if (ps.topologySpreadConstraints) return { err: { err: '(simulator) topologySpreadConstraints bhi sahi raasta hai — par yeh simulator abhi sirf podAntiAffinity samajhta hai. Ravi ka podAntiAffinity block hi theek karo.' } };
+    const st = d.spec.strategy || {};
+    if (st.type === 'Recreate') return { err: { err: '(simulator ne roka) Recreate = pehle dono purane pods band, phir naye — utni der payments band. pay-api ke liye RollingUpdate hi rakho.' } };
+    const ru = st.rollingUpdate || {};
+    let surge = intOrPct(ru.maxSurge, 2, true), unav = intOrPct(ru.maxUnavailable, 2, false);
+    if (surge == null) surge = 1;
+    if (unav == null) unav = 0;
+    if (isNaN(surge) || isNaN(unav)) return { err: { err: `The Deployment "pay-api" is invalid: spec.strategy.rollingUpdate: Invalid value: must be an integer or percentage (e.g '5%')` } };
+    if (surge === 0 && unav === 0) return { err: { err: 'The Deployment "pay-api" is invalid: spec.strategy.rollingUpdate.maxUnavailable: Invalid value: intstr.IntOrString{Type:0, IntVal:0, StrVal:""}: may not be 0 when maxSurge is 0' } };
+    const aff = ps.affinity || {};
+    const ak = Object.keys(aff).find(k => !['nodeAffinity', 'podAffinity', 'podAntiAffinity'].includes(k));
+    if (ak) return { err: afBad(`strict decoding error: unknown field "spec.template.spec.affinity.${ak}"`) };
+    if (aff.nodeAffinity || aff.podAffinity) return { err: { err: '(simulator ne roka) nodeAffinity / podAffinity is mission mein nahi — sirf podAntiAffinity theek karo.' } };
+    const paa = aff.podAntiAffinity || {};
+    const pak = Object.keys(paa).find(k => !['requiredDuringSchedulingIgnoredDuringExecution', 'preferredDuringSchedulingIgnoredDuringExecution'].includes(k));
+    if (pak) return { err: afBad(`strict decoding error: unknown field "${AFP}.${pak}"`) };
+    const hard = [], soft = [];
+    const req = paa.requiredDuringSchedulingIgnoredDuringExecution, pref = paa.preferredDuringSchedulingIgnoredDuringExecution;
+    if (req != null && !Array.isArray(req)) return { err: afBad(`json: cannot unmarshal object into Go struct field PodAntiAffinity.${AFP}.requiredDuringSchedulingIgnoredDuringExecution of type []v1.PodAffinityTerm`) };
+    if (pref != null && !Array.isArray(pref)) return { err: afBad(`json: cannot unmarshal object into Go struct field PodAntiAffinity.${AFP}.preferredDuringSchedulingIgnoredDuringExecution of type []v1.WeightedPodAffinityTerm`) };
+    for (let i = 0; i < (req || []).length; i++) {
+      const r = afTerm(req[i], `${AFP}.requiredDuringSchedulingIgnoredDuringExecution[${i}]`);
+      if (r.err) return r; hard.push(r.term);
+    }
+    for (let i = 0; i < (pref || []).length; i++) {
+      const w = pref[i] || {}, P = `${AFP}.preferredDuringSchedulingIgnoredDuringExecution[${i}]`;
+      const wk = Object.keys(w).find(k => !['weight', 'podAffinityTerm'].includes(k));
+      if (wk) return { err: afBad(`strict decoding error: unknown field "${P}.${wk}"` + (AF_TERM_KEYS.includes(wk) ? `\n(preferred mein term "podAffinityTerm:" ke andar jaata hai, weight ke saath)` : '')) };
+      if (typeof w.weight !== 'number' || w.weight < 1 || w.weight > 100) return { err: { err: `The Deployment "pay-api" is invalid: ${P}.weight: Invalid value: ${w.weight == null ? 0 : JSON.stringify(w.weight)}: must be in the range 1-100` } };
+      const r = afTerm(w.podAffinityTerm || {}, `${P}.podAffinityTerm`);
+      if (r.err) return r; soft.push(Object.assign({ weight: w.weight }, r.term));
+    }
+    return { tpl: { hard, soft, surge, unav, key: JSON.stringify([aff, st]) } };
+  }
+  const afSelMatch = (sel, labels) => {
+    if (!sel) return false;   // labelSelector hi nahi = kisi pod se match nahi
+    const ml = sel.matchLabels || {}, me = sel.matchExpressions || [];
+    return Object.keys(ml).every(k => labels[k] === String(ml[k])) && me.every(e => {
+      const v = labels[e.key], vals = (e.values || []).map(String);
+      return e.operator === 'In' ? vals.includes(v) : e.operator === 'NotIn' ? !vals.includes(v) : e.operator === 'Exists' ? v != null : e.operator === 'DoesNotExist' ? v == null : false;
+    });
+  };
+  const afPay = c => c.pods.filter(p => p.labels && p.labels.app === 'pay-api');
+  const afFree = (c, n) => n.free - 0.5 * afPay(c).filter(p => p.node === n.name).length;
+  // kya is node par term ka koi matching pod (usi topology domain mein) pehle se hai?
+  const afClash = (c, term, n) => {
+    const dom = afLabels(n)[term.key];
+    if (dom == null) return false;   // node par woh label hi nahi → koi domain nahi → takkar nahi
+    return c.pods.some(p => p.node && p.node !== '<none>' && afSelMatch(term.sel, p.labels || {}) &&
+      afLabels(AF_N.find(x => x.name === p.node) || {})[term.key] === dom);
+  };
+  // chhota kube-scheduler: filter (taint → cpu → required anti-affinity), score (preferred weight, phir free CPU)
+  function afSchedule(c, tpl) {
+    let taint = 0, cpu = 0, anti = 0;
+    const ok = [];
+    AF_N.forEach(n => {
+      if (n.taint) taint++;
+      else if (afFree(c, n) < 0.5) cpu++;
+      else if (tpl.hard.some(t => afClash(c, t, n))) anti++;
+      else ok.push(n);
+    });
+    if (!ok.length) {
+      const r = [], p = [];
+      if (anti) { r.push(`${anti} node(s) didn't match pod anti-affinity rules`); }
+      if (taint) { r.push(`${taint} node(s) had untolerated taint {dedicated: ledger}`); p.push(`${taint} Preemption is not helpful for scheduling`); }
+      if (cpu) r.push(`${cpu} Insufficient cpu`);
+      if (anti + cpu) p.push(`${anti + cpu} No preemption victims found for incoming pod`);
+      return { msg: `0/4 nodes are available: ${r.sort().join(', ')}. preemption: 0/4 nodes are available: ${p.sort().join(', ')}.` };
+    }
+    const score = n => tpl.soft.reduce((a, t) => a + (afClash(c, t, n) ? 0 : t.weight), 0) * 10 + afFree(c, n);
+    ok.sort((a, b) => score(b) - score(a));
+    return { node: ok[0] };
+  }
+  const afPodDesc = p => {
+    const n = AF_N.find(x => x.name === p.node);
+    return `Name:             ${p.name}
+Namespace:        payments
+Priority:         0
+Service Account:  default
+Node:             ${n ? n.name + '/' + n.ip : '<none>'}
+Labels:           app=pay-api
+                  pod-template-hash=${p.rs}
+Status:           ${p.status}
+IP:               ${p.ip === '<none>' ? '' : p.ip}
+Controlled By:    ReplicaSet/pay-api-${p.rs}
+Containers:
+  pay-api:
+    Image:      ${AF_IMG}
+    Requests:
+      cpu:      500m
+      memory:   512Mi
+` + (n ? `Conditions:
+  Type           Status
+  PodScheduled   True
+  Ready          True
+Events:
+  Type    Reason     Age   From               Message
+  ----    ------     ----  ----               -------
+  Normal  Scheduled  ${p.age}    default-scheduler  Successfully assigned payments/${p.name} to ${n.name}
+  Normal  Started    ${p.age}    kubelet            Started container pay-api` : `Conditions:
+  Type           Status
+  PodScheduled   False
+Events:
+  Type     Reason            Age   From               Message
+  ----     ------            ----  ----               -------
+  Warning  FailedScheduling  6s    default-scheduler  ${p.why}`);
+  };
+  function afNewPod(c, rs) {
+    let nm;
+    do { nm = 'pay-api-' + rs.hash + '-' + AF_SUF[c.podN % AF_SUF.length]; c.podN++; } while (c.pods.some(p => p.name === nm));
+    const p = { name: nm, ready: '0/1', status: 'Pending', restarts: 0, age: '6s', node: '<none>', ip: '<none>', rs: rs.hash, labels: { app: 'pay-api', 'pod-template-hash': rs.hash } };
+    afPlace(c, p, rs.tpl);
+    c.pods.push(p);
+    return p;
+  }
+  function afPlace(c, p, tpl) {
+    const r = afSchedule(c, tpl);
+    if (r.node) Object.assign(p, { node: r.node.name, status: 'Running', ready: '1/1', ip: r.node.ip.replace(/\.5$/, '.' + (60 + c.podN)), why: null });
+    else p.why = r.msg;
+    p.describe = afPodDesc(p);
+  }
+  const afRsOf = (c, h) => c.rsets.find(r => r.hash === h);
+  // Deployment controller: rolling update — pehle naya pod (maxSurge tak), phir purana hatao (maxUnavailable ke andar)
+  function afRoll(c, s) {
+    const cur = c.rsets[c.rsets.length - 1];
+    afPay(c).filter(p => p.rs === cur.hash && p.status === 'Pending').forEach(p => afPlace(c, p, cur.tpl));   // atke pods ko dobara koshish
+    for (let guard = 0; guard < 30; guard++) {
+      const live = afPay(c), curPods = live.filter(p => p.rs === cur.hash), old = live.filter(p => p.rs !== cur.hash);
+      const oldPend = old.find(p => p.status !== 'Running');
+      if (oldPend) { c.pods.splice(c.pods.indexOf(oldPend), 1); afRsOf(c, oldPend.rs).want--; continue; }
+      const running = live.filter(p => p.status === 'Running').length;
+      if (curPods.length < 2 && live.length < 2 + cur.tpl.surge) { cur.want++; afNewPod(c, cur); continue; }
+      if (old.length && running - 1 >= 2 - cur.tpl.unav) {
+        const victim = old.slice().sort((a, b) => c.rsets.indexOf(afRsOf(c, a.rs)) - c.rsets.indexOf(afRsOf(c, b.rs)))[0];
+        c.pods.splice(c.pods.indexOf(victim), 1); afRsOf(c, victim.rs).want--; continue;
+      }
+      break;
+    }
+    const live = afPay(c), run = live.filter(p => p.status === 'Running').length;
+    Object.assign(c.deployments[0], { ready: Math.min(run, 2) + '/2', upToDate: live.filter(p => p.rs === cur.hash).length, available: Math.min(run, 2) });
+    if (afSpread(c) && !c.ok) { c.ok = true; c.okAt = s.history.length; }
+    if (!afSpread(c)) c.ok = false;
+  }
+  // jeet: saare pay-api pods naye template ke, Running, alag-alag node par, node-4 par koi nahi
+  const afSpread = c => {
+    const cur = c.rsets[c.rsets.length - 1], ps = afPay(c);
+    return ps.length === 2 && ps.every(p => p.rs === cur.hash && p.status === 'Running' && p.node !== 'node-4') && ps[0].node !== ps[1].node;
+  };
+  function afRolloutStatus(c) {
+    const cur = c.rsets[c.rsets.length - 1], live = afPay(c), upd = live.filter(p => p.rs === cur.hash);
+    if (upd.length < 2) return `Waiting for deployment "pay-api" rollout to finish: ${upd.length} out of 2 new replicas have been updated...`;
+    if (live.length > upd.length) return `Waiting for deployment "pay-api" rollout to finish: ${live.length - upd.length} old replicas are pending termination...\n(simulator: rollout yahin atka hai — asli kubectl yahan intezaar karta rehta. Ctrl+C. Kaunsa pod Pending hai? kubectl get pods -o wide)`;
+    if (upd.some(p => p.status !== 'Running')) return `Waiting for deployment "pay-api" rollout to finish: ${upd.filter(p => p.status === 'Running').length} of 2 updated replicas are available...`;
+    return 'deployment "pay-api" successfully rolled out';
+  }
+  const afNodeDesc = (c, n) => `Name:               ${n.name}
+Roles:              <none>
+Labels:             ${Object.entries(afLabels(n)).map(([k, v]) => k + '=' + v).join('\n                    ')}
+Taints:             ${n.taint ? 'dedicated=ledger:NoSchedule' : '<none>'}
+Unschedulable:      false
+Capacity:
+  cpu:                4
+  memory:             16Gi
+Allocatable:
+  cpu:                3920m
+  memory:             15Gi
+Non-terminated Pods:          (${c.pods.filter(p => p.node === n.name).length} payments pods dikhaye — system pods chhote kiye)
+` + tbl([['  Namespace', 'Name', 'CPU Requests'], ['  ---------', '----', '------------']].concat(c.pods.filter(p => p.node === n.name)
+      .map(p => ['  payments', p.name, p.labels.app === 'ledger' ? '1 (25%)' : '500m (12%)']))) +
+    `\nAllocated resources:\n  Resource           Requests\n  --------           --------\n  cpu                ${Math.round((3.92 - afFree(c, n)) * 1000)}m (${Math.round((3.92 - afFree(c, n)) / 3.92 * 100)}%)`;
+  const afPodTable = (c, pods, wide, labels) => tbl([['NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE'].concat(wide ? ['IP', 'NODE', 'NOMINATED NODE', 'READINESS GATES'] : []).concat(labels ? ['LABELS'] : [])]
+    .concat(pods.map(p => [p.name, p.ready, p.status, String(p.restarts), p.age].concat(wide ? [p.ip, p.node, '<none>', '<none>'] : [])
+      .concat(labels ? [Object.entries(p.labels).map(([k, v]) => k + '=' + v).join(',')] : []))));
+  const LEDGER_DESC = `Name:             ledger-0
+Namespace:        payments
+Priority:         0
+Service Account:  ledger
+Node:             node-4/10.0.45.5
+Labels:           app=ledger
+                  statefulset.kubernetes.io/pod-name=ledger-0
+Status:           Running
+IP:               10.0.45.11
+Controlled By:    StatefulSet/ledger
+Containers:
+  ledger:
+    Image:      111122223333.dkr.ecr.ap-south-1.amazonaws.com/ledger:3.2.1
+    Requests:
+      cpu:      1
+      memory:   4Gi
+Node-Selectors:  workload=ledger
+Tolerations:     dedicated=ledger:NoSchedule
+                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                 node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:          <none>`;
+  const T_AF = [
+    { text: 'Dekho <code>pay-api</code> ke pods kis node par hain (<code>kubectl get pods -o wide</code>)', check: s => ran(s, /^kubectl get (pods?|po)\b.*(-o ?wide|-owide|--output=wide)/) },
+    { text: 'Ravi ka rule padho (<code>cat pay-api-deploy.yaml</code>)', check: s => ran(s, /^(cat|vi|vim|nano) pay-api-deploy\.yaml$|^kubectl get (deploy|deployments?)[ \/]pay-api\b.*-o ?yaml/) },
+    { text: 'Rule ka <code>labelSelector</code> pods ke asli labels se milao (<code>kubectl get pods --show-labels</code>)', check: s => ran(s, /^kubectl get (pods?|po)\b.*(--show-labels|-L |(-l|--selector)[ =])|^kubectl describe (pods?|po)[ \/]pay-api/) },
+    { text: 'Rule theek karke apply karo: dono pods <b>alag node</b> par, koi Pending nahi', check: s => afSpread(s.cluster) },
+    { text: '<code>kubectl get pods -o wide</code> se pakka karo', check: s => afSpread(s.cluster) && ranAfter(s, s.cluster.okAt, /^kubectl get (pods?|po)\b.*(-o ?wide|-owide|--output=wide)/) },
+  ];
+  const AF_TPL0 = afParse(KG.yaml.parse(AF_FILE)).tpl;
+  addLab('affinity', {
+    type: 'terminal',
+    title: '🖥️ Mission: anti-affinity likhi thi, phir bhi dono pods ek node par',
+    instructions: 'Kal raat 2:40 baje ChaiPay ke cluster mein node-3 ka EC2 instance achanak band hua. pay-api ke DONO pods node-3 par the — 4 minute tak saare UPI payments fail. Ravi ne parso PR #482 mein podAntiAffinity jodi thi, taaki aisa kabhi na ho. Phir bhi aaj subah 6 baje ke deploy ke baad dono pods phir se ek hi node par hain. node-4 sirf ledger database ke liye reserved hai.',
+    goal: `<code>pay-api</code> ke dono pods <b>alag-alag node</b> par chalao — taaki ek node mare toh doosra pod payments sambhale. Rollout poora ho, koi pod Pending na rahe.
+      Fix Ravi ki file mein karo: <code>vi pay-api-deploy.yaml</code> → 💾 Save → <code>kubectl apply -f pay-api-deploy.yaml</code>.`,
+    tasks: T_AF,
+    cluster: {
+      nodes: AF_N.map(n => ({ name: n.name, status: 'Ready', roles: '<none>', age: '40d', version: 'v1.33.4', zone: n.zone, labels: afLabels(n), describe: '' })),
+      podN: 0, ok: false,
+      rsets: [{ hash: '6b8d7c', tpl: AF_TPL0, want: 2 }],
+      pods: [
+        { name: 'pay-api-6b8d7c-a1', ready: '1/1', status: 'Running', restarts: 0, age: '4h', node: 'node-3', ip: '10.0.44.21', rs: '6b8d7c', labels: { app: 'pay-api', 'pod-template-hash': '6b8d7c' } },
+        { name: 'pay-api-6b8d7c-b2', ready: '1/1', status: 'Running', restarts: 0, age: '4h', node: 'node-3', ip: '10.0.44.22', rs: '6b8d7c', labels: { app: 'pay-api', 'pod-template-hash': '6b8d7c' } },
+        { name: 'ledger-0', ready: '1/1', status: 'Running', restarts: 0, age: '12d', node: 'node-4', ip: '10.0.45.11', labels: { app: 'ledger', 'statefulset.kubernetes.io/pod-name': 'ledger-0' }, describe: LEDGER_DESC },
+      ].map(p => p.describe ? p : Object.assign(p, { describe: afPodDesc(p) })),
+      deployments: [{ name: 'pay-api', ready: '2/2', upToDate: 2, available: 2, age: '40d' }],
+      statefulsets: [{ name: 'ledger', ready: '1/1', age: '40d' }],
+    },
+    responses: [
+      { re: /^kubectl get (?:pods?|po)\b.*(?:-l|--selector)[ =](\S+).*$/,
+        out: (s, m) => {
+          const c = s.cluster, raw = String((m && m[1]) || ''), want = {};
+          raw.split(',').forEach(kv => { const [k, v] = kv.split('='); if (k) want[k] = v; });
+          const pods = c.pods.filter(p => Object.keys(want).every(k => (p.labels || {})[k] === want[k]));
+          return pods.length ? afPodTable(c, pods, /-o ?wide|-owide/.test(String(m && m[0])), /--show-labels/.test(String(m && m[0]))) : 'No resources found in payments namespace.';
+        } },
+      { re: /^kubectl get (?:pods?|po)\b.*--show-labels\b.*$/, out: (s, m) => afPodTable(s.cluster, s.cluster.pods, /-o ?wide|-owide/.test(String(m && m[0])), true) },
+      { re: /^kubectl get (?:nodes?|no)\b.*--show-labels\b.*$/,
+        out: s => tbl([['NAME', 'STATUS', 'ROLES', 'AGE', 'VERSION', 'LABELS']].concat(AF_N.map(n => [n.name, 'Ready', '<none>', '40d', 'v1.33.4', Object.entries(afLabels(n)).map(([k, v]) => k + '=' + v).join(',')]))) },
+      { re: /^kubectl describe (?:nodes?|no)(?:[ /](node-[1-4]))?$/,
+        out: (s, m) => (m && m[1] ? [AF_N.find(n => n.name === m[1])] : AF_N).map(n => afNodeDesc(s.cluster, n)).join('\n\n\n') },
+      { re: rx('kubectl get (?:rs|replicasets?)'),
+        out: s => tbl([['NAME', 'DESIRED', 'CURRENT', 'READY', 'AGE']].concat(s.cluster.rsets.map((r, i) => {
+          const ps = afPay(s.cluster).filter(p => p.rs === r.hash);
+          return ['pay-api-' + r.hash, r.want, ps.length, ps.filter(p => p.status === 'Running').length, i ? '6s' : '4h'];
+        }))) },
+      { re: rx('kubectl rollout status (?:deploy(?:ment)?)[ /]pay-api'), out: s => afRolloutStatus(s.cluster) },
+      { re: rx('kubectl rollout undo (?:deploy(?:ment)?)[ /]pay-api'),
+        out: s => {
+          const c = s.cluster;
+          if (c.rsets.length < 2) return 'error: no rollout history found for deployment "pay-api"';
+          c.rsets.splice(c.rsets.length - 2, 0, c.rsets.pop());
+          afRoll(c, s);
+          return 'deployment.apps/pay-api rolled back\n(Dhyan do: cluster pichhle template par chala gaya, par pay-api-deploy.yaml file mein abhi bhi tumhara naya version hai.)';
+        } },
+      { re: /^kubectl delete (?:pods?|po)[ /](pay-api-\S+?)(?: (?:-n|--namespace)[ =]payments)?$/,
+        out: (s, m) => {
+          const c = s.cluster, name = String((m && m[1]) || ''), p = c.pods.find(x => x.name === name);
+          if (!p) return `Error from server (NotFound): pods "${name}" not found`;
+          c.pods.splice(c.pods.indexOf(p), 1);
+          const rs = afRsOf(c, p.rs);
+          afNewPod(c, rs);   // ReplicaSet apni ginti poori karta hai
+          afRoll(c, s);
+          return `pod "${name}" deleted\n(ReplicaSet pay-api-${rs.hash} ne naya pod banaya — kubectl get pods -o wide)`;
+        } },
+      { re: /^kubectl taint (?:nodes?|no) node-4\b.*$/, err: true,
+        out: '(simulator ne roka) node-4 ledger ka dedicated node hai — taint hataoge toh baaki apps ke pods bhi wahan aa jayenge aur ledger database ki CPU kha jayenge. Taint rehne do.' },
+      { re: rx('kubectl get (?:deploy(?:ment)?s?)[ /]pay-api -o ?yaml'),
+        out: s => '# (simulator: live Deployment ka spec — status ka hissa chhota kiya)\n' + (s.cluster.liveText || AF_FILE) + 'status:\n  availableReplicas: ' + s.cluster.deployments[0].available + '\n  replicas: ' + afPay(s.cluster).length },
+    ],
+    files: {
+      [AF_FILE_NAME]: {
+        editable: true,
+        desc: 'pay-api ka Deployment — Ravi ka anti-affinity rule ismein hai',
+        content: AF_FILE,
+        apply: (s, text, docs) => {
+          const c = s.cluster, r = afParse((docs || [])[0]);
+          if (r.err) return r.err;
+          const cur = c.rsets[c.rsets.length - 1];
+          if (r.tpl.key === cur.tpl.key) return 'deployment.apps/pay-api unchanged';
+          const same = c.rsets.find(x => x.tpl.key === r.tpl.key);
+          if (same) c.rsets.splice(c.rsets.indexOf(same), 1).forEach(x => c.rsets.push(x));   // wahi template pehle bhi tha → purana ReplicaSet wapas
+          else c.rsets.push({ hash: AF_RS[(c.rsets.length - 1) % AF_RS.length], tpl: r.tpl, want: 0 });
+          c.liveText = text;
+          afRoll(c, s);
+          return 'deployment.apps/pay-api configured';
+        },
+      },
+    },
+    success: KG.allOf(T_AF),
+    successText: `<b>Galti 1 — selector:</b> rule <code>app: payapi</code> dhoondh raha tha, pods par <code>app=pay-api</code> hai. Selector kisi pod se match nahi hua, toh rule <b>khaali</b> tha — aur Kubernetes ne koi error nahi diya.
+      Selector ko hamesha test karo: <code>kubectl get pods -l app=payapi</code> → "No resources found" = rule kuch nahi pakadta.<br>
+      <b>Galti 2 — topologyKey:</b> <code>kubernetes.io/hostname</code> = har <b>node</b> alag. <code>topology.kubernetes.io/zone</code> = har <b>zone</b> mein sirf ek pod.
+      Is cluster mein pay-api ke liye 2 hi zones hain. Rolling update mein ek waqt 3 pods hote hain (2 + maxSurge 1) — teesre ko jagah nahi mili, rollout atak gaya.
+      <b>Niyam:</b> required anti-affinity ke saath, jagah (nodes ya zones) ≥ replicas + maxSurge chahiye.<br>
+      <b>Taint:</b> node-4 par <code>dedicated=ledger:NoSchedule</code> — sirf toleration wale (ledger) pods. Taint = node ka pehra; affinity = pod ki pasand.
+      Production mein zone spread ke liye <code>topologySpreadConstraints</code> (maxSkew 1) zyada lachila hai.`,
+    hints: [
+      'kubectl get pods -o wide — NODE column dekho. Phir cat pay-api-deploy.yaml aur kubectl get pods --show-labels. Rule ka matchLabels pod ke label se milta hai?',
+      'Rule "app: payapi" dhoondhta hai, pods par "app=pay-api" hai. vi pay-api-deploy.yaml se theek karo, Save, kubectl apply -f pay-api-deploy.yaml, phir kubectl get pods -o wide. Koi pod Pending? kubectl describe pod <us-pod-ka-naam> ke Events padho.',
+      '"didn\'t match pod anti-affinity rules" + zone: kubectl get nodes -L topology.kubernetes.io/zone — 2 hi zones hain. Rollout mein 3 pods ek saath hote hain. topologyKey ko kubernetes.io/hostname karo (har node alag), Save, apply.',
+    ],
+    solution: ['kubectl get pods -o wide', 'cat pay-api-deploy.yaml', 'kubectl get pods --show-labels',
+      { edit: AF_FILE_NAME, change: [['app: payapi', 'app: pay-api'], ['topologyKey: topology.kubernetes.io/zone', 'topologyKey: kubernetes.io/hostname']] },
+      'kubectl apply -f pay-api-deploy.yaml', 'kubectl get pods -o wide'],
+  }, {
+    objectives: ['🖥️ <b>Mission:</b> toota podAntiAffinity theek karo — selector ka typo aur zone vs hostname, asli rolling update ke saath'],
+    success: ['Main anti-affinity ka selector test kar sakta hoon (kubectl get pods -l) aur topologyKey sahi chun sakta hoon'],
+    cards: [
+      { front: 'Anti-affinity likhi hai, phir bhi pods ek node par — sabse pehle kya check karo?', back: 'Rule ka <code>labelSelector</code>. <code>kubectl get pods -l &lt;selector&gt;</code> chalao — "No resources found" = rule kisi pod ko nahi pakadta. Kubernetes iska koi error nahi deta.' },
+      { front: 'Required anti-affinity + <code>topologyKey: zone</code>, 2 zones, 2 replicas — rollout kyun atakta hai?', back: 'Rolling update mein ek waqt 3 pods (2 + maxSurge 1). Har zone mein sirf ek pod ki ijaazat → teesra Pending → purana pod hatta nahi. Jagah ≥ replicas + maxSurge chahiye — ya hostname key / preferred / topologySpreadConstraints.' },
+    ],
+  });
+
+  /* =====================================================================
+     📈 observability — alert kal fire hi nahi hua: rule mein label "status"
+     (metric mein "code" hai) aur "for: 30m" (outage 20 min ka tha).
+     Chhota PromQL engine + promtool test rules jaisa replay (test file ke
+     asli input_series se, minute-dar-minute).
+     ===================================================================== */
+  const PQ_AGGS = ['sum', 'avg', 'max', 'min', 'count'], PQ_FUNCS = ['rate', 'irate', 'increase'];
+  function pqErr(src, i, msg) {
+    const before = src.slice(0, i), line = before.split('\n').length, col = i - before.lastIndexOf('\n');
+    const e = new Error(`${line}:${col}: parse error: ${msg}`); e.pq = true; return e;
+  }
+  function pqLex(src) {
+    const toks = []; let i = 0, m;
+    while (i < src.length) {
+      const rest = src.slice(i);
+      if (/^\s/.test(rest)) { i++; continue; }
+      if ((m = rest.match(/^\[(\d+[smhdwy])\]/))) toks.push({ t: 'range', v: m[1], at: i });
+      else if (rest[0] === '[') throw pqErr(src, i, `bad number or duration syntax: "${rest.slice(1).split(']')[0]}"`);
+      else if ((m = rest.match(/^(\d+(\.\d+)?([eE][-+]?\d+)?|\.\d+)/))) toks.push({ t: 'num', v: Number(m[0]), at: i });
+      else if ((m = rest.match(/^[A-Za-z_:][A-Za-z0-9_:]*/))) toks.push({ t: 'id', v: m[0], at: i });
+      else if ((m = rest.match(/^("([^"\\]|\\.)*"|'([^'\\]|\\.)*')/))) toks.push({ t: 'str', v: m[0].slice(1, -1), at: i });
+      else if ((m = rest.match(/^(=~|!~|!=|==|>=|<=|[=<>+\-*/(){},])/))) toks.push({ t: 'op', v: m[0], at: i });
+      else if (/^["']/.test(rest)) throw pqErr(src, i, 'unterminated quoted string');
+      else throw pqErr(src, i, `unexpected character: '${rest[0]}'`);
+      i += m[0].length;
+    }
+    return toks;
+  }
+  function pqParse(src) {
+    const toks = pqLex(src); let k = 0;
+    const peek = () => toks[k], next = () => toks[k++];
+    const desc = t => !t ? '<EOF>' : t.t === 'id' ? `identifier "${t.v}"` : t.t === 'num' ? `number "${t.v}"` : t.t === 'str' ? `string "${t.v}"` : t.t === 'range' ? `"[${t.v}]"` : `"${t.v}"`;
+    const bad = (t, extra) => pqErr(src, t ? t.at : src.length, `unexpected ${desc(t)}${extra || ''}`);
+    const want = v => { const t = next(); if (!t || t.v !== v) throw bad(t, `, expected "${v}"`); return t; };
+    const isOp = (t, list) => t && t.t === 'op' && list.includes(t.v);
+    function grp() {
+      want('('); const ls = [];
+      for (;;) { const t = next(); if (!t) throw bad(t); if (t.v === ')') return ls; if (t.t === 'id') ls.push(t.v); else if (t.v !== ',') throw bad(t, ' in grouping opts'); }
+    }
+    function sel(name, at) {
+      const ms = name ? [{ k: '__name__', op: '=', v: name }] : [];
+      if (peek() && peek().v === '{') {
+        next();
+        for (;;) {
+          const t = next();
+          if (!t) throw bad(t, ' inside braces');
+          if (t.v === '}') break;
+          if (t.v === ',') continue;
+          if (t.t !== 'id') throw bad(t, ' in label matching, expected label');
+          const op = next();
+          if (!isOp(op, ['=', '!=', '=~', '!~'])) throw bad(op, ' in label matching, expected label matching operator');
+          const val = next();
+          if (!val || val.t !== 'str') throw bad(val, ' in label matching, expected string');
+          if (op.v.includes('~')) { try { new RegExp(val.v); } catch (e) { throw pqErr(src, val.at, `error parsing regexp: invalid regexp "${val.v}"`); } }
+          ms.push({ k: t.v, op: op.v, v: val.v });
+        }
+      }
+      if (!ms.some(x => x.v !== '' || x.op !== '=')) throw pqErr(src, at, 'vector selector must contain at least one non-empty matcher');
+      const r = { sel: ms };
+      if (peek() && peek().t === 'range') r.range = next().v;
+      return r;
+    }
+    function atom() {
+      const t = next();
+      if (!t) throw bad(t);
+      if (t.t === 'num') return { num: t.v };
+      if (t.v === '(') { const e = cmp(); want(')'); return e; }
+      if (t.v === '-') return { op: '*', l: { num: -1 }, r: atom() };
+      if (t.v === '{') { k--; return sel(null, t.at); }
+      if (t.t === 'id') {
+        if (PQ_AGGS.includes(t.v)) {
+          let mod = null;
+          if (peek() && /^(by|without)$/.test(peek().v)) mod = { w: next().v, ls: grp() };
+          want('('); const e = cmp(); want(')');
+          if (!mod && peek() && /^(by|without)$/.test(peek().v)) mod = { w: next().v, ls: grp() };
+          return { agg: t.v, mod, e };
+        }
+        if (PQ_FUNCS.includes(t.v)) {
+          want('('); const a = atom();
+          if (!a.sel || !a.range) throw pqErr(src, t.at, `expected type range vector in call to function "${t.v}", got instant vector`);
+          want(')'); return { fn: t.v, a };
+        }
+        if (peek() && peek().v === '(') throw pqErr(src, t.at, `unknown function with name "${t.v}"`);
+        return sel(t.v, t.at);
+      }
+      throw bad(t);
+    }
+    function mul() { let l = atom(); while (isOp(peek(), ['*', '/'])) { const o = next().v; l = { op: o, l, r: atom() }; } return l; }
+    function add() { let l = mul(); while (isOp(peek(), ['+', '-'])) { const o = next().v; l = { op: o, l, r: mul() }; } return l; }
+    function cmp() {
+      const l = add();
+      if (isOp(peek(), ['>', '<', '>=', '<=', '==', '!='])) {
+        const o = next().v;
+        if (peek() && peek().v === 'bool') throw pqErr(src, peek().at, '"bool" modifier yeh simulator nahi samajhta');
+        return { op: o, cmp: true, l, r: add() };
+      }
+      return l;
+    }
+    const e = cmp();
+    if (k < toks.length) throw bad(toks[k]);
+    return e;
+  }
+  const pqMin = d => { const m = String(d).match(/^(\d+)([smhdwy])$/); return Number(m[1]) * { s: 1 / 60, m: 1, h: 60, d: 1440, w: 10080, y: 525600 }[m[2]]; };
+  const pqMatch = (ms, l) => ms.every(m => {
+    const v = l[m.k] || '';
+    if (m.op === '=') return v === m.v;
+    if (m.op === '!=') return v !== m.v;
+    const hit = new RegExp('^(?:' + m.v + ')$').test(v);
+    return m.op === '=~' ? hit : !hit;
+  });
+  const noName = l => { const o = Object.assign({}, l); delete o.__name__; return o; };
+  const pqKey = l => Object.keys(l).filter(x => x !== '__name__').sort().map(x => x + '=' + l[x]).join(',');
+  const PQ_F = { '+': (a, b) => a + b, '-': (a, b) => a - b, '*': (a, b) => a * b, '/': (a, b) => a / b,
+    '>': (a, b) => a > b, '<': (a, b) => a < b, '>=': (a, b) => a >= b, '<=': (a, b) => a <= b, '==': (a, b) => a === b, '!=': (a, b) => a !== b };
+  // { s: number } ya { v: [{ l: labels, v: number }] }  — t = minute
+  function pqEval(n, t, data) {
+    if (n.num != null) return { s: n.num };
+    if (n.sel) {
+      if (n.range) { const e = new Error('range vector seedha nahi dikhta — rate(...[5m]) ya increase(...) ke andar likho'); e.pq = true; throw e; }
+      return { v: data.filter(x => pqMatch(n.sel, x.labels)).map(x => ({ l: x.labels, v: x.at(t) })) };
+    }
+    if (n.fn) {
+      const w = n.fn === 'irate' ? 1 : pqMin(n.a.range);
+      return { v: data.filter(x => pqMatch(n.a.sel, x.labels)).map(x => { const inc = Math.max(0, x.at(t) - x.at(t - w)); return { l: noName(x.labels), v: n.fn === 'increase' ? inc : inc / (w * 60) }; }) };
+    }
+    if (n.agg) {
+      const r = pqEval(n.e, t, data);
+      if (!r.v) { const e = new Error(`expected type instant vector in aggregation expression, got scalar`); e.pq = true; throw e; }
+      const g = {};
+      r.v.forEach(x => {
+        const l = {};
+        Object.keys(x.l).forEach(k => { if (k !== '__name__' && n.mod && (n.mod.w === 'by' ? n.mod.ls.includes(k) : !n.mod.ls.includes(k))) l[k] = x.l[k]; });
+        const key = pqKey(l); (g[key] = g[key] || { l, vs: [] }).vs.push(x.v);
+      });
+      return { v: Object.values(g).map(x => ({ l: x.l, v: n.agg === 'sum' ? x.vs.reduce((a, b) => a + b, 0) : n.agg === 'avg' ? x.vs.reduce((a, b) => a + b, 0) / x.vs.length
+        : n.agg === 'max' ? Math.max(...x.vs) : n.agg === 'min' ? Math.min(...x.vs) : x.vs.length })) };
+    }
+    const a = pqEval(n.l, t, data), b = pqEval(n.r, t, data), f = PQ_F[n.op];
+    if (a.s != null && b.s != null) {
+      if (n.cmp) { const e = new Error('comparisons between scalars must use BOOL modifier'); e.pq = true; throw e; }
+      return { s: f(a.s, b.s) };
+    }
+    if (a.v && b.s != null) return { v: a.v.map(x => n.cmp ? (f(x.v, b.s) ? x : null) : { l: noName(x.l), v: f(x.v, b.s) }).filter(Boolean) };
+    if (a.s != null && b.v) return { v: b.v.map(x => n.cmp ? (f(a.s, x.v) ? x : null) : { l: noName(x.l), v: f(a.s, x.v) }).filter(Boolean) };
+    const out = [];
+    a.v.forEach(x => { const y = b.v.find(z => pqKey(z.l) === pqKey(x.l)); if (!y) return; if (n.cmp) { if (f(x.v, y.v)) out.push(x); } else out.push({ l: noName(x.l), v: f(x.v, y.v) }); });
+    return { v: out };
+  }
+  const fmtL = l => '{' + Object.keys(l).sort().map(k => `${k}="${l[k]}"`).join(', ') + '}';
+  const fmtNum = v => Number.isInteger(v) ? String(v) : String(Number(v.toPrecision(15)));
+  // asli Prometheus mein pay-api ke series (target labels ke saath) — t = minute, abhi = 0
+  const PQ_LIVE = [];
+  [['pay-api-6b8d7c-a1', '10.0.12.21'], ['pay-api-6b8d7c-b2', '10.0.13.21']].forEach(([pod, ip], i) => {
+    [['200', 'POST', '/pay', 498, 18234512 - i * 44075], ['500', 'POST', '/pay', 0.5, 9123 - i * 36], ['200', 'GET', '/healthz', 6, 104233 - i * 12]].forEach(([code, method, route, perMin, base]) => {
+      PQ_LIVE.push({ labels: { __name__: 'http_requests_total', code, container: 'pay-api', endpoint: 'http', instance: ip + ':8080', job: 'pay-api', method, namespace: 'payments', pod, route, service: 'pay-api' },
+        at: t => Math.round(base + perMin * t) });
+    });
+    PQ_LIVE.push({ labels: { __name__: 'up', container: 'pay-api', endpoint: 'http', instance: ip + ':8080', job: 'pay-api', namespace: 'payments', pod, service: 'pay-api' }, at: () => 1 });
+  });
+  const METRICS_PAGE = pod => {
+    const i = pod === 'pay-api-6b8d7c-b2' ? 1 : 0;
+    return `# HELP http_requests_total Total HTTP requests handled by pay-api.
+# TYPE http_requests_total counter
+http_requests_total{code="200",method="POST",route="/pay"} ${18234512 - i * 44075}
+http_requests_total{code="500",method="POST",route="/pay"} ${9123 - i * 36}
+http_requests_total{code="200",method="GET",route="/healthz"} ${104233 - i * 12}
+# HELP http_request_duration_seconds Request latency.
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{route="/pay",le="0.25"} ${15012345 - i * 30211}
+http_request_duration_seconds_bucket{route="/pay",le="1"} ${18101877 - i * 43112}
+http_request_duration_seconds_bucket{route="/pay",le="+Inf"} ${18243635 - i * 44111}
+http_request_duration_seconds_sum{route="/pay"} ${2913022.4 - i * 7012.1}
+http_request_duration_seconds_count{route="/pay"} ${18243635 - i * 44111}
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines ${87 + i * 3}`;
+  };
+  const OB_RULE = `apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pay-api-alerts
+  namespace: payments
+  labels:
+    release: kps            # isi label se Prometheus yeh rules uthata hai
+spec:
+  groups:
+  - name: pay-api
+    rules:
+    - alert: PayApiHighErrorRate
+      # symptom alert: kitne % payments 5xx (server error) de rahe hain
+      expr: |
+        sum(rate(http_requests_total{service="pay-api",status=~"5.."}[5m]))
+          /
+        sum(rate(http_requests_total{service="pay-api"}[5m])) > 0.05
+      for: 30m
+      labels:
+        severity: page
+        team: payments
+      annotations:
+        summary: pay-api 5xx error rate 5% se upar
+`;
+  const OB_TEST = `# promtool unit test — kal (23 Nov) ke outage ka data, minute-dar-minute.
+# 14:02 se 14:22 tak (minute 2 → 22) har 1000 payments mein se 300 par HTTP 500.
+rule_files:
+  - /tmp/pay-api.rules.yaml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'http_requests_total{service="pay-api",code="200",route="/pay"}'
+        values: '0+1000x2 2700+700x19 17000+1000x18'
+      - series: 'http_requests_total{service="pay-api",code="500",route="/pay"}'
+        values: '0x2 300+300x19 6000x18'
+    alert_rule_test:
+      # outage ke beech (14:15) — page aana CHAHIYE tha
+      - eval_time: 15m
+        alertname: PayApiHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: payments
+            exp_annotations:
+              summary: pay-api 5xx error rate 5% se upar
+      # outage ke baad (14:38) — sab theek, koi alert nahi
+      - eval_time: 38m
+        alertname: PayApiHighErrorRate
+        exp_alerts: []
+`;
+  const OB_SH = `#!/bin/bash
+# CI wala check — har PR par chalna chahiye (abhi tak kisi ne CI mein joda hi nahi tha!)
+# 1) PrometheusRule se sirf rules (spec) nikaalo   2) kal ke outage ka data replay karo
+set -e
+yq '.spec' pay-api-alerts.yaml > /tmp/pay-api.rules.yaml
+promtool test rules pay-api-alerts.test.yaml`;
+  // promtool series notation: "0+1000x2" → 0,1000,2000 ; "6000x3" → 6000 ×4
+  function expandSeries(vs) {
+    const out = [];
+    String(vs).trim().split(/\s+/).forEach(tok => {
+      const m = tok.match(/^(-?\d+(?:\.\d+)?)(?:([+-])(\d+(?:\.\d+)?))?x(\d+)$/);
+      if (m) { const a = Number(m[1]), b = m[3] ? Number(m[3]) * (m[2] === '-' ? -1 : 1) : 0; for (let j = 0; j <= Number(m[4]); j++) out.push(a + b * j); }
+      else if (/^-?\d+(\.\d+)?$/.test(tok)) out.push(Number(tok));
+    });
+    return out;
+  }
+  const OB_TESTDOC = KG.yaml.parse(OB_TEST);
+  const OB_DATA = OB_TESTDOC.tests[0].input_series.map(x => {
+    const sel = pqParse(x.series).sel, labels = {};
+    sel.forEach(m => { labels[m.k] = m.v; });
+    const vals = expandSeries(x.values);
+    return { labels, at: t => vals[Math.max(0, Math.min(vals.length - 1, Math.round(t)))] };
+  });
+  const OB_DUR_RE = /^(0|(([0-9]+)y)?(([0-9]+)w)?(([0-9]+)d)?(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?)$/;
+  const obDurMin = d => { let t = 0; String(d).replace(/(\d+)(ms|y|w|d|h|m|s)/g, (_, n, u) => { t += Number(n) * { ms: 1 / 60000, y: 525600, w: 10080, d: 1440, h: 60, m: 1, s: 1 / 60 }[u]; }); return t; };
+  const obText = s => (s.edited || {})['pay-api-alerts.yaml'] || OB_RULE;
+  // rule file → { rule, expr } ya { load: 'promtool load error' }
+  function obLoad(text) {
+    let d;
+    try { d = KG.yaml.parse(text); } catch (e) { return { yq: `Error: bad file 'pay-api-alerts.yaml': ${e.message}` }; }
+    const groups = d && d.spec && d.spec.groups;
+    if (!Array.isArray(groups)) return { load: `/tmp/pay-api.rules.yaml: yaml: unmarshal errors:\n      spec.groups list nahi hai (ya hai hi nahi)` };
+    const g = groups[0] || {}, rules = g.rules || [];
+    const ri = rules.findIndex(r => r && r.alert === 'PayApiHighErrorRate');
+    const rule = rules[ri];
+    if (!rule) return { rule: null };
+    const where = `group "${g.name}", rule ${ri + 1}, "${rule.alert}"`;
+    if (rule.for != null && (typeof rule.for !== 'string' || !OB_DUR_RE.test(rule.for))) return { load: `/tmp/pay-api.rules.yaml: yaml: unmarshal errors:\n      not a valid duration string: "${rule.for}"` };
+    if (typeof rule.expr !== 'string' || !rule.expr.trim()) return { load: `/tmp/pay-api.rules.yaml: ${where}: field 'expr' must be set in rule` };
+    let expr;
+    try { expr = pqParse(rule.expr); } catch (e) { if (!e.pq) throw e; return { load: `/tmp/pay-api.rules.yaml: ${where}: could not parse expression: ${e.message}` }; }
+    return { rule, expr, where };
+  }
+  // promtool test rules — kal ka outage replay, har minute alert ki state
+  function obTest(text) {
+    const L = obLoad(text);
+    if (L.yq) return { out: L.yq, pass: false };
+    const head = 'Unit Testing:  pay-api-alerts.test.yaml\n';
+    if (L.load) return { out: head + '  FAILED:\n    ' + L.load, pass: false };
+    const tests = OB_TESTDOC.tests[0].alert_rule_test;
+    const maxT = Math.max(...tests.map(x => pqMin(x.eval_time)));
+    const firingAt = {};
+    if (L.rule) {
+      const forMin = L.rule.for ? obDurMin(L.rule.for) : 0, active = {};
+      for (let t = 0; t <= maxT; t++) {
+        let r;
+        try { r = pqEval(L.expr, t, OB_DATA); } catch (e) { if (!e.pq) throw e; return { out: head + '  FAILED:\n    ' + `/tmp/pay-api.rules.yaml: ${L.where}: ${e.message}`, pass: false }; }
+        if (!r.v) return { out: head + '  FAILED:\n    ' + `/tmp/pay-api.rules.yaml: ${L.where}: invalid alert expression: scalar result (vector chahiye)`, pass: false };
+        const now = {};
+        r.v.forEach(x => { const k = pqKey(x.l); now[k] = x; if (active[k] == null) active[k] = t; });
+        Object.keys(active).forEach(k => { if (!now[k]) delete active[k]; });
+        firingAt[t] = Object.keys(now).filter(k => t - active[k] >= forMin).map(k => now[k]);
+      }
+    }
+    const strObj = o => { const r = {}; Object.keys(o || {}).forEach(k => { r[k] = String(o[k]); }); return r; };
+    const fails = [];
+    tests.forEach(tc => {
+      const T = pqMin(tc.eval_time);
+      const got = (L.rule && L.rule.alert === tc.alertname ? (firingAt[T] || []) : []).map(x => ({
+        labels: Object.assign(noName(x.l), strObj(L.rule.labels), { alertname: L.rule.alert }), ann: strObj(L.rule.annotations) }));
+      const exp = (tc.exp_alerts || []).map(e => ({ labels: Object.assign(strObj(e.exp_labels), { alertname: tc.alertname }), ann: strObj(e.exp_annotations) }));
+      const sig = a => a.map(x => fmtL(x.labels) + fmtL(x.ann)).sort().join('|');
+      if (sig(got) !== sig(exp)) {
+        const list = a => a.length ? '[\n' + a.map((x, i) => `            ${i}:\n              Labels:${fmtL(x.labels)}\n              Annotations:${fmtL(x.ann)}`).join('\n') + '\n            ]' : '[]';
+        fails.push(`    alertname: ${tc.alertname}, time: ${tc.eval_time}, \n        exp:${list(exp)}, \n        got:${list(got)}`);
+      }
+    });
+    return fails.length ? { out: head + '  FAILED:\n' + fails.join('\n'), pass: false } : { out: head + '  SUCCESS\n', pass: true };
+  }
+  function obRunTest(s) {
+    const c = s.cluster, text = obText(s), r = obTest(text);
+    c.tested = true;
+    if (r.pass) c.passText = text; else { c.testFailSeen = true; c.passText = null; }
+    return r.out;
+  }
+  const obSpec = text => text.split('\n').slice(text.split('\n').findIndex(l => /^spec:/.test(l)) + 1).map(l => l.replace(/^ {2}/, '')).join('\n');
+  const T_OB = [
+    { text: 'Alert rule padho (<code>cat pay-api-alerts.yaml</code>)', check: s => ran(s, /^(cat|vi|vim|nano) pay-api-alerts\.yaml$|^kubectl (get|describe) (prometheusrules?|promrules?)\b.*(pay-api-alerts|-o ?yaml)/) },
+    { text: 'Kal ka outage replay karo: <code>bash test-alerts.sh</code> — alert fire hua?', check: s => !!s.cluster.testFailSeen },
+    { text: '<code>pay-api</code> ke metric ke <b>asli labels</b> dekho — app ka <code>/metrics</code> page ya Prometheus query', check: s => !!s.cluster.sawLabels },
+    { text: 'Rule theek karo — <code>bash test-alerts.sh</code> mein <b>SUCCESS</b>', check: s => s.cluster.passText != null && s.cluster.passText === obText(s) },
+    { text: 'Test pass hua rule cluster par lagao (<code>kubectl apply -f pay-api-alerts.yaml</code>)', check: s => s.cluster.passText != null && s.cluster.passText === obText(s) && s.cluster.appliedText === obText(s) },
+  ];
+  addLab('observability', {
+    type: 'terminal',
+    title: '🖥️ Mission: outage hua, par pager chup raha',
+    instructions: 'Kal (23 Nov) 14:02 se 14:22 tak ChaiPay ki pay-api ne har 1000 mein se 300 payments par HTTP 500 diya — ledger database ke connections bhar gaye the. Team ko pata tab chala jab ek merchant ne Twitter par likha. PagerDuty par koi page nahi aaya — jabki alert PayApiHighErrorRate bana hua hai. Yeh rule do mahine pehle notify team ke alert se copy hua tha.',
+    goal: `Pata karo alert kyun nahi baja, rule theek karo, aur <b>saboot</b> do ki agli baar bajega: <code>bash test-alerts.sh</code> kal ka outage minute-dar-minute replay karta hai (<code>promtool test rules</code>).
+      Rule badalne ke liye: <code>vi pay-api-alerts.yaml</code> → 💾 Save → test → <code>kubectl apply -f pay-api-alerts.yaml</code>.
+      Prometheus se poochhne ke liye: <code>promtool query instant http://prometheus:9090 '&lt;PromQL&gt;'</code>.`,
+    tasks: T_OB,
+    cluster: {
+      appliedText: OB_RULE,
+      nodes: NODES,
+      pods: PAY_API.concat([{ name: 'ledger-0', ready: '1/1', status: 'Running', restarts: 0, age: '12d', node: 'node-3', ip: '10.0.14.11' }]),
+      deployments: [{ name: 'pay-api', ready: '2/2', upToDate: 2, available: 2, age: '40d' }],
+    },
+    responses: [
+      { re: /^kubectl exec (?:-it? |-ti )?(pay-api-\S+?|deploy(?:ment)?\/pay-api)(?: (?:-n|--namespace)[ =]payments)? -- (?:curl|wget)\b.*\/metrics\b.*$/,
+        out: (s, m) => {
+          const want = String((m && m[1]) || ''), pod = /^deploy/.test(want) ? 'pay-api-6b8d7c-a1' : want;
+          if (!s.cluster.pods.some(p => p.name === pod)) return `Error from server (NotFound): pods "${pod}" not found`;
+          s.cluster.sawLabels = true;
+          return METRICS_PAGE(pod);
+        } },
+      { re: /^promtool query instant (\S+) (.+)$/,
+        out: (s, m) => {
+          if (!m || !m[2]) return 'usage: promtool query instant <server> <expr>';
+          if (!/prometheus|localhost|127\.0\.0\.1/.test(m[1])) return `Error querying: Post "${m[1]}/api/v1/query": dial tcp: lookup ${m[1].replace(/^https?:\/\//, '').split(/[:/]/)[0]}: no such host`;
+          const q = m[2].trim().replace(/^(['"])([\s\S]*)\1$/, '$2');
+          let n, r;
+          try { n = pqParse(q); r = pqEval(n, 0, PQ_LIVE); } catch (e) { if (!e.pq) throw e; return `query error: bad_data: invalid parameter "query": ${e.message}`; }
+          if (r.s != null) return `scalar: ${fmtNum(r.s)} @[1763974920.000]`;
+          if (!r.v.length) return '(khaali jawab — is query se ek bhi series match nahi hui)';
+          if (/http_requests_total/.test(q) && r.v.some(x => x.l.code)) s.cluster.sawLabels = true;
+          return r.v.map(x => `${x.l.__name__ || ''}${fmtL(noName(x.l))} => ${fmtNum(x.v)} @[1763974920.000]`).join('\n');
+        } },
+      { re: /^promtool test rules (\S+)$/,
+        out: (s, m) => (m && m[1] && m[1].replace(/^\.\//, '') !== 'pay-api-alerts.test.yaml')
+          ? `Unit Testing:  ${m[1]}\n  FAILED:\n    open ${m[1]}: no such file or directory`
+          : '(rules: /tmp/pay-api.rules.yaml — pay-api-alerts.yaml ka spec, yq se nikala)\n' + obRunTest(s) },
+      { re: /^promtool check rules (\S+)$/,
+        out: (s, m) => /pay-api-alerts\.yaml$/.test(String(m && m[1]))
+          ? `Checking ${m[1]}\n  FAILED:\n${m[1]}: yaml: unmarshal errors:\n  line 1: field apiVersion not found in type rulefmt.RuleGroups\n  line 2: field kind not found in type rulefmt.RuleGroups\n  line 3: field metadata not found in type rulefmt.RuleGroups\n  line 8: field spec not found in type rulefmt.RuleGroups\n(promtool ko Prometheus ka apna format chahiye — PrometheusRule ka sirf "spec" hissa. Isliye test-alerts.sh pehle yq '.spec' chalata hai.)`
+          : `Checking ${(m && m[1]) || ''}\n  FAILED:\nopen ${(m && m[1]) || ''}: no such file or directory` },
+      { re: /^yq\b.*pay-api-alerts\.yaml.*$/, out: s => { try { KG.yaml.parse(obText(s)); } catch (e) { return `Error: bad file 'pay-api-alerts.yaml': ${e.message}`; } return obSpec(obText(s)); } },
+      { re: /^kubectl port-forward\b.*prometheus.*$/, out: 'Forwarding from 127.0.0.1:9090 -> 9090\n(simulator: ab promtool query instant http://localhost:9090 \'<PromQL>\' chalao — yahan prompt wapas mil jaata hai)' },
+      { re: rx('kubectl get (?:prometheusrules?|promrules?)(?:[ /]pay-api-alerts)? -o ?yaml'), out: s => s.cluster.appliedText },
+      { re: rx('kubectl get (?:prometheusrules?|promrules?)(?:[ /]pay-api-alerts)?'), out: tbl([['NAME', 'AGE'], ['ledger-alerts', '58d'], ['pay-api-alerts', '58d']]) },
+      { re: rx('kubectl describe (?:prometheusrules?|promrules?)(?:[ /]pay-api-alerts)?'),
+        out: s => 'Name:         pay-api-alerts\nNamespace:    payments\nLabels:       release=kps\nAPI Version:  monitoring.coreos.com/v1\nKind:         PrometheusRule\nSpec:\n' + obSpec(s.cluster.appliedText).split('\n').map(l => '  ' + l).join('\n') + '\nEvents:       <none>' },
+    ],
+    files: {
+      'pay-api-alerts.yaml': {
+        editable: true,
+        desc: 'PrometheusRule — PayApiHighErrorRate alert (git se) — vi se badlo',
+        content: OB_RULE,
+        apply: (s, text, docs) => {
+          const c = s.cluster, d = (docs || [])[0] || {};
+          if (d.kind !== 'PrometheusRule') return { err: `error: is file mein PrometheusRule chahiye (kind: ${d.kind || 'khaali'})` };
+          if (!d.metadata || d.metadata.name !== 'pay-api-alerts') return { err: '(simulator ne roka) naam badal gaya — naya PrometheusRule banega aur purana (toota) wala bhi chalta rahega. metadata.name wapas pay-api-alerts karo.' };
+          const groups = (d.spec || {}).groups;
+          const P = 'spec.groups[0].rules[0]';
+          const rule = Array.isArray(groups) && groups[0] && (groups[0].rules || [])[0];
+          if (!rule) return { err: 'The PrometheusRule "pay-api-alerts" is invalid: spec.groups[0].rules: Required value' };
+          const RK = ['alert', 'record', 'expr', 'for', 'keep_firing_for', 'labels', 'annotations'];
+          const uk = Object.keys(rule).find(k => !RK.includes(k));
+          if (uk) return { err: `Error from server (BadRequest): error when patching "pay-api-alerts.yaml": PrometheusRule in version "v1" cannot be handled as a PrometheusRule: strict decoding error: unknown field "${P}.${uk}"` };
+          if (rule.for != null && typeof rule.for !== 'string') return { err: `The PrometheusRule "pay-api-alerts" is invalid: ${P}.for: Invalid value: "${typeof rule.for === 'number' ? 'integer' : typeof rule.for}": ${P}.for in body must be of type string: "${typeof rule.for === 'number' ? 'integer' : typeof rule.for}"` };
+          if (rule.for != null && !OB_DUR_RE.test(rule.for)) return { err: `The PrometheusRule "pay-api-alerts" is invalid: ${P}.for: Invalid value: "${rule.for}": ${P}.for in body should match '${OB_DUR_RE.source}'` };
+          try { pqParse(String(rule.expr || '')); } catch (e) { if (!e.pq) throw e; return { err: `Error from server: error when patching "pay-api-alerts.yaml": admission webhook "prometheusrulevalidate.monitoring.coreos.com" denied the request: Rules are not valid\n(expr: ${e.message})` }; }
+          if (((d.metadata.labels || {}).release) !== 'kps') return { err: '(simulator ne roka) label release: kps hat gaya — Prometheus sirf release=kps wale rules uthata hai. Rule cluster mein hoga par kabhi chalega nahi. Label wapas lagao.' };
+          if (text === c.appliedText) return 'prometheusrule.monitoring.coreos.com/pay-api-alerts unchanged';
+          c.appliedText = text;
+          return 'prometheusrule.monitoring.coreos.com/pay-api-alerts configured\n(Prometheus Operator ~1 minute mein naya rule Prometheus mein load kar dega.)' + (c.passText === text ? '' : '\n(Dhyan do: yeh version abhi test nahi hua — bash test-alerts.sh)');
+        },
+      },
+      'pay-api-alerts.test.yaml': {
+        desc: 'promtool unit test — kal ke outage ka data (sirf padhne ke liye)',
+        content: OB_TEST,
+        apply: () => ({ err: 'error: error validating "pay-api-alerts.test.yaml": error validating data: [apiVersion not set, kind not set]; if you choose to ignore these errors, turn validation off with --validate=false\n(Yeh Kubernetes object nahi — promtool ki test file hai: bash test-alerts.sh)' }),
+      },
+      'test-alerts.sh': {
+        desc: 'CI wala check: yq se rules nikaalo, promtool se kal ka outage replay karo',
+        content: OB_SH,
+        apply: s => obRunTest(s),
+      },
+    },
+    success: KG.allOf(T_OB),
+    successText: `<b>Galti 1 — label ka naam:</b> rule <code>status=~"5.."</code> dhoondhta tha, par pay-api ka metric <code>code="500"</code> likhta hai (notify team ki app <code>status</code> likhti thi).
+      Galat label = query <b>khaali</b> = alert kabhi nahi bajta — aur Prometheus koi error nahi deta. Label hamesha app ke <code>/metrics</code> page se milao.<br>
+      <b>Galti 2 — <code>for: 30m</code>:</b> expr ko 30 minute lagatar sach rehna tha. Outage 20 minute ka tha — khatam ho gaya, alert "pending" se aage hi nahi badha. Page karne wale alert ke liye 5m jaisa chhota <code>for</code> rakho.<br>
+      <b>PULL model:</b> Prometheus har 30s app ka <code>/metrics</code> khud padhta hai, aur <code>job</code>, <code>pod</code>, <code>service</code> jaise labels apni taraf se jodta hai.<br>
+      <b>Saboot:</b> <code>promtool test rules</code> ko CI mein daalo — "outage ke beech bajna chahiye" aur "theek hone par chup rehna chahiye", dono test. Bina test ka alert = umeed, saboot nahi.`,
+    hints: [
+      'cat pay-api-alerts.yaml, phir bash test-alerts.sh — "got:[]" matlab 14:15 par alert fire nahi hua. Ab expr ke label pay-api ke asli metric se milao.',
+      'kubectl exec pay-api-6b8d7c-a1 -- curl -s localhost:8080/metrics — http_requests_total ke labels mein "status" hai ya "code"? (Ya: promtool query instant http://prometheus:9090 \'http_requests_total{service="pay-api"}\')',
+      'vi pay-api-alerts.yaml — status=~"5.." ko code=~"5.." karo. Outage 20 minute ka tha, toh "for: 30m" bhi chhota karo (jaise 5m). Save, bash test-alerts.sh (SUCCESS?), phir kubectl apply -f pay-api-alerts.yaml.',
+    ],
+    solution: ['cat pay-api-alerts.yaml', 'bash test-alerts.sh', 'kubectl exec pay-api-6b8d7c-a1 -- curl -s localhost:8080/metrics',
+      { edit: 'pay-api-alerts.yaml', change: [['status=~"5.."', 'code=~"5.."'], ['for: 30m', 'for: 5m']] }, 'bash test-alerts.sh', 'kubectl apply -f pay-api-alerts.yaml'],
+  }, {
+    objectives: ['🖥️ <b>Mission:</b> outage mein alert kyun nahi baja? Label aur <code>for</code> theek karo, aur <code>promtool test rules</code> se saboot do'],
+    success: ['Main khaali-query wala alert pakad sakta hoon aur alert rule ko promtool unit test se jaanch sakta hoon'],
+    cards: [
+      { front: 'Alert rule ka expr galat label (<code>status</code>) dhoondhta hai, metric mein <code>code</code> hai — kya hota hai?', back: 'Query <b>khaali</b> lautati hai → alert <b>kabhi nahi bajta</b> — koi error bhi nahi. Label app ke <code>/metrics</code> page se milao, aur rule ka <code>promtool test rules</code> likho.' },
+      { front: '<code>for: 30m</code> wala alert, outage 20 minute ka — kya hoga?', back: 'Alert <b>pending</b> mein hi reh jaata hai, fire nahi hota. <code>for</code> = expr kitni der lagatar sach rahe. Page wale alerts ke liye chhota (jaise 5m).' },
+    ],
+  });
+
+  /* =====================================================================
+     🧰 helm (Helm & Kustomize) — Kustomize overlay ka "images:" naam
+     image se match nahi hota → prod chupchaap 1.8.0 par. Chhota kustomize:
+     resources → patches → namespace → replicas → images (IsImageMatched)
+     ===================================================================== */
+  const KZ_REPO = '111122223333.dkr.ecr.ap-south-1.amazonaws.com/pay-api';
+  const KZ_TAGS = ['1.7.2', '1.8.0', '1.9.0'];   // ECR mein yahi tags hain
+  const KZ_FILES = {
+    'base/kustomization.yaml': `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- deployment.yaml
+- service.yaml
+`,
+    'base/deployment.yaml': `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pay-api
+  labels:
+    app: pay-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pay-api
+  template:
+    metadata:
+      labels:
+        app: pay-api
+    spec:
+      containers:
+      - name: pay-api
+        image: ${KZ_REPO}:1.8.0
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+`,
+    'base/service.yaml': `apiVersion: v1
+kind: Service
+metadata:
+  name: pay-api
+  labels:
+    app: pay-api
+spec:
+  selector:
+    app: pay-api
+  ports:
+  - port: 80
+    targetPort: 8080
+`,
+    'overlays/staging/kustomization.yaml': `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: payments-staging
+resources:
+- ../../base
+images:
+- name: ${KZ_REPO}
+  newTag: "1.9.0"
+`,
+    'overlays/prod/kustomization.yaml': `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: payments
+resources:
+- ../../base
+patches:
+- path: replicas-patch.yaml
+images:
+- name: pay-api            # Meena ka PR #511: prod ko 1.9.0 par le jao
+  newTag: "1.9.0"
+`,
+    'overlays/prod/replicas-patch.yaml': `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pay-api
+spec:
+  replicas: 3
+`,
+  };
+  const KZ_KEYS = ['apiVersion', 'kind', 'resources', 'namespace', 'namePrefix', 'nameSuffix', 'images', 'patches', 'patchesStrategicMerge', 'replicas',
+    'labels', 'commonLabels', 'commonAnnotations', 'configMapGenerator', 'secretGenerator', 'generatorOptions', 'components'];
+  const KZ_ORDER = ['Namespace', 'ServiceAccount', 'Role', 'RoleBinding', 'ConfigMap', 'Secret', 'Service', 'PersistentVolumeClaim', 'Deployment', 'StatefulSet', 'CronJob'];
+  const kzRead = (s, p) => (s.edited || {})[p] != null ? s.edited[p] : KZ_FILES[p];
+  const kzNorm = p => { const out = []; p.split('/').forEach(x => { if (x === '..') out.pop(); else if (x && x !== '.') out.push(x); }); return out.join('/'); };
+  const kzClone = o => JSON.parse(JSON.stringify(o));
+  // strategic merge (chhota): map → gehra merge; containers → name se merge; baaki list → poori badlo
+  function kzMerge(a, b) {
+    if (Array.isArray(b)) {
+      if (Array.isArray(a) && b.every(x => x && x.name) && a.every(x => x && x.name))
+        return a.map(x => { const y = b.find(z => z.name === x.name); return y ? kzMerge(x, y) : x; }).concat(b.filter(y => !a.some(x => x.name === y.name)));
+      return kzClone(b);
+    }
+    if (b && typeof b === 'object') {
+      const out = a && typeof a === 'object' && !Array.isArray(a) ? kzClone(a) : {};
+      Object.keys(b).forEach(k => { out[k] = b[k] === null ? undefined : kzMerge(out[k], b[k]); if (out[k] === undefined) delete out[k]; });
+      return out;
+    }
+    return b;
+  }
+  const kzMatch = (img, name) => { try { return new RegExp('^' + name.replace(/[.+?^${}()|[\]\\]/g, '\\$&') + '(@sha256)?(:[a-zA-Z0-9_.{}-]*)?$').test(img); } catch (e) { return false; } };
+  // kustomize build <dir> → { docs, warn } ya { err }
+  function kzBuild(s, dir, depth) {
+    dir = kzNorm(dir);
+    const kt = kzRead(s, dir + '/kustomization.yaml');
+    if (kt == null) return { err: `unable to find one of 'kustomization.yaml', 'kustomization.yml' or 'Kustomization' in directory '/home/ravi/chaipay-deploy/${dir}'` };
+    let k;
+    try { k = KG.yaml.parse(kt); } catch (e) { return { err: `invalid Kustomization: error converting YAML to JSON: ${e.message}` }; }
+    k = k || {};
+    const uk = Object.keys(k).find(x => !KZ_KEYS.includes(x));
+    if (uk) return { err: `invalid Kustomization: json: unknown field "${uk}"` + (/^image$/.test(uk) ? '\n(field ka naam "images" hai — aakhir mein s)' : '') };
+    if (k.images != null && !Array.isArray(k.images)) return { err: 'invalid Kustomization: json: cannot unmarshal object into Go struct field Kustomization.images of type []types.Image' };
+    for (const im of k.images || []) {
+      for (const f of ['name', 'newName', 'newTag', 'digest']) if (im && im[f] != null && typeof im[f] !== 'string') return { err: `invalid Kustomization: json: cannot unmarshal ${typeof im[f] === 'number' ? 'number' : 'bool'} into Go struct field Image.images.${f} of type string` + (f === 'newTag' ? `\n(YAML ne ${im[f]} ko number bana diya — tag quotes mein likho: newTag: "${im[f]}")` : '') };
+      const ik = Object.keys(im || {}).find(x => !['name', 'newName', 'newTag', 'digest', 'tagSuffix'].includes(x));
+      if (ik) return { err: `invalid Kustomization: json: unknown field "${ik}"` };
+    }
+    let docs = [], warn = [];
+    for (const r of k.resources || []) {
+      const p = kzNorm(dir + '/' + r);
+      if (/\.ya?ml$/.test(r)) {
+        const t = kzRead(s, p);
+        if (t == null) return { err: `accumulating resources: accumulation err='accumulating resources from '${r}': open /home/ravi/chaipay-deploy/${p}: no such file or directory'` };
+        docs = docs.concat(KG.yaml.parseAll(t).filter(Boolean));
+      } else {
+        if ((depth || 0) > 4) return { err: 'cycle in resources' };
+        const sub = kzBuild(s, p, (depth || 0) + 1);
+        if (sub.err) return { err: sub.err.startsWith('unable to find') ? `accumulating resources: accumulation err='accumulating resources from '${r}': ${sub.err}'` : sub.err };
+        docs = docs.concat(sub.docs); warn = warn.concat(sub.warn);
+      }
+    }
+    const pl = (k.patches || []).map(x => x && x.path).filter(Boolean).concat(k.patchesStrategicMerge || []);
+    if (k.patchesStrategicMerge) warn.push("# Warning: 'patchesStrategicMerge' is deprecated. Please use 'patches' instead. Run 'kustomize edit fix' to update your Kustomization automatically.");
+    for (const pp of pl) {
+      const t = kzRead(s, kzNorm(dir + '/' + pp));
+      if (t == null) return { err: `trouble configuring builtin PatchTransformer with config: \`\npath: ${pp}\n\`: failed to get the patch file from path(${pp}): evalsymlink failure on '/home/ravi/chaipay-deploy/${kzNorm(dir + '/' + pp)}' : lstat /home/ravi/chaipay-deploy/${kzNorm(dir + '/' + pp)}: no such file or directory` };
+      const pd = KG.yaml.parse(t) || {}, nm = (pd.metadata || {}).name;
+      const id = `${pd.kind}.${String(pd.apiVersion || 'v1').split('/').reverse().join('.')}/${nm}.[noNs]`;
+      const i = docs.findIndex(d => d.kind === pd.kind && (d.metadata || {}).name === nm);
+      if (i < 0) return { err: `no resource matches strategic merge patch "${id}": no matches for Id ${id}; failed to find unique target for patch ${id}` };
+      docs[i] = kzMerge(docs[i], pd);
+    }
+    docs = docs.map(d => {
+      d = kzClone(d);
+      d.metadata = d.metadata || {};
+      if (k.namespace) d.metadata.namespace = k.namespace;
+      if (k.namePrefix || k.nameSuffix) d.metadata.name = (k.namePrefix || '') + d.metadata.name + (k.nameSuffix || '');
+      // commonLabels: metadata + selector + template sab mein; labels: sirf metadata (includeSelectors ho toh selector bhi)
+      const all = Object.assign({}, k.commonLabels || {}), sel = Object.assign({}, k.commonLabels || {}), tpl = Object.assign({}, k.commonLabels || {});
+      (Array.isArray(k.labels) ? k.labels : []).forEach(L => { Object.assign(all, (L && L.pairs) || {}); if (L && L.includeSelectors) { Object.assign(sel, L.pairs || {}); Object.assign(tpl, L.pairs || {}); } else if (L && L.includeTemplates) Object.assign(tpl, L.pairs || {}); });
+      if (Object.keys(all).length) {
+        d.metadata.labels = Object.assign({}, d.metadata.labels || {}, all);
+        if (d.kind === 'Deployment' && d.spec) {
+          d.spec.selector = { matchLabels: Object.assign({}, (d.spec.selector || {}).matchLabels || {}, sel) };
+          d.spec.template.metadata = Object.assign({}, d.spec.template.metadata || {}, { labels: Object.assign({}, (d.spec.template.metadata || {}).labels || {}, tpl) });
+        }
+        if (d.kind === 'Service' && d.spec) d.spec.selector = Object.assign({}, d.spec.selector || {}, sel);
+      }
+      (k.replicas || []).forEach(r => { if (d.kind === 'Deployment' && r && r.name === d.metadata.name) d.spec.replicas = r.count; });
+      const ps = d.spec && d.spec.template && d.spec.template.spec;
+      if (ps) ['containers', 'initContainers'].forEach(f => (ps[f] || []).forEach(ctr => {
+        const im = (k.images || []).find(x => x && x.name && kzMatch(String(ctr.image), x.name));
+        if (!im) return;
+        const base = String(ctr.image).replace(/(@sha256:[a-f0-9]+|:[a-zA-Z0-9_.{}-]*)$/, ''), tag = (String(ctr.image).match(/:([a-zA-Z0-9_.{}-]*)$/) || [])[1];
+        ctr.image = (im.newName || base) + (im.digest ? '@' + im.digest : im.newTag ? ':' + im.newTag : tag ? ':' + tag : '');
+      }));
+      return d;
+    });
+    return { docs, warn };
+  }
+  // kustomize jaisa YAML: apiVersion/kind/metadata upar, baaki keys A→Z
+  function kzDump(v, ind) {
+    ind = ind || '';
+    const sc = x => typeof x === 'string'
+      ? (x === '' || /^(true|false|yes|no|on|off|null|~|[-+]?[0-9.]+([eE][-+]?\d+)?)$/i.test(x) || /^[\s&*!|>'"%@`{[\]#,-]|: |\s#|\s$/.test(x) ? JSON.stringify(x) : x)
+      : String(x);
+    const keys = o => { const ks = Object.keys(o).sort(); return ['apiVersion', 'kind', 'metadata'].filter(k => ks.includes(k)).concat(ks.filter(k => !['apiVersion', 'kind', 'metadata'].includes(k))); };
+    if (Array.isArray(v)) return v.map(x => {
+      if (x && typeof x === 'object' && !Array.isArray(x) && Object.keys(x).length) { const t = kzDump(x, ind + '  ').replace(/^\s+/, ''); return ind + '- ' + t; }
+      return ind + '- ' + (x && typeof x === 'object' ? (Array.isArray(x) ? '[]' : '{}') : sc(x));
+    }).join('\n');
+    return keys(v).map(k => {
+      const x = v[k];
+      if (x && typeof x === 'object' && (Array.isArray(x) ? x.length : Object.keys(x).length))
+        return ind + k + ':\n' + kzDump(x, Array.isArray(x) ? ind : ind + '  ');
+      return ind + k + ': ' + (x && typeof x === 'object' ? (Array.isArray(x) ? '[]' : '{}') : sc(x));
+    }).join('\n');
+  }
+  const kzSort = docs => docs.slice().sort((a, b) => (KZ_ORDER.indexOf(a.kind) + 1 || 99) - (KZ_ORDER.indexOf(b.kind) + 1 || 99));
+  const kzRender = docs => kzSort(docs).map(d => kzDump(d)).join('\n---\n');
+  const kzDeploy = docs => docs.find(d => d.kind === 'Deployment') || {};
+  const kzImg = d => ((((d.spec || {}).template || {}).spec || {}).containers || [{}])[0].image;
+  const KZ_RS = ['9d4c7b', '5e8f2a', '7b3d1e', '4c9a6f', '8e2b5d', '3f7c1a'];
+  const kzPodDesc = (p, img) => `Name:             ${p.name}
+Namespace:        payments
+Node:             ${p.node}/10.0.1${2 + NODES.findIndex(n => n.name === p.node)}.5
+Labels:           app=pay-api
+                  pod-template-hash=${p.name.split('-')[2]}
+Status:           ${p.status === 'Running' ? 'Running' : 'Pending'}
+Controlled By:    ReplicaSet/pay-api-${p.name.split('-')[2]}
+Containers:
+  pay-api:
+    Image:          ${img}
+` + (p.status === 'Running' ? `    State:          Running
+    Ready:          True
+Events:
+  Type    Reason   Age   From     Message
+  ----    ------   ----  ----     -------
+  Normal  Pulled   ${p.age}    kubelet  Successfully pulled image "${img}"
+  Normal  Started  ${p.age}    kubelet  Started container pay-api` : `    State:          Waiting
+      Reason:       ImagePullBackOff
+    Ready:          False
+Events:
+  Type     Reason   Age   From     Message
+  ----     ------   ----  ----     -------
+  Normal   Pulling  20s   kubelet  Pulling image "${img}"
+  Warning  Failed   19s   kubelet  Failed to pull image "${img}": rpc error: code = NotFound desc = failed to pull and unpack image "${img}": failed to resolve reference "${img}": ${img}: not found
+  Warning  Failed   19s   kubelet  Error: ErrImagePull
+  Normal   BackOff  6s    kubelet  Back-off pulling image "${img}"
+  Warning  Failed   6s    kubelet  Error: ImagePullBackOff`);
+  const kzDeployDesc = c => `Name:                   pay-api
+Namespace:              payments
+Labels:                 app=pay-api
+Selector:               app=pay-api
+Replicas:               ${c.live.replicas} desired | ${c.pods.filter(p => p.rs === c.live.hash).length} updated | ${c.pods.length} total | ${c.pods.filter(p => p.status === 'Running').length} available | ${c.pods.filter(p => p.status !== 'Running').length} unavailable
+StrategyType:           RollingUpdate
+RollingUpdateStrategy:  25% max unavailable, 25% max surge
+Pod Template:
+  Labels:  app=pay-api
+  Containers:
+   pay-api:
+    Image:      ${c.live.image}
+    Port:       8080/TCP
+    Requests:
+      cpu:      250m
+      memory:   256Mi
+NewReplicaSet:   pay-api-${c.live.hash} (${c.pods.filter(p => p.rs === c.live.hash).length}/${c.live.replicas} replicas created)`;
+  // Deployment ka naya template: image badla → naya ReplicaSet; tag ECR mein nahi → ek naya pod ImagePullBackOff, rollout atka
+  function kzSetLive(c, img, n) {
+    const L = c.live, imgChanged = img !== L.image;
+    if (imgChanged) {
+      c.rsN = (c.rsN || 0) + 1;
+      L.hash = KZ_RS[(c.rsN - 1) % KZ_RS.length];
+      L.image = img;
+      const ok = KZ_TAGS.includes(img.split(':').pop()) && img.startsWith(KZ_REPO + ':');
+      const mk = (i, status) => {
+        const p = { name: `pay-api-${L.hash}-${['q1', 'w2', 'e3', 'r4', 't5', 'y6'][i]}`, ready: status === 'Running' ? '1/1' : '0/1', status, restarts: 0, age: '6s', node: NODES[i % 3].name, rs: L.hash, img };
+        p.describe = kzPodDesc(p, img); return p;
+      };
+      if (ok) c.pods = Array.from({ length: n }, (_, i) => mk(i, 'Running'));
+      else c.pods = c.pods.filter(p => p.status === 'Running' && p.rs !== L.hash).concat([mk(0, 'ImagePullBackOff')]);
+    } else if (n !== L.replicas) {
+      const good = c.pods.filter(p => p.rs === L.hash && p.status === 'Running');
+      while (good.length < n) { const i = good.length; const p = { name: `pay-api-${L.hash}-${['q1', 'w2', 'e3', 'r4', 't5', 'y6'][i]}`, ready: '1/1', status: 'Running', restarts: 0, age: '6s', node: NODES[i % 3].name, rs: L.hash, img }; p.describe = kzPodDesc(p, img); good.push(p); }
+      c.pods = good.slice(0, n);
+    }
+    L.replicas = n;
+    const run = c.pods.filter(p => p.status === 'Running').length;
+    Object.assign(c.deployments[0], { ready: Math.min(run, n) + '/' + n, upToDate: c.pods.filter(p => p.rs === L.hash).length, available: Math.min(run, n), describe: kzDeployDesc(c) });
+  }
+  const IMG190 = KZ_REPO + ':1.9.0';
+  const kzProdImg = s => { const b = kzBuild(s, 'overlays/prod'); return b.err ? null : kzImg(kzDeploy(b.docs)); };
+  const kzRolled = c => c.pods.length === c.live.replicas && c.pods.every(p => p.rs === c.live.hash && p.status === 'Running');
+  const kzDirArg = cmd => (String(cmd).match(/(?:-k|--kustomize)[ =](\S+)|(?:kustomize|build) (\S+)/) || []).slice(1).find(Boolean);
+  const T_KZ = [
+    { text: 'Prod mein abhi kaunsa image chal raha hai? (<code>kubectl get deploy pay-api -o wide</code>)', check: s => ran(s, /^kubectl (get (deploy|deployments?)\b.*-o ?wide|describe (deploy|deployments?)\b)/) },
+    { text: 'Prod overlay render karke dekho (<code>kubectl kustomize overlays/prod</code>) — image kya ban raha hai?', check: s => !!s.cluster.renderedProd },
+    { text: 'Staging overlay (jo sahi chala) prod se milao (<code>cat overlays/staging/kustomization.yaml</code>)', check: s => ran(s, /^(cat|vi|vim|nano) overlays\/staging\/kustomization\.yaml$/) || !!s.cluster.renderedStaging },
+    { text: 'Prod overlay theek karo — render mein <code>pay-api:1.9.0</code> aaye', check: s => kzProdImg(s) === IMG190 },
+    { text: 'Cluster par lagao: <code>kubectl apply -k overlays/prod</code>', check: s => s.cluster.live.image === IMG190 && s.cluster.lastK === IMG190 && kzProdImg(s) === IMG190 },
+    { text: '<code>kubectl rollout status deployment/pay-api</code> — rollout poora?', check: s => s.cluster.live.image === IMG190 && s.cluster.lastK === IMG190 && kzRolled(s.cluster) && ranAfter(s, s.cluster.kAt, /^kubectl rollout status (deploy(ment)?)[ \/]pay-api\b/) },
+  ];
+  const kzOut = (s, dir, tool) => {
+    const b = kzBuild(s, dir);
+    if (b.err) return (tool === 'kubectl' ? 'error: ' : 'Error: ') + b.err;
+    if (dir === 'overlays/prod') s.cluster.renderedProd = true;
+    if (dir === 'overlays/staging') s.cluster.renderedStaging = true;
+    return (b.warn.length ? b.warn.join('\n') + '\n' : '') + kzRender(b.docs);
+  };
+  addLab('helm', {
+    type: 'terminal',
+    title: '🖥️ Mission: PR merge hua, CI hara, par prod purane version par',
+    instructions: 'ChaiPay ke manifests Kustomize mein hain: ek base, aur har environment ka overlay (staging, prod). Meena ne PR #511 merge kiya: "prod ko pay-api 1.9.0 par le jao" (UPI Lite ka zaroori fix). CI ne kubectl apply -k overlays/prod chalaya aur hara ho gaya — par output tha "deployment.apps/pay-api unchanged". Staging kal se 1.9.0 par hai. Prod abhi bhi 1.8.0 par. Yeh terminal prod cluster (chaipay-prod) se juda hai; repo ki files ls se dikhti hain.',
+    goal: `Prod ko <b>pay-api 1.9.0</b> par lao — <b>Kustomize overlay theek karke</b>, taaki git aur cluster ek hi baat bolein.
+      Pehle dekho overlay sach mein kya banata hai: <code>kubectl kustomize overlays/prod</code>. Fix: <code>vi overlays/prod/kustomization.yaml</code> → 💾 Save → <code>kubectl apply -k overlays/prod</code>.`,
+    tasks: T_KZ,
+    cluster: {
+      nodes: NODES, live: { image: KZ_REPO + ':1.8.0', replicas: 3, hash: '6b8d7c' }, rsN: 0, lastK: null,
+      pods: ['a1', 'b2', 'c3'].map((x, i) => { const p = { name: 'pay-api-6b8d7c-' + x, ready: '1/1', status: 'Running', restarts: 0, age: '9d', node: NODES[i].name, rs: '6b8d7c' }; p.describe = kzPodDesc(p, KZ_REPO + ':1.8.0'); return p; }),
+      deployments: [{ name: 'pay-api', ready: '3/3', upToDate: 3, available: 3, age: '40d' }],
+      services: [{ name: 'pay-api', type: 'ClusterIP', clusterIP: '10.100.41.7', ports: '80/TCP', age: '40d' }],
+    },
+    responses: [
+      { re: /^kubectl kustomize(?: (\S+))?$/, out: (s, m) => kzOut(s, String((m && m[1]) || '.').replace(/\/$/, ''), 'kubectl') },
+      { re: /^kustomize build(?: (\S+))?$/, out: (s, m) => kzOut(s, String((m && m[1]) || '.').replace(/\/$/, ''), 'kustomize') },
+      { re: /^kubectl apply (?:-k|--kustomize)[ =](\S+?)\/?(?: (?:-n|--namespace)[ =]payments)?$/,
+        out: (s, m) => {
+          const c = s.cluster, dir = kzNorm(String((m && m[1]) || ''));
+          const b = kzBuild(s, dir);
+          if (b.err) return 'error: ' + b.err;
+          const d = kzDeploy(b.docs), ns = (d.metadata || {}).namespace;
+          if (ns !== 'payments') return `Error from server (NotFound): error when creating "${dir}": namespaces "${ns || 'default'}" not found\n(Yeh prod cluster hai — ${dir} kisi aur environment ka overlay hai.)`;
+          if ((d.metadata || {}).name !== 'pay-api') return `(simulator ne roka) Deployment ka naam "${d.metadata.name}" ban raha hai — prod mein ek NAYA Deployment banta aur pay-api waisa hi rehta. namePrefix/nameSuffix hatao.`;
+          const sel = ((d.spec || {}).selector || {}).matchLabels || {};
+          if (JSON.stringify(sel) !== JSON.stringify({ app: 'pay-api' })) return `The Deployment "pay-api" is invalid: spec.selector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string{${Object.keys(sel).map(k => `"${k}":"${sel[k]}"`).join(', ')}}, MatchExpressions:[]v1.LabelSelectorRequirement(nil)}: field is immutable\n(commonLabels selector mein bhi label jodta hai — Deployment ka selector badal nahi sakta. "labels:" use karo ya hatao.)`;
+          const img = kzImg(d), n = (d.spec || {}).replicas;
+          if (n !== 3) return `(simulator ne roka) overlay ab prod ko replicas: ${n} de raha hai (3 nahi) — replicas-patch.yaml ka patch hat gaya? Prod ko 3 pods chahiye. Sirf images: theek karo.`;
+          const changed = img !== c.live.image || n !== c.live.replicas, wasImp = c.imperative ? c.live.image : null;
+          kzSetLive(c, img, n);
+          c.lastK = img; c.kAt = s.history.length;
+          const note = wasImp && wasImp !== img ? `\n(Dhyan do: kubectl set image wala ${wasImp.split(':').pop()} hat gaya — overlay ${img.split(':').pop()} banata hai, toh cluster wapas usi par aa gaya. Git jo bolta hai, wahi jeet-ta hai.)` : '';
+          c.imperative = false;
+          return (b.warn.length ? b.warn.join('\n') + '\n' : '') + `service/pay-api unchanged\ndeployment.apps/pay-api ${changed ? 'configured' : 'unchanged'}` + note;
+        } },
+      { re: /^kubectl diff (?:-k|--kustomize)[ =](\S+?)\/?$/,
+        out: (s, m) => {
+          const c = s.cluster, dir = kzNorm(String((m && m[1]) || '')), b = kzBuild(s, dir);
+          if (b.err) return 'error: ' + b.err;
+          const d = kzDeploy(b.docs), img = kzImg(d), n = (d.spec || {}).replicas;
+          if ((d.metadata || {}).namespace !== 'payments') return `Error from server (NotFound): namespaces "${(d.metadata || {}).namespace}" not found`;
+          if (img === c.live.image && n === c.live.replicas) return '(kuch nahi chhapa = cluster aur overlay mein koi farak nahi. Overlay jo banata hai, wahi pehle se chal raha hai.)';
+          const P = 'apps.v1.Deployment.payments.pay-api';
+          return `diff -u -N /tmp/LIVE-2215417836/${P} /tmp/MERGED-1093762771/${P}\n--- /tmp/LIVE-2215417836/${P}\t2026-11-24 10:31:07.402117 +0530\n+++ /tmp/MERGED-1093762771/${P}\t2026-11-24 10:31:07.418204 +0530\n` +
+            (n !== c.live.replicas ? `@@ -12,7 +12,7 @@\n spec:\n   progressDeadlineSeconds: 600\n-  replicas: ${c.live.replicas}\n+  replicas: ${n}\n   revisionHistoryLimit: 10\n` : '') +
+            (img !== c.live.image ? `@@ -31,7 +31,7 @@\n     spec:\n       containers:\n-      - image: ${c.live.image}\n+      - image: ${img}\n         imagePullPolicy: IfNotPresent\n         name: pay-api` : '');
+        } },
+      { re: rx('kubectl get (?:deploy(?:ment)?s?)(?:[ /]pay-api)? (?:-o ?wide|-owide|--output=wide)'),
+        out: s => tbl([['NAME', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'AGE', 'CONTAINERS', 'IMAGES', 'SELECTOR'], ['pay-api', s.cluster.deployments[0].ready, s.cluster.deployments[0].upToDate, s.cluster.deployments[0].available, '40d', 'pay-api', s.cluster.live.image, 'app=pay-api']]) },
+      { re: rx('kubectl describe (?:deploy(?:ment)?s?)(?:[ /]pay-api)?'), out: s => kzDeployDesc(s.cluster) },
+      { re: /^kubectl set image (?:deploy(?:ment)?)[ /]pay-api (?:pay-api|\*)=(\S+?)(?: (?:-n|--namespace)[ =]payments)?$/,
+        out: (s, m) => {
+          const c = s.cluster, img = String((m && m[1]) || '');
+          if (!img) return 'error: there is no need to specify a resource type as a separate argument when passing arguments in resource/name form';
+          kzSetLive(c, img, c.live.replicas); c.imperative = true;
+          return `deployment.apps/pay-api image updated\n(Cluster badal gaya — par overlays/prod abhi bhi ${(kzProdImg(s) || '?').split(':').pop()} banata hai. Agla CI deploy (kubectl apply -k overlays/prod) cluster ko wapas wahi kar dega. Overlay theek karo.)`;
+        } },
+      { re: rx('kubectl rollout status (?:deploy(?:ment)?)[ /]pay-api'),
+        out: s => {
+          const c = s.cluster, upd = c.pods.filter(p => p.rs === c.live.hash);
+          if (kzRolled(c)) return `deployment "pay-api" successfully rolled out`;
+          return `Waiting for deployment "pay-api" rollout to finish: ${upd.length} out of ${c.live.replicas} new replicas have been updated...\n(simulator: rollout atka hai — naya pod ${upd.find(p => p.status !== 'Running') ? upd.find(p => p.status !== 'Running').name + ' ' + upd.find(p => p.status !== 'Running').status + ' mein hai. kubectl describe pod se dekho.' : 'abhi bana nahi'})`;
+        } },
+      { re: /^ls(?: -l| -la)? (?!-)(\S+?)\/?$/,
+        out: (s, m) => {
+          const dir = kzNorm(String((m && m[1]) || '')), names = new Set();
+          Object.keys(KZ_FILES).forEach(f => { if (f.startsWith(dir + '/')) names.add(f.slice(dir.length + 1).split('/')[0] + (f.slice(dir.length + 1).includes('/') ? '/' : '')); });
+          return names.size ? [...names].join('  ') : `ls: cannot access '${(m && m[1]) || ''}': No such file or directory`;
+        } },
+      { re: /^git log\b.*$/, out: 'a91c3e2 (HEAD -> main, origin/main) prod: pay-api 1.9.0 — UPI Lite fix (#511) — Meena\n6f2d8b1 staging: pay-api 1.9.0 (#507) — Ravi\n3c7e9a4 prod: replicas 3 (#498) — Amit' },
+      { re: /^git (?:show|diff)\b.*$/,
+        out: 'commit a91c3e2 — prod: pay-api 1.9.0 — UPI Lite fix (#511)\n--- a/overlays/prod/kustomization.yaml\n+++ b/overlays/prod/kustomization.yaml\n@@ -6,3 +6,6 @@ resources:\n patches:\n - path: replicas-patch.yaml\n+images:\n+- name: pay-api            # Meena ka PR #511: prod ko 1.9.0 par le jao\n+  newTag: "1.9.0"' },
+    ],
+    files: Object.assign({}, ...Object.keys(KZ_FILES).map(f => ({
+      [f]: {
+        editable: f === 'overlays/prod/kustomization.yaml',
+        desc: f === 'overlays/prod/kustomization.yaml' ? 'prod overlay — vi se badlo' : f.startsWith('base/') ? 'base (staging + prod dono ka) — sirf padhne ke liye' : f.includes('staging') ? 'staging overlay — 1.9.0 yahan sahi chala' : 'prod: replicas 3 ka patch',
+        content: KZ_FILES[f],
+        saveTip: f === 'overlays/prod/kustomization.yaml' ? 'Pehle render dekho: kubectl kustomize overlays/prod — phir lagao: kubectl apply -k overlays/prod' : undefined,
+        apply: () => (/kustomization\.yaml$/.test(f)
+          ? { err: `error: resource mapping not found for name: "" namespace: "" from "${f}": no matches for kind "Kustomization" in version "kustomize.config.k8s.io/v1beta1"\nensure CRDs are installed first\n(Kustomization koi cluster object nahi — folder ko -k se lagao: kubectl apply -k ${f.replace(/\/kustomization\.yaml$/, '')})` }
+          : { err: `(simulator ne roka) ${f} akela lagane se namespace / patch / image nahi lagte — poora overlay lagao: kubectl apply -k overlays/prod` }),
+      },
+    }))),
+    success: KG.allOf(T_KZ),
+    successText: `<b>Asli wajah:</b> Kustomize ka <code>images:</code> naam <b>poore image naam</b> se milta hai (tag ke bina): <code>${KZ_REPO}</code>.
+      Overlay mein sirf <code>pay-api</code> likha tha — kisi container se match nahi hua, toh Kustomize ne <b>chupchaap kuch nahi badla</b>. Koi error nahi, CI hara, aur apply ne "unchanged" bola.<br>
+      <b>Pakadne ka tareeka:</b> deploy se pehle <code>kubectl kustomize overlays/prod | grep image</code> ya <code>kubectl diff -k overlays/prod</code>. Khaali diff = "kuch badlega hi nahi" — PR ke hisaab se yeh galat tha.<br>
+      <b>Helm vs Kustomize:</b> Kustomize template nahi likhta — base YAML par patch lagata hai (namespace, replicas, image). Helm values + templates se YAML banata hai. Dono mein "render karke dekho" pehla kadam hai (<code>helm template</code> / <code>kubectl kustomize</code>).<br>
+      <b>kubectl set image</b> bhi chalta, par git ka overlay 1.8.0 hi bolta — agla CI deploy prod ko wapas 1.8.0 kar deta.`,
+    hints: [
+      'kubectl get deploy pay-api -o wide — IMAGES column. Phir kubectl kustomize overlays/prod — rendered Deployment mein image kya hai?',
+      'cat overlays/staging/kustomization.yaml aur cat overlays/prod/kustomization.yaml — dono ke images: name milao. Kustomize ka name, container ke image ke naam (tag ke bina) se poora milna chahiye.',
+      'vi overlays/prod/kustomization.yaml — "- name: pay-api" ko "- name: 111122223333.dkr.ecr.ap-south-1.amazonaws.com/pay-api" karo, Save. kubectl kustomize overlays/prod se dekho, phir kubectl apply -k overlays/prod aur kubectl rollout status deployment/pay-api.',
+    ],
+    solution: ['kubectl get deploy pay-api -o wide', 'kubectl kustomize overlays/prod', 'cat overlays/staging/kustomization.yaml',
+      { edit: 'overlays/prod/kustomization.yaml', change: [['- name: pay-api            # Meena', `- name: ${KZ_REPO}   # Meena`]] },
+      'kubectl kustomize overlays/prod', 'kubectl apply -k overlays/prod', 'kubectl rollout status deployment/pay-api'],
+  }, {
+    objectives: ['🖥️ <b>Mission:</b> Kustomize overlay ne chupchaap image nahi badla — render karke (kubectl kustomize / diff -k) galti pakdo aur overlay theek karo'],
+    success: ['Main Kustomize overlay ko render karke jaanch sakta hoon, aur jaanta hoon ki images: ka naam poore image naam se milna chahiye'],
+    cards: [
+      { front: 'Kustomize <code>images: - name: pay-api</code>, container image <code>…ecr…/pay-api:1.8.0</code> — kya hoga?', back: '<b>Kuch nahi.</b> <code>name</code> poore image naam (tag ke bina) se milna chahiye: <code>111122223333.dkr.ecr.ap-south-1.amazonaws.com/pay-api</code>. Match na ho toh Kustomize chupchaap chhod deta hai — koi error nahi.' },
+      { front: 'PR ne version badla, par <code>kubectl apply -k</code> ne "unchanged" bola — pehle kya chalao?', back: '<code>kubectl kustomize &lt;overlay&gt; | grep image</code> ya <code>kubectl diff -k &lt;overlay&gt;</code>. Khaali diff = overlay kuch badal hi nahi raha.' },
+    ],
+  });
+
 })();

@@ -314,6 +314,7 @@ function validateMission(s, sc) {
     let docs = null;
     if (f.editable) { try { docs = KG.yaml.parseAll(f.content || ''); } catch (e) { return; } }   // toota YAML → terminal apply chalata hi nahi
     try { f.apply(mk(), f.content || '', docs); } catch (e) { problems.push(sc + ': file ' + fn + ' apply() throws: ' + e.message); }
+    if (f.onSave) { try { f.onSave(mk(), f.content || '', docs, null); } catch (e) { problems.push(sc + ': file ' + fn + ' onSave() throws: ' + e.message); } }
   });
   (s.responses || []).forEach((r, j) => {
     if (!(r.re instanceof RegExp)) problems.push(sc + ' response' + j + ': re RegExp nahi hai');

@@ -1,4 +1,4 @@
-# KubeGurukul status — 2026-11-23 (hands-on labs job, batch 1–2)
+# KubeGurukul status — 2026-11-24 (hands-on labs job, batch 1–3)
 
 - User ka plan (4 jawab): pehle woh **16 levels** jinmein sirf quiz/sort/match/fill tha; phir naye lab types — YAML fix editor,
   random breakage mode, on-call shift, kubectl speed drill; user Docker + kind install karega taaki real labs (16–19 bhi) test hon;
@@ -10,7 +10,14 @@
   Missions: `config`, `workloads`, `podsecurity`, `secrets`. Ab 64 missions. Validator mein parser + editor ke tests;
   har mission ke galat-YAML raaste (bina quotes number, `timezone`, `IST`, pod-level `allowPrivilegeEscalation`, galat AWS key)
   transcript mein padhe; Chromium 1180/390 par editor khula hone par bhi 0 overflow.
-- **Baaki 8 levels:** whyk8s, controlplane, affinity, observability, helm, operators, istio, helmtemplating.
+- **Batch 3 done (2026-11-24):** missions in `whyk8s` (self-healing + desired state file mein), `controlplane` (static pod
+  file ka flag typo, naya `onSave` editor hook), `affinity` (anti-affinity selector typo + zone key → rollout atakta hai;
+  chhota scheduler + rolling update), `observability` (alert label + `for`; chhota PromQL + `promtool test rules` replay),
+  `helm` (Kustomize `images:` naam match nahi; chhota kustomize build). Ab 69 missions, replay 69/69.
+  Editor bug theek: lambi file mein gutter aur text alag scroll hote the (`.te-body` `align-items: flex-start`).
+  Chromium 1180/390: 5 naye + config/podsecurity jeete, 0 errors, 0 overflow; editor screenshots dekhe.
+- **Baaki 3 levels:** helmtemplating (Go-template engine chahiye), operators, istio. Phir naye lab types: kubectl speed drill,
+  random breakage (chaos), on-call shift. Real labs 16–19 abhi bhi untested (is machine par Docker/kind nahi).
 
 ---
 

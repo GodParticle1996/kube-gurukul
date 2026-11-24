@@ -180,10 +180,22 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     const d = KG.yaml.diff(fileText(fname), text);
     sim.edited[fname] = text;
     closeEditor();
+    const f = sim.files[fname] || {};
     if (!d.length) print('sys', `"${fname}" save hui — koi line nahi badli.`);
     else {
       print('ok', `"${fname}" save hui — ${d.filter(x => x.op === '+').length || d.length} line badli:\n` + d.map(x => `${x.op} ${String(x.line).padStart(3)} │ ${x.text}`).join('\n'));
-      tip(`Cluster par lagane ke liye: kubectl apply -f ${fname}`);
+      // onSave: file ko koi aur khud padhta hai (static pod → kubelet) — kubectl apply wala tip nahi
+      if (f.saveTip) tip(f.saveTip);
+      else if (!f.onSave && !f.noApplyTip) tip(`Cluster par lagane ke liye: kubectl apply -f ${fname}`);
+    }
+    if (d.length && f.onSave) {
+      let docs = null, perr = null;
+      try { docs = KG.yaml.parseAll(text); } catch (e) { if (!e || !e.yaml) throw e; perr = e; }
+      try {
+        const msg = f.onSave(sim, text, docs, perr);
+        if (msg && typeof msg === 'object' && msg.err) print('err', msg.err);
+        else if (msg) print('ok', msg);
+      } catch (e) { print('err', `⚠️ Simulator error: ${e && e.message ? e.message : e} — yeh app ka bug hai, tumhara nahi.`); }
     }
     try { refresh(); } catch (e) { if (typeof console !== 'undefined') console.error(e); }
   }

@@ -1,3 +1,15 @@
+# KubeGurukul status — 2026-11-23 (hands-on labs job, batch 1)
+
+- User ka plan (4 jawab): pehle woh **16 levels** jinmein sirf quiz/sort/match/fill tha; phir naye lab types — YAML fix editor,
+  random breakage mode, on-call shift, kubectl speed drill; user Docker + kind install karega taaki real labs (16–19 bhi) test hon;
+  har batch ke baad commit + push.
+- **Batch 1 done:** `data-labs.js` (nayi file, EXTENDING §18) — terminal missions in `storage`, `ingress`, `netpol`, `autoscale`.
+  Ab 60 terminal missions. `node validate.js` pass, `node tools/replay-missions.js run` 60/60, har mission ka galat-raasta transcript
+  padha gaya, headless Chromium 1180px + 390px: 4/4 missions jeete, 0 errors, 0 overflow.
+- **Baaki 12 levels:** whyk8s, controlplane, config, workloads, affinity, podsecurity, secrets, observability, helm, operators, istio, helmtemplating.
+
+---
+
 # KubeGurukul status — 2026-11-14 (deepening pass)
 
 This section is the current state. Everything below the next heading is older history.

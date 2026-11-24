@@ -181,4 +181,5 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `data-core.js` | Ranks + track definitions |
 | `data-beginner.js` · `data-intermediate.js` · `data-advanced.js` · `data-helm.js` · `data-argocd.js` · `data-karpenter.js` · `data-kodekloud.js` · `data-day2.js` · `data-observe.js` · `data-secure.js` · `data-eksnet.js` | Level content |
 | `data-gaps.js` | Gap levels jo existing tracks ke **beech** mein jaate hain (`KG.registerLevelsAfter`) — sabse aakhir mein load hoti hai |
+| `data-labs.js` | Hands-on labs jo **maujooda** levels mein judte hain (`addLab` → bonus round se pehle). ChaiPay kahani. EXTENDING §18 |
 | `gallery.html` | Saare diagrams ek page par |

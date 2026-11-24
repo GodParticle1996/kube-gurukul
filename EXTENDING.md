@@ -767,3 +767,24 @@ daavon ki khoj hui — etcd quorum, EndpointSlice, VPA in-place, Bitnami catalog
 `netpol`, `autoscale`, `rbac`, `secrets`, `gitops`, `operators`, `istio`), baaki 41 abhi static `html` hain (Helm, ArgoCD,
 Karpenter, KodeKloud tracks aur boss levels); real labs 16–19 cluster par nahi chale.
 
+## 18. 🧪 `data-labs.js` — purane levels mein hands-on labs (2026-11-23 se)
+
+User ne kaha: har level mein haath ka kaam ho. 2026-11-23 ko 16 levels mein sirf quiz / sort / match / fill tha. Un levels ke labs
+**`data-labs.js`** mein jaate hain — level ki apni file mein nahi.
+
+- `addLab(levelId, stage, extra)` = `KG.extendLevel(levelId, extra)` + stage ko us level ke 🎁 **bonus round se pehle** daalna
+  (bonus na ho toh aakhir mein). `extra` mein ek `objectives` line, ek `success` line, aur 1–2 `cards` do — card Revision Dojo mein jaata hai.
+- Kahani **ChaiPay** (§17.5): namespace `payments`, `pay-api`, `ledger`, `notify`, EKS `chaipay-prod`. Pehli line mein ek chhota
+  parichay do ("ChaiPay (UPI payments startup) ki …") — beginner/intermediate learner ne production tracks shayad nahi dekhe.
+- `-n payments` ke saath ya bina — dono chalein: scripted regex `rx('kubectl delete pvc reports-data')` se banao (`NS` jodta hai).
+  `responses` builtins se **pehle** match hote hain aur `-n` abhi hata nahi hota — isliye yeh zaroori hai.
+- **Galat fix bhi file ho**, aur uska jawab asli tool ka asli error ho (immutable PVC spec, RBAC Forbidden) ya `(simulator ne roka)`
+  ke saath ek line ki wajah. Jo galat fix asli cluster mein chal jaata (HPA target 90%), use chalne do — asli nateeja khud sikhata hai.
+- Fix ke **baad** ka verify-command task banao: `c.fixedAt = s.history.length` (apply ke andar) + `ranAfter(s, c.fixedAt, /…/)`.
+- Har naya mission do baar chalao: `node tools/replay-missions.js run` (solution) **aur** ek galat-raaste wali `sols.json`
+  (galat files, ulta kram, revert) — `run sols.json 'level|t0'` poora transcript chhapta hai.
+
+Status (2026-11-23, batch 1): `storage` (PVC + StorageClass), `ingress` (IngressClass + pathType), `netpol` (default-deny: DNS +
+dono taraf allow), `autoscale` (HPA `<unknown>` = CPU request nahi). Baaki 12 levels + naye lab types (YAML editor, random breakage,
+on-call shift, kubectl speed drill) aage ke batches mein.
+

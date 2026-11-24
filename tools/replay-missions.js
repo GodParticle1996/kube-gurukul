@@ -29,11 +29,17 @@ function runOne(m, cmds) {
   const input = termEl.querySelector('input'), outEl = termEl.querySelector('.term-out');
   const won = () => arena.children.some(c => c.classList && c.classList.contains('stage-summary'));
   const log = []; let wonAt = -1;
-  cmds.forEach((cmd, i) => {
+  cmds.forEach((step, i) => {
+    const cmd = step && typeof step === 'object' ? 'vi ' + step.edit : step;
     const before = outEl.children.length;
     input.value = cmd; input.fire('keydown', { key: 'Enter' });
+    if (step && typeof step === 'object' && termEl._editor && termEl._editor.isOpen()) {
+      let txt = termEl._editor.ta.value;
+      (step.change || []).forEach(([a, b]) => { txt = txt.replace(a, b); });
+      termEl._editor.ta.value = txt; termEl._editor.save.click();
+    }
     const out = outEl.children.slice(before).filter(c => !c.classList.contains('t-cmd')).map(c => c.textContent).join('\n');
-    log.push('$ ' + cmd + '\n' + out);
+    log.push('$ ' + cmd + (step && typeof step === 'object' ? '   ✏️ ' + JSON.stringify(step.change) : '') + '\n' + out);
     if (won() && wonAt < 0) wonAt = i;
   });
   // task status: tasks list li elements

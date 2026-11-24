@@ -168,6 +168,7 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `games.js` | Game renderers (bins/order/match/quiz/fill/hotspot/incident/render) |
 | `labs.js` | **Interactive labs** — triage · slider · flow player · scheduler board (+ `KG.allOf`) |
 | `terminal.js` | kubectl simulator (mock cluster + command parser) |
+| `yaml.js` | Chhota YAML parser (`KG.yaml`) — terminal ka ✏️ YAML fix editor (`vi <file>`) isse toota YAML pakadta hai |
 | `helmsim.js` | helm simulator (releases, revisions, values merge, lifecycle) |
 | `argosim.js` | argocd simulator (Applications, sync/health, waves, prune, Rollouts) |
 | `karpentersim.js` | Karpenter controller sim (provisioning, consolidation, cost) |

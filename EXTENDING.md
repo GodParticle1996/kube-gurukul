@@ -217,6 +217,32 @@ sts/ds/ing/netpol/hpa/pvc/all, `-o wide`), `describe`, `logs` (`--previous`),
 `delete pod`, `apply -f`, `exec`, `top`, plus `help`/`ls`/`clear`/`hint`.
 Kuch aur chahiye (scale, rollout, argocd, koi bhi command)? → `responses` mein regex se script karo.
 
+### ✏️ YAML fix editor (2026-11-23) — learner khud YAML badalta hai
+
+```js
+files: {
+  'app-config.yaml': {
+    editable: true,                       // `vi app-config.yaml` se khulti hai (vim/nano/edit bhi)
+    content: 'kind: ConfigMap\n...',      // shuru ka text (git wali file)
+    apply: (sim, text, docs) => {         // text = badla hua text, docs = KG.yaml.parseAll(text)
+      // docs[0].data.X padho, asli API jaisa jawab do:
+      return { err: 'Error from server (BadRequest): ...' }   // laal rang mein
+      // ya: return 'configmap/app-config configured'
+    } },
+},
+solution: [ ..., { edit: 'app-config.yaml', change: [['purana text', 'naya text']] }, 'kubectl apply -f app-config.yaml' ],
+```
+
+- Engine khud karta hai: editor (line numbers, Tab = 2 space, Ctrl+S, Esc), save par diff, `cat` mein naya text,
+  aur **toota YAML** par `apply` chalata hi nahi — `error converting YAML to JSON: yaml: line N: …` chhapta hai (`yaml.js`).
+- `yaml.js` go-yaml v2 jaisa hai: `yes/no/on/off` bool hain, tab se indent mana, duplicate key error. Anchors/tags nahi.
+- `apply` mein asli API ke niyam khud likho: ConfigMap ki value string, strict decoding (`unknown field "spec.x"`),
+  enum values (`Unsupported value`), type (`cannot unmarshal string into … of type bool`). Learner ki galti ka jawab
+  wahi hona chahiye jo asli cluster deta.
+- `{ edit }` step: validator aur `tools/replay-missions.js` `vi <file>` chalate hain, `change` ke jode text mein badalte hain,
+  aur asli 💾 Save button dabate hain. `change` ka purana text file mein **exactly** hona chahiye.
+- `kubectl edit` simulator mein nahi hai; editable files hon toh terminal `vi` wala raasta batata hai.
+
 `solution` ko actual goal/tasks ke mutabik likho: validator asli renderer mein commands replay
 karta hai aur **win aakhri command par** hona chahiye. Jeetne ke baad input disable hota hai;
 verification command learner se chalwana hai toh task banao, `successText` mein mat chhupao.
@@ -784,7 +810,10 @@ User ne kaha: har level mein haath ka kaam ho. 2026-11-23 ko 16 levels mein sirf
 - Har naya mission do baar chalao: `node tools/replay-missions.js run` (solution) **aur** ek galat-raaste wali `sols.json`
   (galat files, ulta kram, revert) — `run sols.json 'level|t0'` poora transcript chhapta hai.
 
-Status (2026-11-23, batch 1): `storage` (PVC + StorageClass), `ingress` (IngressClass + pathType), `netpol` (default-deny: DNS +
-dono taraf allow), `autoscale` (HPA `<unknown>` = CPU request nahi). Baaki 12 levels + naye lab types (YAML editor, random breakage,
-on-call shift, kubectl speed drill) aage ke batches mein.
+Status (2026-11-23):
+- Batch 1 (terminal): `storage` (PVC + StorageClass), `ingress` (IngressClass + pathType), `netpol` (default-deny: DNS +
+  dono taraf allow), `autoscale` (HPA `<unknown>` = CPU request nahi).
+- Batch 2 (✏️ YAML editor, §4): `config` (ConfigMap string + env ke liye rollout restart), `workloads` (CronJob UTC → `timeZone`),
+  `podsecurity` (PSA restricted: `securityContext` sahi jagah + `runAsUser`), `secrets` (ExternalSecret `remoteRef.key` + pod restart).
+- Baaki 8 levels + naye lab types (random breakage, on-call shift, kubectl speed drill) aage ke batches mein.
 

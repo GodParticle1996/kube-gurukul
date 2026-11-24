@@ -1,4 +1,4 @@
-# KubeGurukul status — 2026-11-23 (hands-on labs job, batch 1)
+# KubeGurukul status — 2026-11-23 (hands-on labs job, batch 1–2)
 
 - User ka plan (4 jawab): pehle woh **16 levels** jinmein sirf quiz/sort/match/fill tha; phir naye lab types — YAML fix editor,
   random breakage mode, on-call shift, kubectl speed drill; user Docker + kind install karega taaki real labs (16–19 bhi) test hon;
@@ -6,7 +6,11 @@
 - **Batch 1 done:** `data-labs.js` (nayi file, EXTENDING §18) — terminal missions in `storage`, `ingress`, `netpol`, `autoscale`.
   Ab 60 terminal missions. `node validate.js` pass, `node tools/replay-missions.js run` 60/60, har mission ka galat-raasta transcript
   padha gaya, headless Chromium 1180px + 390px: 4/4 missions jeete, 0 errors, 0 overflow.
-- **Baaki 12 levels:** whyk8s, controlplane, config, workloads, affinity, podsecurity, secrets, observability, helm, operators, istio, helmtemplating.
+- **Batch 2 done:** naya engine feature — ✏️ **YAML fix editor** (`yaml.js` parser + `vi <file>` in `terminal.js`, EXTENDING §4).
+  Missions: `config`, `workloads`, `podsecurity`, `secrets`. Ab 64 missions. Validator mein parser + editor ke tests;
+  har mission ke galat-YAML raaste (bina quotes number, `timezone`, `IST`, pod-level `allowPrivilegeEscalation`, galat AWS key)
+  transcript mein padhe; Chromium 1180/390 par editor khula hone par bhi 0 overflow.
+- **Baaki 8 levels:** whyk8s, controlplane, affinity, observability, helm, operators, istio, helmtemplating.
 
 ---
 

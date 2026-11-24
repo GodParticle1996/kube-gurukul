@@ -7,12 +7,17 @@
      goal: 'HTML — kya karna hai',
      cluster: { nodes:[], pods:[], deployments:[], services:[], configmaps:[], events:[],
                 apiError?: 'text' | fn(sim) -> 'text'|null },     // API server down → har kubectl yahi error
-     files: { 'fix.yaml': { desc, apply(sim) -> 'message', content? } },  // kubectl apply -f ke liye
+     files: { 'fix.yaml': { desc, apply(sim, text, docs) -> 'message' | { err: 'message' }, content?, editable? } },
+            // editable: true → learner `vi fix.yaml` se badal sakta hai (YAML fix editor). apply ko badla hua
+            // `text` aur KG.yaml se parse hue `docs` milte hain; YAML hi galat ho toh apply chalta hi nahi
+            // (terminal kubectl jaisa "error converting YAML to JSON" chhapta hai).
             // '.sh' files node par chalne wali scripts hain: bash fix.sh (API down ho tab bhi chalti hain)
      responses: [ { re: /regex/, out: 'text' | fn(sim, m), mutate?: fn(sim, m) } ],
      tasks: [ { text, check(sim) -> bool } ],                    // checklist (optional)
      success: fn(sim) -> bool,  successText: 'HTML',
      hints: ['pehla hint', 'doosra hint', ...],
+     solution: ['kubectl get pods', { edit: 'fix.yaml', change: [['purana text', 'naya text']] }, 'kubectl apply -f fix.yaml'],
+            // { edit } step = `vi fix.yaml` + editor mein yeh badlaav + Save (validator/replay isi se chalate hain)
    }
    Pod ke special fields: logs, prevLogs, describe, events:[], exec:{cmd:out},
    respawn:{...} (delete hone par ReplicaSet naya pod banati hai), top.
@@ -43,6 +48,8 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
   // non-serializable bits (functions) survive via reference to the stage
   sim.files = stage.files || {};
   sim.responses = stage.responses || [];
+  sim.edited = {};   // vi se save hui files: { 'fix.yaml': 'naya text' } — stage.files kabhi nahi badalte
+  const fileText = name => (sim.edited[name] != null ? sim.edited[name] : (sim.files[name] && sim.files[name].content) || '');
   /* sink != null → output pipe mein ja raha hai (| grep ...). Errors (stderr) pipe
      ko bypass karke seedha screen par aate hain — bilkul asli shell jaisa.
      (print() se PEHLE declare — warna pehla print hi TDZ error deta) */
@@ -72,7 +79,10 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
   /* mission ka solution, ek-ek command mein toda hua (a && b → a, b) — "agla command", command chips aur
      "is roop mein likho" wale tips isi se bante hain */
   const normCmd = c => String(c).replace(/\s+/g, ' ').trim().replace(/^sudo\s+/, '').replace(/^k(?= |$)/, 'kubectl');
-  const solFlat = (stage.solution || []).flatMap(c => splitTop(String(c).replace(/\s+/g, ' ').trim(), ['&&', ';']).map(x => normCmd(x.text)));
+  const solSteps = (stage.solution || []).flatMap(c => (c && typeof c === 'object' && c.edit)
+    ? [{ cmd: 'vi ' + c.edit, edit: c }]
+    : splitTop(String(c).replace(/\s+/g, ' ').trim(), ['&&', ';']).map(x => ({ cmd: normCmd(x.text) })));
+  const solFlat = solSteps.map(x => x.cmd);
   /* command ka "dhaancha": kubectl get pods web-1 -o wide → "kubectl get pods " (naam aur flags nahi) */
   function shapeOf(cmd) {
     const t = normCmd(cmd).split(' ');
@@ -122,6 +132,77 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
   }
 
   arena.append(goalBox, term, btns, palette);
+
+  /* ---------- ✏️ YAML fix editor: `vi <file>` → badlo → 💾 Save → kubectl apply -f <file> ----------
+     Terminal ke andar hi khulta hai (input line chhup jaati hai). Tab = 2 space (YAML mein tab mana),
+     Ctrl+S = save, Esc = cancel. Save ke baad terminal mein badli lines ka diff aata hai. */
+  const termIn = term.querySelector('.term-in');
+  const editor = el('div', 'term-editor');
+  editor.style.display = 'none';
+  const edHead = el('div', 'te-head');
+  const edBody = el('div', 'te-body');
+  const gutter = el('pre', 'te-gutter');
+  const ta = el('textarea', 'te-text');
+  ta.spellcheck = false; ta.wrap = 'off';
+  edBody.append(gutter, ta);
+  const edBtns = el('div', 'te-btns');
+  const saveBtn = el('button', 'btn small te-save', '💾 Save (Ctrl+S)');
+  const cancelBtn = el('button', 'btn small ghost te-cancel', '✖ Cancel (Esc)');
+  edBtns.append(saveBtn, cancelBtn);
+  editor.append(edHead, edBody, edBtns);
+  term.appendChild(editor);
+  let edFile = null;
+  function paintGutter() {
+    const n = String(ta.value).split('\n').length;
+    gutter.textContent = Array.from({ length: n }, (_, k) => k + 1).join('\n');
+    ta.rows = n + 1;
+  }
+  function openEditor(fname) {
+    edFile = fname;
+    edHead.innerHTML = `✏️ <b>${escapeHtml(fname)}</b> — line badlo, phir <b>💾 Save</b>. YAML mein <b>space</b> se indent (tab nahi).`;
+    ta.value = fileText(fname);
+    paintGutter();
+    editor.style.display = '';
+    termIn.style.display = 'none';
+    input.disabled = true;
+    setTimeout(() => { try { ta.focus(); } catch (e) { /* headless */ } }, 50);
+  }
+  function closeEditor() {
+    edFile = null;
+    editor.style.display = 'none';
+    termIn.style.display = '';
+    input.disabled = sim.done;
+    setTimeout(() => input.focus(), 50);
+  }
+  function saveEditor() {
+    if (!edFile) return;
+    const fname = edFile, text = String(ta.value);
+    const d = KG.yaml.diff(fileText(fname), text);
+    sim.edited[fname] = text;
+    closeEditor();
+    if (!d.length) print('sys', `"${fname}" save hui — koi line nahi badli.`);
+    else {
+      print('ok', `"${fname}" save hui — ${d.filter(x => x.op === '+').length || d.length} line badli:\n` + d.map(x => `${x.op} ${String(x.line).padStart(3)} │ ${x.text}`).join('\n'));
+      tip(`Cluster par lagane ke liye: kubectl apply -f ${fname}`);
+    }
+    try { refresh(); } catch (e) { if (typeof console !== 'undefined') console.error(e); }
+  }
+  saveBtn.onclick = saveEditor;
+  cancelBtn.onclick = () => { if (!edFile) return; closeEditor(); print('sys', '(editor band — koi badlaav save nahi hua)'); };
+  ta.addEventListener('input', paintGutter);
+  ta.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveEditor(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelBtn.onclick(); }
+    else if (e.key === 'Tab' && typeof ta.selectionStart === 'number') {
+      e.preventDefault();
+      const a = ta.selectionStart, b = ta.selectionEnd;
+      ta.value = ta.value.slice(0, a) + '  ' + ta.value.slice(b);
+      ta.selectionStart = ta.selectionEnd = a + 2;
+      paintGutter();
+    }
+  });
+  // validator / replay tool isi se editor chalate hain (asli button click, asli save)
+  term._editor = { ta, save: saveBtn, cancel: cancelBtn, isOpen: () => !!edFile };
   print('sys', `Mock cluster ready. Commands type karo — 'help' se list milegi. Tab = naam poora karo.`);
   setTimeout(() => input.focus(), 100);
 
@@ -226,15 +307,17 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
   function nextSolution() {
     let p = 0;
     for (const h of sim.history) if (p < solFlat.length && solFlat[p] === h) p++;
-    return p < solFlat.length ? solFlat[p] : null;
+    return p < solFlat.length ? solSteps[p] : null;
   }
   function showNextCommand() {
     if (sim.done) return;
-    const cmd = nextSolution();
+    const step = nextSolution();
+    const cmd = step && step.cmd;
     if (!cmd) { print('hint', '🆘 Solution ke saare commands chal chuke hain — checklist mein jo kaam ⬜ hai use dobara padho.'); return; }
     sim.hintsUsed += 2;
     const todo = (stage.tasks || []).find(t => { try { return !t.check(sim); } catch (e) { return true; } });
-    print('hint', `🆘 Agla command: ${cmd}` + (todo ? `\n   (kaam: ${plain(todo.text)})` : '') + '\n   Command input mein rakh diya hai — Enter dabao.');
+    const how = step.edit ? '\n   Editor mein yeh badlo, phir 💾 Save:' + (step.edit.change || []).map(([a, b]) => `\n     "${a}"  →  "${b}"`).join('') : '';
+    print('hint', `🆘 Agla command: ${cmd}` + how + (todo ? `\n   (kaam: ${plain(todo.text)})` : '') + '\n   Command input mein rakh diya hai — Enter dabao.');
     input.value = cmd;
     input.focus();
   }
@@ -256,7 +339,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     [...new Set(cands)].forEach(c => { const x = dist(word, c); if (x < bd) { bd = x; best = c; } });
     return best && best !== word && bd <= (word.length <= 4 ? 1 : 2) ? best : null;
   }
-  const CMDS = ['kubectl', 'helm', 'argocd', 'ls', 'cat', 'bash', 'help', 'hint', 'clear'];
+  const CMDS = ['kubectl', 'helm', 'argocd', 'ls', 'cat', 'vi', 'bash', 'help', 'hint', 'clear'];
   const VERBS = ['get', 'describe', 'logs', 'exec', 'apply', 'delete', 'top'];
   /* object nahi mila → batao ki us kind ke kaun se naam maujood hain */
   function notFoundTip(kind, name) {
@@ -297,7 +380,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     const custNames = w => { const ck = customKind(w); return ck ? (ck.items || []).map(x => x.name) : null; };
     if (sl && (RES_ALIAS[sl[1]] || custNames(sl[1]))) { cands = custNames(sl[1]) || namesOf(RES_ALIAS[sl[1]]); prefix = sl[1] + '/'; last = sl[2]; }
     else if (!toks.length) cands = CMDS;
-    else if (prevTok === '-f' || prevTok === '--filename' || (/^(cat|bash|sh)$/.test(toks[0]) && toks.length === 1)) cands = files;
+    else if (prevTok === '-f' || prevTok === '--filename' || (/^(cat|bash|sh|vi|vim|nano|edit)$/.test(toks[0]) && toks.length === 1)) cands = files;
     else if (toks[0] === 'kubectl' && toks.length === 1) cands = VERBS.concat(solAt(1));
     else if (toks[0] === 'kubectl' && toks.length === 2 && /^(get|describe|delete|top|scale|edit|label|annotate|patch)$/.test(toks[1]))
       cands = Object.keys(KIND_WORD).filter(k => list(k).length).map(k => KIND_WORD[k]).concat(Object.keys(sim.cluster.custom || {}));
@@ -617,6 +700,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
         '  kubectl logs <pod> [--previous] [-c <container>]',
         '  kubectl delete pod <name>',
         '  kubectl apply -f <file>        (files dekhne ke liye: ls)',
+        '  vi <file>                      (YAML file kholo, badlo, 💾 Save — phir kubectl apply -f <file>)',
         '  bash <file>.sh                 (node par chalne wali script — API down ho tab bhi)',
         '  kubectl exec [-it] <pod> -- <cmd>',
         '  kubectl top <pods|nodes>',
@@ -641,8 +725,22 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       const fname = norm.slice(4).replace(/^\.\//, '');
       if (sim.saved && sim.saved[fname] != null) { print('ok', sim.saved[fname]); return; }
       const f = sim.files[fname];
-      if (f) { print('ok', f.content || `# ${fname}\n# ${String(f.desc || '(is file ka content mission mein nahi diya)').replace(/<[^>]+>/g, '')}`); return; }
+      if (f) { print('ok', fileText(fname) || `# ${fname}\n# ${String(f.desc || '(is file ka content mission mein nahi diya)').replace(/<[^>]+>/g, '')}`); return; }
       print('err', `cat: ${fname}: No such file or directory ('ls' se files dekho)`);
+      return;
+    }
+    const vm = norm.match(/^(vi|vim|nano|edit)(?:\s+(\S+))?$/);
+    if (vm) {
+      const editable = Object.keys(sim.files).filter(n => sim.files[n].editable);
+      const fname = (vm[2] || '').replace(/^\.\//, '');
+      if (!fname) { print('err', `${vm[1]}: file ka naam do — jaise: vi ${editable[0] || '<file>'}`); return; }
+      if (!sim.files[fname]) { print('err', `${vm[1]}: ${fname}: No such file ('ls' se files dekho)`); return; }
+      if (!sim.files[fname].editable) {
+        print('err', `"${fname}" is mission mein sirf padhne ke liye hai (cat ${fname}).`);
+        if (editable.length) tip(`Badalne wali files: ${editable.join(', ')}`);
+        return;
+      }
+      openEditor(fname);
       return;
     }
 
@@ -862,8 +960,20 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
         return;
       }
       if (/\.sh$/.test(fname)) { print('err', `error: error parsing ${fname}: error converting YAML to JSON — yeh shell script hai, manifest nahi. Chalane ke liye: bash ${fname}`); return; }
-      const msg = f.apply(sim);
-      print('ok', msg || `${fname} applied`);
+      const text = fileText(fname);
+      let docs = null;
+      if (f.editable) {
+        try { docs = KG.yaml.parseAll(text); }
+        catch (e) {
+          if (!e || !e.yaml) throw e;
+          print('err', `error: error parsing ${fname}: error converting YAML to JSON: ${e.message}`);
+          tip(`vi ${fname} se line ${e.line} dekho (aas-paas ki lines ki indent bhi).`);
+          return;
+        }
+      }
+      const msg = f.apply(sim, text, docs);
+      if (msg && typeof msg === 'object' && msg.err) print('err', msg.err);
+      else print('ok', msg || `${fname} applied`);
       return;
     }
 
@@ -920,6 +1030,11 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       'uncordon', 'drain', 'taint', 'expose', 'run', 'port-forward', 'auth', 'config', 'cp', 'explain',
       'api-resources', 'api-versions', 'cluster-info', 'wait', 'debug', 'replace', 'autoscale', 'certificate',
       'attach', 'proxy', 'kustomize', 'diff', 'events'];
+    if (verb === 'edit' && Object.keys(sim.files).some(n => sim.files[n].editable)) {
+      print('err', 'kubectl edit is simulator mein nahi chalta. Wahi kaam: file kholo  →  vi <file>  →  💾 Save  →  kubectl apply -f <file>');
+      tip(`Badalne wali files: ${Object.keys(sim.files).filter(n => sim.files[n].editable).join(', ')}`);
+      return;
+    }
     if (REAL_VERBS.includes(verb)) { notScripted(norm, `kubectl ${verb}`); return; }
 
     print('err', `error: unknown command "${verb}" for "kubectl" ('help' se supported commands dekho)`);

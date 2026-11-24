@@ -527,6 +527,23 @@ pre {
   font-size: .9rem;
 }
 .term-btns { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+/* ✏️ YAML fix editor (vi <file>) — terminal ke andar */
+.term-editor { border-top: 1px solid var(--border); background: #070c16; }
+.te-head { padding: 8px 14px; font-size: .8rem; color: var(--muted); border-bottom: 1px solid #1a2438; }
+.te-head b { color: var(--gold); }
+.te-body { display: flex; max-height: 420px; overflow: auto; }
+.te-gutter {
+  margin: 0; padding: 10px 8px 10px 12px; text-align: right; user-select: none;
+  color: #4b5a78; background: #05080f; border-right: 1px solid #1a2438;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: .84rem; line-height: 1.55;
+}
+.te-text {
+  flex: 1; min-width: 0; margin: 0; padding: 10px 12px; border: 0; outline: 0; resize: none;
+  background: transparent; color: #e4eaf5; white-space: pre; overflow-x: auto; overflow-y: hidden;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: .84rem; line-height: 1.55;
+  tab-size: 2;
+}
+.te-btns { display: flex; gap: 8px; padding: 8px 14px; border-top: 1px solid #1a2438; flex-wrap: wrap; }
 
 /* ---------- homework ---------- */
 .homework {

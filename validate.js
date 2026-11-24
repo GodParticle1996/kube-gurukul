@@ -62,7 +62,7 @@ global.localStorage = { getItem: k => store[k] || null, setItem: (k, v) => { sto
 global.confirm = () => false;
 global.Element = function () {}; Element.prototype = {};
 
-const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'terminal.js',
+const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'yaml.js', 'terminal.js',
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
   'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-secure.js', 'data-eksnet.js', 'data-gaps.js', 'data-ext-sdd.js', 'data-labs.js',
@@ -311,7 +311,9 @@ function validateMission(s, sc) {
   (s.tasks || []).forEach((tk, j) => { try { tk.check(mk()); } catch (e) { problems.push(sc + ' task' + j + ': check() throws: ' + e.message); } });
   Object.entries(s.files || {}).forEach(([fn, f]) => {
     if (typeof f.apply !== 'function') { problems.push(sc + ': file ' + fn + ' bina apply()'); return; }
-    try { f.apply(mk()); } catch (e) { problems.push(sc + ': file ' + fn + ' apply() throws: ' + e.message); }
+    let docs = null;
+    if (f.editable) { try { docs = KG.yaml.parseAll(f.content || ''); } catch (e) { return; } }   // toota YAML → terminal apply chalata hi nahi
+    try { f.apply(mk(), f.content || '', docs); } catch (e) { problems.push(sc + ': file ' + fn + ' apply() throws: ' + e.message); }
   });
   (s.responses || []).forEach((r, j) => {
     if (!(r.re instanceof RegExp)) problems.push(sc + ' response' + j + ': re RegExp nahi hai');
@@ -1388,6 +1390,48 @@ t('terminal custom kinds: kubectl get/describe <custom> state se chalta hai, gal
   T.st.cluster; // (state ka badlaav niche)
   assert(/Maujood pdb: web-pdb/.test(T.run('kubectl get pdb nope')), 'galat naam par maujood naam nahi bataye');
 });
+t('yaml: Kubernetes YAML parse hota hai (nesting, list, flow, block scalar, yes/no bool, --- docs)', () => {
+  const d = KG.yaml.parseAll('kind: Deployment\nmetadata:\n  name: web   # c\n  labels: { app: web, t: "x" }\nspec:\n  template:\n    spec:\n      containers:\n      - name: web\n        args: [--port, "9090"]\n        env:\n        - name: A\n          value: "a # b"\n---\nkind: ConfigMap\ndata:\n  N: 8000\n  F: yes\n  S: "8000"\n  script: |\n    l1\n    l2\n');
+  assert(d.length === 2, 'do documents chahiye: ' + d.length);
+  assert(KG.yaml.get(d[0], 'spec.template.spec.containers[0].args[1]') === '9090', 'flow list / quoted string');
+  assert(KG.yaml.get(d[0], 'spec.template.spec.containers[0].env[0].value') === 'a # b', 'quotes ke andar # comment nahi');
+  assert(d[0].metadata.labels.app === 'web', 'flow map');
+  assert(d[1].data.N === 8000 && d[1].data.F === true && d[1].data.S === '8000', 'int / yes=bool (go-yaml v2) / quoted string');
+  assert(d[1].data.script === 'l1\nl2\n', 'block scalar |');
+  assert(JSON.stringify(KG.yaml.parseAll('a: 1\n\n# c\nb:\n\n  c: 2\n\n')) === '[{"a":1,"b":{"c":2}}]', 'khaali lines aur comment lines beech mein');
+});
+t('yaml: galat YAML par go-yaml jaise error aur sahi line number', () => {
+  const err = txt => { try { KG.yaml.parseAll(txt); return null; } catch (e) { return e.yaml ? e.message : 'NOT-YAML ' + e.message; } };
+  assert(/line 2: found character that cannot start any token/.test(err('a:\n\tb: 1')), 'tab');
+  assert(/line 2: could not find expected ':'/.test(err('metadata:\n  name web\n  ns: x')), 'colon missing');
+  assert(/line 1: mapping values are not allowed/.test(err('image: nginx: 1.25')), 'a: b: c');
+  assert(/line 3: did not find expected key/.test(err('a:\n    b: 1\n  c: 2')), 'beech ki indent');
+  assert(/line 3: key "a" already set in map/.test(err('a: 1\nb: 2\na: 3')), 'duplicate key');
+  assert(/line 1: did not find expected alphabetic or numeric character/.test(err('schedule: */5 * * * *')), 'unquoted cron');
+  assert(err('schedule: "*/5 * * * *"') === null, 'quoted cron theek hai');
+});
+t('YAML fix editor: vi → badlo → Save → cat naya text → apply ko text + docs milte hain; toota YAML apply nahi hota', () => {
+  let got = null;
+  const T = term({ pods: [] }, { files: {
+    'cm.yaml': { editable: true, content: 'kind: ConfigMap\ndata:\n  T: "3000"\n', apply: (s, text, docs) => { got = { text, docs }; return 'configmap/x configured'; } },
+    'ro.yaml': { content: 'x: 1', apply: () => 'ok' } } });
+  const ed = T.arena.children[1]._editor;
+  assert(/sirf padhne ke liye/.test(T.run('vi ro.yaml')) && !ed.isOpen(), 'read-only file editor mein nahi khulni chahiye');
+  T.run('vi cm.yaml');
+  assert(ed.isOpen() && T.input.disabled, 'editor khula aur input band');
+  ed.ta.value = ed.ta.value.replace('"3000"', '"8000"'); ed.save.click();
+  assert(!ed.isOpen() && !T.input.disabled, 'save ke baad editor band, input chalu');
+  const diffOut = T.outEl.children.slice(-2).map(c => c.textContent).join('\n');
+  assert(/- +3 │   T: "3000"/.test(diffOut) && /\+ +3 │   T: "8000"/.test(diffOut), 'save par diff nahi dikha: ' + diffOut);
+  assert(/T: "8000"/.test(T.run('cat cm.yaml')), 'cat purana text dikha raha hai');
+  T.run('kubectl apply -f cm.yaml');
+  assert(got && got.docs[0].data.T === '8000' && /8000/.test(got.text), 'apply ko naya text/docs nahi mile');
+  got = null;
+  T.run('vi cm.yaml'); ed.ta.value = 'kind: ConfigMap\ndata:\n\tT: "1"\n'; ed.save.click();
+  const o = T.run('kubectl apply -f cm.yaml');
+  assert(got === null && /error converting YAML to JSON: yaml: line 3: found character/.test(o), 'toota YAML apply ho gaya: ' + o);
+  assert(/vi <file>/.test(T.run('kubectl edit cm x')), 'kubectl edit par vi wala raasta batana chahiye');
+});
 t('flow player: "Wapas" jaakar wahi sawal dobara nahi poochha jaata (XP/firstTry dobara nahi badhta)', () => {
   const st = { type: 'flow', lanes: [{ id: 'a', label: 'A', icon: 'x' }], summary: 's',
     steps: [{ lane: 'a', t: 'one' }, { lane: 'a', t: 'two', ask: { q: 'q?', choices: ['right', 'wrong'], answer: 0, explain: 'e' } }, { lane: 'a', t: 'three' }] };
@@ -1417,10 +1461,19 @@ t('har terminal mission apne solution: [...] se poora hota hai (asli renderer, h
       const termEl = arena.children[1];
       const input = termEl.querySelector('input'), outEl = termEl.querySelector('.term-out');
       const won = () => arena.children.some(c => c.classList && c.classList.contains('stage-summary'));
-      m.solution.forEach((cmd, i) => {
+      m.solution.forEach((step, i) => {
+        const cmd = step && typeof step === 'object' ? 'vi ' + step.edit : step;
         assert(!won(), where + ': mission "' + cmd + '" se PEHLE hi poora ho gaya — solution mein faltu command, ya success() bahut dheela');
         const before = outEl.children.length;
         input.value = cmd; input.fire('keydown', { key: 'Enter' });
+        if (step && typeof step === 'object') {
+          const ed = termEl._editor;
+          assert(ed && ed.isOpen(), where + ': "' + cmd + '" se editor nahi khula (file editable: true hai?)');
+          let txt = ed.ta.value;
+          (step.change || []).forEach(([a, b]) => { assert(txt.includes(a), where + ': edit step — "' + a + '" file mein nahi mila'); txt = txt.replace(a, b); });
+          ed.ta.value = txt; ed.save.click();
+          assert(!ed.isOpen(), where + ': Save ke baad editor band nahi hua');
+        }
         const out = outEl.children.slice(before).map(c => c.textContent).join('\n');
         assert(!/Simulator error/.test(out), where + ': "' + cmd + '" → ' + out);
       });

@@ -109,7 +109,7 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
   karta hai. Lab README ka kind v1.32 verification pehle ka recorded result hai;
   `node validate.js` real cluster ya current machine par lab execution verify nahi karta
 
-- **Interactive labs (6)** — `labs.js` + `drill.js` + `chaos.js`. Inme "sahi option yaad karo" nahi hai;
+- **Interactive labs (7)** — `labs.js` + `drill.js` + `chaos.js` + `oncall.js`. Inme "sahi option yaad karo" nahi hai;
   inme tum kuch **chalate** ho aur simulator naya number ya naya output deta hai:
   - 🩺 **Triage terminal** (KodeKloud style) — symptom milta hai, command palette milti hai.
     Tum decide karte ho AGLA command kaunsa chale; har command apna asli output ugalti hai.
@@ -124,6 +124,8 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
     jawab; aliases aur flags ka kram maaf (`po` = `pods`, `-owide` = `-o wide`). Best score yaad rehta hai
   - 🎲 **Chaos mode** (boss levels) — chaos monkey pay-api ki file mein 15 mein se koi random galti daalta hai.
     Kuch bataya nahi jaata; pods / describe / logs / endpoints se khud pakdo, file theek karo. Har round naya
+  - 📟 **On-call shift** (Intermediate boss) — ek raat, 4 jude hue alerts (crash → HPA → CPU → DB connections), pager ki
+    ghadi, khatarnaak commands par rok-tok, aur aakhir mein MTTR wala report card (grade A/B/C)
 
 - **Bhoolne ka ilaaj (retention system):**
   - 🧘 **Revision Dojo** — spaced-repetition flashcards (1→3→7→16→35 din intervals);
@@ -171,6 +173,7 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `core.js` | State, XP, ranks, streak, spaced-repetition engine, level registry |
 | `games.js` | Game renderers (bins/order/match/quiz/fill/hotspot/incident/render) |
 | `labs.js` | **Interactive labs** — triage · slider · flow player · scheduler board (+ `KG.allOf`) |
+| `oncall.js` | 📟 **On-call shift** (`type: 'oncall'`) — 4 jude hue incidents, pager, report card — `KG.oncall` |
 | `chaos.js` | 🎲 **Chaos mode** (`type: 'chaos'`) — random breakage; ek YAML file se poora cluster (kubelet ke kram mein) — `KG.chaos` |
 | `drill.js` | ⚡ **kubectl speed drill** (`type: 'drill'`) — command type karo, timer + best score; `KG.drill.canon` aliases/flags milata hai |
 | `terminal.js` | kubectl simulator (mock cluster + command parser) |

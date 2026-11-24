@@ -62,7 +62,7 @@ global.localStorage = { getItem: k => store[k] || null, setItem: (k, v) => { sto
 global.confirm = () => false;
 global.Element = function () {}; Element.prototype = {};
 
-const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'drill.js', 'yaml.js', 'gotpl.js', 'terminal.js', 'chaos.js',
+const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'drill.js', 'yaml.js', 'gotpl.js', 'terminal.js', 'chaos.js', 'oncall.js',
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
   'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-secure.js', 'data-eksnet.js', 'data-gaps.js', 'data-ext-sdd.js', 'data-labs.js',
@@ -230,6 +230,10 @@ KG.tracks.forEach(track => {
           if (s.quiz.answer == null || !s.quiz.choices || !s.quiz.explain) problems.push(sc + ': quiz incomplete');
           else if (s.quiz.answer < 0 || s.quiz.answer >= s.quiz.choices.length) problems.push(sc + ': quiz answer out of range');
         }
+        labStages.push({ at: sc, stage: s });
+      }
+      if (s.type === 'oncall') {
+        if (!s.id) problems.push(sc + ': on-call stage ka id nahi (best grade isi id par save hota hai)');
         labStages.push({ at: sc, stage: s });
       }
       if (s.type === 'chaos') {
@@ -400,6 +404,29 @@ function renderLab(at, st) {
       if (!choices.length && before === done) break;
     }
     if (!done) problems.push(at + ': saari commands + saare choices ke baad bhi lab poora nahi hua (SOFTLOCK)');
+  }
+
+  if (st.type === 'oncall') {
+    /* poori shift ka solution asli terminal mein → saare alerts resolve → report card → Aage badho */
+    const oc = arena._oncall;
+    if (!oc) problems.push(at + ': on-call shift render nahi hui');
+    else {
+      const termEl = oc.sub.children[1], input = termEl.querySelector('input');
+      oc.mission.solution.forEach(step => {
+        input.value = step && typeof step === 'object' ? 'vi ' + step.edit : step;
+        input.fire('keydown', { key: 'Enter' });
+        if (step && typeof step === 'object' && termEl._editor && termEl._editor.isOpen()) {
+          let txt = termEl._editor.ta.value;
+          (step.change || []).forEach(pair => { txt = txt.replace(pair[0], pair[1]); });
+          termEl._editor.ta.value = txt; termEl._editor.save.click();
+        }
+      });
+      if (!oc.sub.children.some(x => x.classList && x.classList.contains('stage-summary'))) problems.push(at + ': on-call shift solution se poori nahi hui');
+      oc.finish();
+      clickAll(arena, 'btn', b => !b.disabled && /Aage badho/.test(b.innerHTML || b.textContent || ''));
+      if (!done) problems.push(at + ': report card ke baad "Aage badho" se stage poora nahi hua (SOFTLOCK)');
+      else if (done.firstTry !== 4 || done.total !== 4) problems.push(at + ': bina hint ki shift par firstTry/total 4/4 hona chahiye, mila ' + done.firstTry + '/' + done.total);
+    }
   }
 
   if (st.type === 'chaos') {
@@ -1495,6 +1522,36 @@ t('chaos: BASE theek hai, har breakage sach mein todta hai, har akela + har do-g
   let n = 0;
   svc.forEach(a => C.BREAKS.filter(b => !svc.includes(b.id) && b.id !== 'replicas-zero').forEach(b => { play([b.id, a]); n++; }));
   assert(n === 24, 'do-galti combos: ' + n);
+});
+t('oncall: 4 incidents kram se fire + resolve hote hain; fix ke bina pakka karna kaam nahi; khatarnaak command gine jaate hain', () => {
+  const m = KG.oncall.mission();
+  const arena = document.createElement('div');
+  KG.renderers.terminal(m, arena, () => {});
+  const termEl = arena.children[1], input = termEl.querySelector('input'), outEl = termEl.querySelector('.term-out');
+  const run = cmd => { const b = outEl.children.length; input.value = cmd; input.fire('keydown', { key: 'Enter' }); return outEl.children.slice(b).map(c => c.textContent).join('\n'); };
+  const edit = (pairs) => { run('vi ' + pairs.f); let t = termEl._editor.ta.value; pairs.c.forEach(([a, b]) => { assert(t.includes(a), 'edit text nahi mila: ' + a); t = t.replace(a, b); }); termEl._editor.ta.value = t; termEl._editor.save.click(); };
+  assert(/roke gaye|simulator ne roka/.test(run('kubectl delete pod ledger-0')), 'ledger-0 delete roka nahi gaya');
+  run('kubectl get pods');
+  assert(!/RESOLVED/.test(run('kubectl get pods')), 'bina fix ke alert resolve ho gaya');
+  edit({ f: 'pay-api-config.yaml', c: [['UPI_TIMEOUT_MS: "3s"', 'UPI_TIMEOUT_MS: "3000"']] });
+  run('kubectl apply -f pay-api-config.yaml');
+  const o1 = run('kubectl get pods');
+  assert(/RESOLVED\s+PayApiDown/.test(o1) && /FIRING\].*PayApiHighLatency/.test(o1), 'incident 1 resolve / 2 fire nahi hua: ' + o1.slice(-300));
+  edit({ f: 'pay-api-hpa.yaml', c: [['maxReplicas: 4', 'maxReplicas: 10']] });
+  run('kubectl apply -f pay-api-hpa.yaml');
+  const o2 = run('kubectl get hpa');
+  assert(/FIRING\].*KubePodsPending/.test(o2), 'incident 3 fire nahi hua: ' + o2.slice(-300));
+  assert(/Pending/.test(run('kubectl get pods')), 'max badhane ke baad pods Pending hone chahiye the');
+  run('kubectl scale deployment reports-backfill --replicas=0');
+  const o3 = run('kubectl get pods');
+  assert(/FIRING\].*LedgerTooManyConnections/.test(o3), 'incident 4 fire nahi hua');
+  edit({ f: 'pay-api-config.yaml', c: [['DB_POOL_SIZE: "50"', 'DB_POOL_SIZE: "30"']] });
+  run('kubectl apply -f pay-api-config.yaml');
+  const psql = 'kubectl exec ledger-0 -- psql -U postgres -c "select count(*) from pg_stat_activity"';
+  assert(!/RESOLVED/.test(run(psql)), 'pool badla par restart ke bina connections theek nahi hone chahiye (env sirf start par)');
+  run('kubectl rollout restart deployment/pay-api');
+  assert(/RESOLVED\s+LedgerTooManyConnections/.test(run(psql)), 'restart + pakka karne ke baad incident 4 resolve nahi hua');
+  assert(arena.children.some(c => c.classList && c.classList.contains('stage-summary')), 'shift jeeti nahi');
 });
 t('drill: canon() aliases, flag ka kram, -o wide/-owide, deploy/x, -it (exec), -n payments optional', () => {
   const same = (a, b) => assert(KG.drill.canon(a) === KG.drill.canon(b), a + '  ≠  ' + b + '  (' + KG.drill.canon(a) + ' | ' + KG.drill.canon(b) + ')');

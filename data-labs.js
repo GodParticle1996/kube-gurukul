@@ -3955,4 +3955,14 @@ Containers:
     cards: [{ front: 'CrashLoopBackOff aur <code>kubectl logs</code> bilkul khaali — kya dekho?', back: '<code>kubectl describe pod</code> ka <b>Last State</b>: <code>StartError</code> (exit 128, command/binary galat) ya <code>OOMKilled</code> (exit 137). Process shuru hi nahi hua toh logs nahi hote.' }],
   });
 
+  /* =====================================================================
+     📟 On-call shift (oncall.js) — boss2 (Production Outage Night) mein:
+     4 jude hue incidents, simulated ghadi, aakhir mein report card.
+     ===================================================================== */
+  addLab('boss2', { type: 'oncall', id: 'oncall-sale', title: '📟 On-call Shift: Diwali sale ki raat (4 alerts)' }, {
+    objectives: ['📟 <b>On-call shift:</b> 4 jude hue alerts ek ke baad ek — har fix ke baad pakka karo; aakhir mein MTTR wala report card'],
+    success: ['Main ek raat ke jude hue incidents (crash → scaling → capacity → DB connections) kram se sambhal sakta hoon'],
+    cards: [{ front: 'HPA max badhaya, phir DB "too many clients" — kyun?', back: 'Har pod apna connection pool kholta hai: <b>pods × pool</b> ≤ DB <code>max_connections</code> (minus reserved). Pool chhota karo aur <code>rollout restart</code> (env sirf start par padha jaata hai).' }],
+  });
+
 })();

@@ -1,4 +1,4 @@
-# KubeGurukul status — 2026-11-24 (hands-on labs job, batch 1–5)
+# KubeGurukul status — 2026-11-24 (hands-on labs job, batch 1–6)
 
 - User ka plan (4 jawab): pehle woh **16 levels** jinmein sirf quiz/sort/match/fill tha; phir naye lab types — YAML fix editor,
   random breakage mode, on-call shift, kubectl speed drill; user Docker + kind install karega taaki real labs (16–19 bhi) test hon;
@@ -23,7 +23,10 @@
 - **Batch 5 done (2026-11-24):** 🎲 chaos mode (`chaos.js`) — boss1/2/3 mein chaos rounds; 15 breakages, ek file se poora
   cluster; validator 15 akele + 24 do-galti combos jeet kar dikhata hai; replay 87/87 (72 + 15 chaos); Chromium 1180/390:
   teeno boss levels mein 2-2 random rounds jeete, 0 errors, 0 overflow.
-- **Baaki:** on-call shift. Real labs 16–19 abhi bhi untested (is machine par Docker/kind nahi).
+- **Batch 6 done (2026-11-24):** 📟 on-call shift (`oncall.js`) — boss2 mein 4 jude hue alerts + report card; terminal.js mein
+  `onTick` aur `hintsFor` hooks. Validator shift ka causal test + headless shift; replay 88/88; Chromium 1180/390: shift poori,
+  report card (grade B — jaan-boojh kar ek khatarnaak command), 0 errors, 0 overflow.
+- **Labs job ke 6 batches poore.** Baaki: real labs 16–19 (is machine par Docker/kind nahi — user install karega).
 
 ---
 

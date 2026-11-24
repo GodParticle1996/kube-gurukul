@@ -309,6 +309,16 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
     return { err: `bash: '${name}' is mission ke pipe mein supported nahi — grep · head · tail · wc · sort chalte hain` };
   }
   function giveHint() {
+    // hintsFor(sim) → { key, list }: abhi ke hisse (jaise on-call ka incident) ke hints, har key ki apni ginti
+    if (typeof stage.hintsFor === 'function') {
+      const h = stage.hintsFor(sim) || { key: '_', list: [] };
+      sim.hintPos = sim.hintPos || {};
+      const pos = sim.hintPos[h.key] || 0;
+      if (pos >= h.list.length) { print('hint', '💡 Is hisse ke aur hints nahi hain — tum kar sakte ho!'); return; }
+      print('hint', `💡 Hint ${pos + 1}: ${h.list[pos]}`);
+      sim.hintPos[h.key] = pos + 1; sim.hintsUsed++;
+      return;
+    }
     const hints = stage.hints || [];
     if (sim.hintsUsed >= hints.length) { print('hint', '💡 Aur hints nahi hain — tum kar sakte ho!'); return; }
     print('hint', `💡 Hint ${sim.hintsUsed + 1}: ${hints[sim.hintsUsed]}`);
@@ -615,6 +625,8 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
   function refresh() {
     // Karpenter ek controller hai — har command ke baad reconcile hota hai
     if (sim.cluster.karpenter && typeof KG.karpenter === 'object') KG.karpenter.reconcile(sim);
+    // onTick: mission ka apna "controller" (on-call shift ki ghadi + incidents) — har command / save ke baad
+    if (typeof stage.onTick === 'function') stage.onTick(sim, print);
     paintTasks(true);
     if (!sim.done && stage.success && stage.success(sim)) {
       sim.done = true;

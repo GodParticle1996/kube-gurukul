@@ -190,6 +190,13 @@ Naye levels ke liye `scene` hi pehli pasand hai.
 // Naya breakage: KG.chaos.BREAKS mein { id, level, fix, title, from, to, diag, clue, reveal } — "from" BASE mein
 // exactly ek baar ho; validator har akela breakage aur har do-galti combo apne solution se jeet kar dikhata hai.
 
+// 📟 ONCALL — on-call shift (oncall.js, 2026-11-24): ek cluster, 4 JUDE hue incidents (crash → HPA max → CPU Pending →
+// DB connections). Simulated ghadi (har command = 1 min), pager panel, incident tabhi resolve jab haalat theek AUR fix ke
+// baad verify command chala. Khatarnaak commands roke + gine jaate hain. Aakhir mein report card (MTTR, hints, grade A/B/C).
+{ type: 'oncall', id: 'oncall-sale', title: '📟 …' }
+// Engine hooks jo isne joda (terminal.js): stage.onTick(sim, print) — har command / save ke baad mission ka apna controller;
+// stage.hintsFor(sim) → { key, list } — hints abhi ke hisse (incident) ke hisaab se.
+
 // 🎁 BONUS — kisi bhi stage mein `bonus: true` daalo → golden bonus round ban jaata hai
 ```
 
@@ -514,6 +521,7 @@ aur unke goals ko solvable saabit karta hai:**
 | `triage` | Palette ki har command "click" karta hai, phir har choice — verdict khulna aur lab poora hona chahiye. Na khule to **SOFTLOCK** report hoti hai. Duplicate `cmd` bhi pakadta hai (Set mein ek hi register hoti hai) |
 | `slider` | **Poora knob sweep** — har combination par `readouts/bars/verdict/check` chalata hai. Ek bhi combination `check()` true na kare → **UNSOLVABLE**. Aur default values par `check()` already true ho → **"goal shuru mein hi poora hai"** |
 | `flow` | Poora flow chala ke, har `ask` ka sahi jawab de ke, aakhir tak pahunchta hai. Na pahunche to **SOFTLOCK** |
+| `oncall` | Poori shift ka solution asli terminal mein chalata hai → report card → "Aage badho"; bina hint `firstTry` 4/4. Alag test: incidents kram se fire/resolve, bina fix ke resolve nahi, pool badalne ke baad restart ke bina asar nahi, khatarnaak command roka jaata hai |
 | `chaos` | Round shuru karta hai, jo breakage aaya uska solution asli terminal mein chalata hai, round jeet kar "Aage badho". Alag test: BASE theek hai, har breakage sach mein todta hai (`KG.chaos.works`), har akela (15) aur har do-galti combo (24) apne solution se jeetta hai |
 | `drill` | "Shuru" dabata hai, har sawal ka aakhri answer type karke Enter, phir "Aage badho" — drill poori honi chahiye aur `firstTry` = sawalon ki ginti. Faltu (canonical same) variants aur do sawalon ka ek hi jawab bhi pakadta hai |
 | `board` | **Backtracking** se saabit karta hai ki saare pods ek saath schedule ho sakte hain. Plus: koi pod HAR node par fit ho (to lab kuch sikhata hi nahi), ya khaali board par bhi kahin fit na ho — dono report hote hain |
@@ -852,7 +860,9 @@ Status (2026-11-23):
 - Batch 5 (2026-11-24): 🎲 **chaos mode** (`chaos.js`, §3) — chaos rounds `boss1` (level 1), `boss2` (2), `boss3` (3) mein.
   15 breakages, ek file se poora cluster (pods / describe / logs / events / endpoints / curl). Partial apply asli kubectl jaisa
   (jo doc theek, woh lagta hai; errors aakhir mein). `node tools/replay-missions.js run '' 'chaos|<id>'` (aur `chaos|a+b`) transcript deta hai.
-- Baaki: on-call shift, real labs (Docker + kind ke baad).
+- Batch 6 (2026-11-24): 📟 **on-call shift** (`oncall.js`, §3) — `boss2` mein "Diwali sale ki raat": 4 jude hue alerts, pager,
+  report card. `node tools/replay-missions.js run '' 'oncall|shift'` poori shift ka transcript deta hai.
+- Baaki: real labs (Docker + kind ke baad) — labs 16–19 abhi bhi untested.
 
 **`gotpl.js` (`KG.gotpl`)** — chhota Go text/template + Sprig. `renderChart({ path: text }, ctx)` → `{ files }` ya `{ err }`.
 Chalta hai: `{{- -}}` chomp, comments, `.a.b`, `$`, `$x :=`, `range` (list/map, `$i, $v :=`), `if / else if / else`, `with`,

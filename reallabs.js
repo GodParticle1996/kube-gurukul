@@ -67,19 +67,20 @@ kubectl delete ns lab14 lab14-legacy --ignore-not-found` },
     decision: 'Config -f file mein ya --set mein?', levels: ['helmvalues', 'helmhooks'], trees: ['packaging'],
     start: 'helm lint chart/gurukul-web\nhelm template demo chart/gurukul-web -f values-prod.yaml | grep -n "replicas:"',
     cleanup: 'helm uninstall demo -n lab15 && kubectl delete ns lab15' },
-  // 16–19 (2026-11): Day-2 Ops aur Security tracks ke saath. Yeh chaar labs asli cluster par chala kar test NAHI hue
-  // (likhne wali machine par Docker/kind nahi tha) — har README ke upar yeh saaf likha hai.
-  { id: '16-kubectl-debug', num: '16', untested: true, icon: '🩺', title: 'kubectl debug: bina shell wala pod', mins: 15,
+  // 16–19 (2026-11): Day-2 Ops aur Security tracks ke saath. 2026-11-24 ko asli kind cluster par test hue
+  // (kind v0.33.0, Kubernetes v1.37.0, Helm v4.3.2). Naya lab abhi test na hua ho toh entry mein `untested: true` likho —
+  // card aur lab page par chetavni apne aap dikhti hai; asli cluster par chala kar hatao.
+  { id: '16-kubectl-debug', num: '16', icon: '🩺', title: 'kubectl debug: bina shell wala pod', mins: 15,
     concept: 'Ephemeral (debug) container, <code>--target</code>, pod ke andar se DNS → Service → EndpointSlice ki jaanch',
     decision: 'exec, debug, ya naya pod — kab kaunsa?', levels: ['d2-debug'], trees: ['debugtool', 'troubleshoot'] },
-  { id: '17-cpu-throttling', num: '17', untested: true, icon: '🐢', title: 'CPU throttling: dheema par zinda', mins: 15,
+  { id: '17-cpu-throttling', num: '17', icon: '🐢', title: 'CPU throttling: dheema par zinda', mins: 15,
     concept: '<code>cpu.max</code> aur <code>cpu.stat</code> padhna; usage = limit ka matlab; request sach bole',
     decision: 'CPU limit lagana, badhana, ya hatana?', levels: ['d2-rightsize'], trees: ['resources'] },
-  { id: '18-admission-policy', num: '18', untested: true, icon: '🚧', title: 'Admission policy: Warn se Deny tak', mins: 20,
+  { id: '18-admission-policy', num: '18', icon: '🚧', title: 'Admission policy: Warn se Deny tak', mins: 20,
     concept: 'ValidatingAdmissionPolicy + Binding; "Deployment bana, pod nahi" ki wajah ReplicaSet ke Events mein',
     decision: 'Naya niyam seedha Deny, ya pehle Warn?', levels: ['sec-policy'], trees: ['admission'],
     cleanup: './cleanup.sh               # policies cluster-scoped hain — namespace ke saath nahi jaatin' },
-  { id: '19-quarantine', num: '19', untested: true, icon: '🚨', title: 'Quarantine: hack hua pod alag karo', mins: 20,
+  { id: '19-quarantine', num: '19', icon: '🚨', title: 'Quarantine: hack hua pod alag karo', mins: 20,
     concept: 'Label hatao → Service aur ReplicaSet se alag; deny-all NetworkPolicy; saboot pehle',
     decision: 'Hack hua pod: delete ya quarantine?', levels: ['sec-boss', 'sec-runtime'], trees: ['netsec'],
     start: 'kubectl apply -f setup.yaml\n./attack.sh                # ek notify pod ko "hack" karta hai aur alert dikhata hai' },
@@ -131,8 +132,8 @@ KG.realLabsForLevel = levelId => KG.realLabs.filter(l => (l.levels || []).includ
       <h2>🧪 Real Cluster Labs — <span class="glow">ab asli cluster par</span></h2>
       <p>Simulator mein seekha, ab <b>kind</b> cluster par karo. Har lab ek toota hua production scenario hai —
       tum diagnose + fix karte ho, aur <code>./verify.sh</code> batata hai sach mein theek hua ya nahi
-      (❌ par <b>hint</b>, jawab nahi). Lab 01–15 asli 3-node kind cluster par test kiye gaye hain.
-      <b>🧪 Naya</b> likhe labs abhi asli cluster par test nahi hue — unke card par yeh saaf likha hai.</p>
+      (❌ par <b>hint</b>, jawab nahi). Saare ${KG.realLabs.length} labs asli 3-node kind cluster par test kiye gaye hain
+      (aakhri baar 2026-11-24: Kubernetes v1.37, Helm 4).${KG.realLabs.some(l => l.untested) ? ' <b>🧪 Naya</b> likhe labs jo abhi test nahi hue, unke card par yeh saaf likha hai.' : ''}</p>
       <div class="dd-how"><span>✅ ${done.length}/${KG.realLabs.length} labs ho gaye</span><span>⏱️ har lab 10–25 min</span><span>🧠 ek baar mein ek lab</span></div>`));
 
     wrap.appendChild(cmdBlock('⚡ Ek baar ka setup (Docker + kind + kubectl chahiye)', 'cd kube-gurukul/real-labs\n./setup.sh            # 3-node kind cluster + metrics-server\nkubectl get nodes'));

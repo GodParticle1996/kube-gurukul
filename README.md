@@ -101,8 +101,8 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
   saath mein poora map, X vs Y table, production gotchas, YAML aur related levels/labs.
   Topic practice ya 8-scenario mixed round khelo; galat jawab Revision Dojo card banta hai
 
-- **🧪 Real Cluster Labs — 19 folders** in [`real-labs/`](real-labs/README.md) (Lab 16–19 naye hain: `kubectl debug`,
-  CPU throttling, admission policy, quarantine — yeh chaar abhi asli cluster par **test nahi hue**, app mein saaf likha hai): broken scenario,
+- **🧪 Real Cluster Labs — 19 folders** in [`real-labs/`](real-labs/README.md) (saare 19 asli kind cluster par test hue —
+  aakhri baar 2026-11-24 par Kubernetes v1.37 + Helm 4; Lab 16–19: `kubectl debug`, CPU throttling, admission policy, quarantine): broken scenario,
   expected output, hints, `verify.sh`, `solution/` aur cleanup. Docker + kind/minikube +
   kubectl chahiye; Helm lab ke liye Helm bhi. Browser commands dikhata hai; commands tumhare
   terminal par chalte hain. App ka "ho gaya" button self-mark hai; cluster checks `./verify.sh`

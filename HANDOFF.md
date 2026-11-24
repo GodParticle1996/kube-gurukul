@@ -26,7 +26,11 @@
 - **Batch 6 done (2026-11-24):** 📟 on-call shift (`oncall.js`) — boss2 mein 4 jude hue alerts + report card; terminal.js mein
   `onTick` aur `hintsFor` hooks. Validator shift ka causal test + headless shift; replay 88/88; Chromium 1180/390: shift poori,
   report card (grade B — jaan-boojh kar ek khatarnaak command), 0 errors, 0 overflow.
-- **Labs job ke 6 batches poore.** Baaki: real labs 16–19 (is machine par Docker/kind nahi — user install karega).
+- **Labs job ke 6 batches poore.**
+- **Real labs tested (2026-11-24):** is machine par Docker 29.1.3 (docker.io) install hua; `~/.local/bin` mein kubectl v1.37.2,
+  kind v0.33.0, helm v4.3.2. `real-labs/setup.sh` se 3-node kind cluster (Kubernetes v1.37.0). **Saare 19 labs** chale:
+  setup → verify ❌ → solution → verify ✅; 16–19 ka har step README se milaya; lab 01 ka beech wala OOM, lab 11 ka PDB-blocked
+  drain, lab 15 ka Helm 4 `--rollback-on-failure` + config-leak bhi asli mein dikha. 16–19 se `untested` flag hata.
 
 ---
 
@@ -44,8 +48,7 @@ This section is the current state. Everything below the next heading is older hi
 - **Verified:** `node validate.js` passes; `node tools/replay-missions.js run` replays all 56 mission solutions;
   every level intro and stage of all 11 tracks opened in headless Chromium at 1180px and 390px with 0 page errors
   and 0 horizontal overflow. Every recommendation (127 leaves) of all 23 decision trees was walked at both widths too.
-- **Not verified:** real labs 16–19 were written on a machine without Docker/kind and have never run on a cluster
-  (flag `untested: true` in `reallabs.js`; remove it after a real run). The lesson text of the 58 older levels was not
+- **Real labs 16–19:** tested on a real kind cluster on 2026-11-24 (see the top section); the `untested` flag is gone. The lesson text of the 58 older levels was not
   re-fact-checked line by line; a targeted search for version-sensitive claims found and fixed four items (commit 286260c).
   17 of the 58 older diagrams are now step-by-step scenes (39 scenes in total); the other 41 are still static HTML.
 - **Git:** all work is local commits on `main`; nothing was pushed.

@@ -602,8 +602,9 @@ Teen baatein jo validator nahi pakadta:
 
 ## 13. Real Labs (`reallabs.js` + `real-labs/`)
 
-Abhi **19 lab directories** hain (01–15 kind v1.32 par chale the; 16–19 likhe gaye par cluster par **nahi** chale —
-catalogue mein `untested: true`, jo app mein ek saaf chetavni dikhata hai. Lab ko sach mein chala lo toh flag hata do). Naye lab mein `README.md`, `verify.sh` aur `solution/` banao;
+Abhi **19 lab directories** hain — saare 2026-11-24 ko asli 3-node kind cluster par chale (kind v0.33.0, Kubernetes v1.37.0,
+Helm v4.3.2): har lab ka setup → `verify.sh` ❌ → solution → `verify.sh` ✅, aur 16–19 ka har "👀 Dikhna chahiye" asli output se milaya.
+Naya lab jo abhi cluster par nahi chala: catalogue mein `untested: true` likho (app mein chetavni apne aap dikhti hai) — chala kar hatao. Naye lab mein `README.md`, `verify.sh` aur `solution/` banao;
 broken setup YAML/script, expected output, hints, decision recap aur cleanup document karo.
 [`real-labs/README.md`](real-labs/README.md) mein setup aur verification helpers diye hain.
 Phir `KG.realLabs` mein unique `id`, `num`, `title`, `mins`, `concept`, `decision`, related
@@ -825,7 +826,7 @@ har level ka intro + har stage kholo, `document.documentElement.scrollWidth - cl
 daavon ki khoj hui — etcd quorum, EndpointSlice, VPA in-place, Bitnami catalog theek hue); 58 purane diagrams mein se
 17 scene bane (`controlplane`, `workernode`, `pod`, `deploy`, `service`, `config`, `scheduler`, `probes`, `storage`, `ingress`,
 `netpol`, `autoscale`, `rbac`, `secrets`, `gitops`, `operators`, `istio`), baaki 41 abhi static `html` hain (Helm, ArgoCD,
-Karpenter, KodeKloud tracks aur boss levels); real labs 16–19 cluster par nahi chale.
+Karpenter, KodeKloud tracks aur boss levels).
 
 ## 18. 🧪 `data-labs.js` — purane levels mein hands-on labs (2026-11-23 se)
 
@@ -862,7 +863,7 @@ Status (2026-11-23):
   (jo doc theek, woh lagta hai; errors aakhir mein). `node tools/replay-missions.js run '' 'chaos|<id>'` (aur `chaos|a+b`) transcript deta hai.
 - Batch 6 (2026-11-24): 📟 **on-call shift** (`oncall.js`, §3) — `boss2` mein "Diwali sale ki raat": 4 jude hue alerts, pager,
   report card. `node tools/replay-missions.js run '' 'oncall|shift'` poori shift ka transcript deta hai.
-- Baaki: real labs (Docker + kind ke baad) — labs 16–19 abhi bhi untested.
+- Real labs: 2026-11-24 ko saare 19 asli kind cluster par test hue (§13) — 16–19 ka `untested` flag hata.
 
 **`gotpl.js` (`KG.gotpl`)** — chhota Go text/template + Sprig. `renderChart({ path: text }, ctx)` → `{ files }` ya `{ err }`.
 Chalta hai: `{{- -}}` chomp, comments, `.a.b`, `$`, `$x :=`, `range` (list/map, `$i, $v :=`), `if / else if / else`, `with`,

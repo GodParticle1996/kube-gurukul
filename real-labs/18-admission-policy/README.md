@@ -2,9 +2,8 @@
 
 > ⏱️ ~20 min · 📍 namespace `lab18` (+ 2 cluster-level policies) · 🧠 Concept: **ValidatingAdmissionPolicy** · 🧭 Decision: *naya niyam seedha Deny, ya pehle Warn?*
 
-> ⚠️ **Sach baat:** yeh lab jis machine par likha gaya, wahan Docker aur kind nahi the. Isliye yeh lab asli cluster par
-> **chala kar test nahi hua**. Commands aur error messages Kubernetes ke docs ke hisaab se likhe hain. Shabd thode alag dikhein
-> toh ghabrana nahi — asli jaanch `./verify.sh` karta hai. Chahiye: Kubernetes **v1.30 ya naya** (`kubectl version`).
+> ✅ **Test hua (2026-11-24):** asli 3-node **kind** cluster par chala kar — kind v0.33.0, Kubernetes v1.37.0, kubectl v1.37.2, Docker 29.1.3.
+> Saare error / warning messages usi cluster ke asli output se milaye gaye. Chahiye: Kubernetes **v1.30 ya naya** (`kubectl version`).
 
 ## 🎯 Ek line mein
 

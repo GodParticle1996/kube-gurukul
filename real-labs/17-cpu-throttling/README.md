@@ -2,9 +2,9 @@
 
 > ⏱️ ~15 min · 📍 namespace `lab17` · 🧠 Concept: **CPU limit = kernel ka brake** · 🧭 Decision: *CPU limit lagana hai, badhana hai, ya hatana hai?*
 
-> ⚠️ **Sach baat:** yeh lab jis machine par likha gaya, wahan Docker aur kind nahi the. Isliye yeh lab asli cluster par
-> **chala kar test nahi hua**. Neeche ke "ms" wale number sirf andaaza hain — tumhari machine par alag honge.
-> Dekhna yeh hai ki fix ke **pehle** aur **baad** mein kitna fark aata hai. Asli jaanch `./verify.sh` karta hai.
+> ✅ **Test hua (2026-11-24):** asli 3-node **kind** cluster par chala kar — kind v0.33.0, Kubernetes v1.37.0, kubectl v1.37.2, Docker 29.1.3.
+> Us machine par batch fix se pehle ~6000 ms aur fix ke baad ~1230 ms tha (`nr_throttled` 10 s mein ~100 → 0).
+> Tumhare "ms" wale number alag honge — dekhna yeh hai ki fix ke **pehle** aur **baad** mein kitna fark aata hai.
 
 ## 🎯 Ek line mein
 

@@ -2,9 +2,8 @@
 
 > ⏱️ ~20 min · 📍 namespace `lab19` · 🧠 Concept: **label se alag karna + NetworkPolicy se band karna** · 🧭 Decision: *pod delete karun ya quarantine?*
 
-> ⚠️ **Sach baat:** yeh lab jis machine par likha gaya, wahan Docker aur kind nahi the. Isliye yeh lab asli cluster par
-> **chala kar test nahi hua**. Commands Kubernetes ke docs ke hisaab se likhe hain. Output thoda alag dikhe toh ghabrana nahi —
-> asli jaanch `./verify.sh` karta hai.
+> ✅ **Test hua (2026-11-24):** asli 3-node **kind** cluster par chala kar — kind v0.33.0, Kubernetes v1.37.0, kubectl v1.37.2, Docker 29.1.3.
+> Har step ka "👀 Dikhna chahiye" (`xmrig`, `ledger-ok`, `download timed out`, `notify-ok`) usi cluster par aaya. NetworkPolicy kind ke default kindnet ne enforce ki.
 
 ## 🎯 Ek line mein
 

@@ -3,11 +3,9 @@
 **Simulator mein seekha, ab asli cluster par karo.** Har lab ek *toota hua* production scenario hai:
 tum diagnose karte ho, fix karte ho, aur `./verify.sh` batata hai ki sach mein theek hua — ❌ par **hint** milta hai, jawab nahi.
 
-> ✅ Lab 01–15 ek asli 3-node **kind** cluster (Kubernetes v1.32) par chala ke test kiye gaye hain —
-> broken state, beech ke fixes, solution, aur `verify.sh` PASS.
->
-> ⚠️ Lab 16–19 (2026-11) naye hain. Jis machine par yeh likhe gaye, wahan Docker aur kind nahi the. Isliye Lab 16–19
-> asli cluster par **chala kar test nahi hue**. Har naye lab ke README ke upar yeh baat likhi hai.
+> ✅ **Saare 19 labs** ek asli 3-node **kind** cluster par chala ke test kiye gaye hain — broken state, beech ke fixes,
+> solution, aur `verify.sh` (fix se pehle ❌, baad mein ✅). Aakhri poora test: **2026-11-24** — kind v0.33.0,
+> Kubernetes v1.37.0, kubectl v1.37.2, Helm v4.3.2, Docker 29.1.3. (Lab 01–15 pehle Kubernetes v1.32 par bhi chale the.)
 
 ## ⚡ Setup (ek baar, ~3 min)
 
@@ -62,12 +60,10 @@ kubectl label node minikube-m03 gurukul/zone=zone-b disktype=ssd
 | 13 | [Jobs & CronJobs](13-jobs-cronjobs/) | backoffLimit, concurrencyPolicy | Forbid / Replace / Allow — kab kaunsa? |
 | 14 | [Stuck Terminating](14-finalizers/) | finalizers, namespace conditions | Finalizer kab hatana theek — kab bilkul nahi |
 | 15 | [Helm hands-on](15-helm/) | template bugs, values precedence, `--rollback-on-failure`, config-leak jaal | Config `-f` file mein ya `--set` mein? |
-| 16 | [kubectl debug](16-kubectl-debug/) ⚠️ | Ephemeral (debug) container, `--target`, pod ke andar se jaanch | `exec`, `debug`, ya naya pod — kab kaunsa? |
-| 17 | [CPU throttling](17-cpu-throttling/) ⚠️ | `cpu.max`, `cpu.stat`, usage = limit ka matlab | CPU limit lagana, badhana, ya hatana? |
-| 18 | [Admission policy](18-admission-policy/) ⚠️ | ValidatingAdmissionPolicy + Binding, Warn → Deny | Naya niyam seedha Deny, ya pehle Warn? |
-| 19 | [Quarantine](19-quarantine/) ⚠️ | Label se alag karna, deny-all NetworkPolicy, saboot pehle | Hack hua pod: delete ya quarantine? |
-
-⚠️ = abhi asli cluster par test nahi hua.
+| 16 | [kubectl debug](16-kubectl-debug/) | Ephemeral (debug) container, `--target`, pod ke andar se jaanch | `exec`, `debug`, ya naya pod — kab kaunsa? |
+| 17 | [CPU throttling](17-cpu-throttling/) | `cpu.max`, `cpu.stat`, usage = limit ka matlab | CPU limit lagana, badhana, ya hatana? |
+| 18 | [Admission policy](18-admission-policy/) | ValidatingAdmissionPolicy + Binding, Warn → Deny | Naya niyam seedha Deny, ya pehle Warn? |
+| 19 | [Quarantine](19-quarantine/) | Label se alag karna, deny-all NetworkPolicy, saboot pehle | Hack hua pod: delete ya quarantine? |
 
 **Suggested order:** 01 → 02 → 03 → 04 → 05 (troubleshooting ki neev) · phir jo production mein chahiye.
 Lab 16–19 app ke **🛠️ Day-2 Ops** aur **🛡️ Security** tracks ke saath chalte hain — pehle woh level khelo, phir lab.

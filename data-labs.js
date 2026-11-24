@@ -3020,4 +3020,916 @@ NewReplicaSet:   pay-api-${c.live.hash} (${c.pods.filter(p => p.rs === c.live.ha
     ],
   });
 
+  /* =====================================================================
+     🧩 helmtemplating — notify chart: range ke andar ".Values" (nil pointer)
+     aur "indent" jahan "nindent" chahiye (YAML error). Asli Go-template
+     engine (gotpl.js) se render; helm template / lint / upgrade.
+     ===================================================================== */
+  const HT_IMG = '111122223333.dkr.ecr.ap-south-1.amazonaws.com/notify';
+  const HT_DEP = 'notify/templates/deployment.yaml';
+  const HT_FILES = {
+    'notify/Chart.yaml': `apiVersion: v2
+name: notify
+description: ChaiPay notify — SMS / email bhejne wali service
+type: application
+version: 0.7.0
+appVersion: "2.4.0"
+`,
+    'notify/values.yaml': `# notify — SMS / email bhejne wali service (ChaiPay)
+replicaCount: 2
+
+image:
+  repository: ${HT_IMG}
+  tag: "2.4.0"
+
+# 2.4.0 se har channel ka apna worker container (Priya, PR #530)
+channels:
+  - name: sms
+    concurrency: 20
+  - name: email
+    concurrency: 5
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+service:
+  port: 8080
+`,
+    'notify/templates/_helpers.tpl': `{{/* Release ke naam se chart ka poora naam (63 akshar tak) */}}
+{{- define "notify.fullname" -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
+{{- define "notify.labels" -}}
+app.kubernetes.io/name: {{ .Chart.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+{{- end }}
+`,
+    [HT_DEP]: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "notify.fullname" . }}
+  labels:
+    {{- include "notify.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "notify.fullname" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "notify.fullname" . }}
+    spec:
+      containers:
+      {{- range .Values.channels }}
+      # Priya (PR #530): har channel ka apna worker container
+      - name: worker-{{ .name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        args: ["--channel={{ .name }}", "--concurrency={{ .concurrency }}"]
+        resources:
+        {{ toYaml .Values.resources | indent 10 }}
+      {{- end }}
+`,
+    'notify/templates/service.yaml': `apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "notify.fullname" . }}
+  labels:
+    {{- include "notify.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: {{ include "notify.fullname" . }}
+  ports:
+  - port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.port }}
+`,
+  };
+  const htText = (s, f) => (s.edited || {})[f] != null ? s.edited[f] : HT_FILES[f];
+  const HT_KIND = ['Namespace', 'ServiceAccount', 'ConfigMap', 'Secret', 'Service', 'Deployment'];
+  const RFC1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+  // helm ki command line: positional args + flags
+  function htArgs(cmd) {
+    const t = String(cmd).split(' '), pos = [], fl = {};
+    for (let i = 1; i < t.length; i++) {
+      const x = t[i];
+      if (/^(-n|--namespace|-f|--values|--set|--set-string|--version|--timeout)$/.test(x)) { fl[x.replace(/^--?/, '')] = t[++i]; continue; }
+      const m = x.match(/^--?([a-z-]+)=(.*)$/);
+      if (m) { fl[m[1]] = m[2]; continue; }
+      if (/^-/.test(x)) { fl[x.replace(/^--?/, '')] = true; continue; }
+      pos.push(x);
+    }
+    fl.ns = fl.n || fl.namespace;
+    return { pos: pos.slice(1), fl, verb: pos[0] };
+  }
+  const htChart = p => /^(\.\/)?notify\/?$/.test(p || '');
+  // poora chart render: { docs: [{ path, text, obj }] } ya { err, kind: 'tpl'|'yaml', path, text }
+  function htRender(s, rel, ns) {
+    let vals;
+    try { vals = KG.yaml.parse(htText(s, 'notify/values.yaml')); } catch (e) { return { err: `failed to parse notify/values.yaml: error converting YAML to JSON: ${e.message}`, kind: 'tpl' }; }
+    const files = {};
+    Object.keys(HT_FILES).forEach(f => { if (/\/templates\//.test(f)) files[f] = htText(s, f); });
+    const ctx = { Values: vals || {}, Release: { Name: rel, Namespace: ns, Revision: (s.cluster.rev || 3) + 1, IsUpgrade: true, IsInstall: false, Service: 'Helm' },
+      Chart: { Name: 'notify', Version: '0.7.0', AppVersion: '2.4.0' }, Capabilities: { KubeVersion: { Version: 'v1.33.4', Major: '1', Minor: '33' } } };
+    const r = KG.gotpl.renderChart(files, ctx);
+    if (r.err) return { err: r.err, kind: 'tpl' };
+    const docs = [];
+    for (const path of Object.keys(r.files)) {
+      const text = r.files[path];
+      if (!text.trim()) continue;
+      let obj;
+      try { obj = KG.yaml.parse(text); } catch (e) { return { err: `YAML parse error on ${path}: error converting YAML to JSON: ${e.message}`, kind: 'yaml', path, text }; }
+      docs.push({ path, text, obj });
+    }
+    docs.sort((a, b) => HT_KIND.indexOf((a.obj || {}).kind) - HT_KIND.indexOf((b.obj || {}).kind));
+    return { docs };
+  }
+  const htOut = docs => docs.map(d => `---\n# Source: ${d.path}\n${d.text.replace(/\s+$/, '')}`).join('\n');
+  // API server ke niyam (upgrade par) — rendered Deployment ke containers
+  function htApiCheck(dep) {
+    const ctrs = ((((dep || {}).spec || {}).template || {}).spec || {}).containers;
+    const P = 'spec.template.spec.containers';
+    if (!Array.isArray(ctrs) || !ctrs.length) return `Deployment.apps "notify" is invalid: ${P}: Required value`;
+    const seen = new Set();
+    for (let i = 0; i < ctrs.length; i++) {
+      const c = ctrs[i] || {};
+      if (!c.name) return `Deployment.apps "notify" is invalid: ${P}[${i}].name: Required value`;
+      if (!RFC1123.test(String(c.name))) return `Deployment.apps "notify" is invalid: ${P}[${i}].name: Invalid value: "${c.name}": a lowercase RFC 1123 label must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character (e.g. 'my-name',  or '123-abc', regex used for validation is '[a-z0-9]([-a-z0-9]*[a-z0-9])?')`;
+      if (seen.has(c.name)) return `Deployment.apps "notify" is invalid: ${P}[${i}].name: Duplicate value: "${c.name}"`;
+      seen.add(c.name);
+      if (!c.image || /^:|:$/.test(String(c.image))) return `Deployment.apps "notify" is invalid: ${P}[${i}].image: ${c.image ? `Invalid value: "${c.image}": invalid reference format` : 'Required value'}`;
+      const rq = (c.resources || {}).requests;
+      if (c.resources && typeof c.resources !== 'object') return `json: cannot unmarshal string into Go struct field Container.${P}.resources of type v1.ResourceRequirements`;
+      if (rq && Object.keys(rq).some(k => !['cpu', 'memory', 'ephemeral-storage'].includes(k))) return `Deployment.apps "notify" is invalid: ${P}[${i}].resources.requests[${Object.keys(rq).find(k => !['cpu', 'memory', 'ephemeral-storage'].includes(k))}]: Invalid value: must be a standard resource type or fully qualified`;
+    }
+    return null;
+  }
+  const htPods = (c, n, ctrs) => Array.from({ length: n }, (_, i) => {
+    const name = `notify-${c.hash}-${['q1w2e', 'r4t5y'][i % 2]}`;
+    return { name, ready: `${ctrs.length}/${ctrs.length}`, status: 'Running', restarts: 0, age: '8s', node: NODES[i % 3].name, ip: '10.0.1' + (2 + i % 3) + '.' + (70 + i),
+      describe: `Name:             ${name}\nNamespace:        payments\nNode:             ${NODES[i % 3].name}/10.0.1${2 + i % 3}.5\nLabels:           app=notify\n                  pod-template-hash=${c.hash}\nStatus:           Running\nControlled By:    ReplicaSet/notify-${c.hash}\nContainers:\n` +
+        ctrs.map(x => `  ${x.name}:\n    Image:      ${x.image}\n    Args:\n${(x.args || []).map(a => '      ' + a).join('\n')}\n    State:      Running\n    Ready:      True`).join('\n') +
+        `\nEvents:\n  Type    Reason     Age   From               Message\n  ----    ------     ----  ----               -------\n  Normal  Scheduled  9s    default-scheduler  Successfully assigned payments/${name} to ${NODES[i % 3].name}\n` +
+        ctrs.map(x => `  Normal  Started    6s    kubelet            Started container ${x.name}`).join('\n') };
+  });
+  const HT_HIST = [['REVISION', 'UPDATED', 'STATUS', 'CHART', 'APP VERSION', 'DESCRIPTION'],
+    ['1', 'Mon Sep 29 11:20:05 2026', 'superseded', 'notify-0.6.0', '2.3.0', 'Install complete'],
+    ['2', 'Fri Oct 17 15:02:44 2026', 'superseded', 'notify-0.6.1', '2.3.1', 'Upgrade complete'],
+    ['3', 'Thu Nov 20 16:40:12 2026', 'deployed', 'notify-0.6.2', '2.3.1', 'Upgrade complete']];
+  const htOk = s => { const r = htRender(s, 'notify', 'payments'); return !r.err && !htApiCheck((r.docs.find(d => (d.obj || {}).kind === 'Deployment') || {}).obj); };
+  const T_HT = [
+    { text: 'Chart render karo: <code>helm template notify ./notify</code> — error padho (kaunsi line, kaunsa field?)', check: s => !!s.cluster.rendered },
+    { text: '<code>cat notify/values.yaml</code> — <code>range</code> kis list par ghoomta hai, aur us list ke har item mein kya hai?', check: s => ran(s, /^(cat|vi|vim|nano) (\.\/)?notify\/values\.yaml$|^helm (show|inspect) values\b/) },
+    { text: 'Template theek karo — <code>helm template</code> bina error ke chale (aur YAML bhi sahi bane)', check: s => htOk(s) },
+    { text: '<code>helm lint ./notify</code> — <b>0 chart(s) failed</b>', check: s => s.cluster.lintText != null && s.cluster.lintText === htText(s, HT_DEP) && htOk(s) },
+    { text: 'Release upgrade karo: <code>helm upgrade notify ./notify -n payments</code>', check: s => s.cluster.rev === 4 && s.cluster.upText === htText(s, HT_DEP) },
+    { text: '<code>kubectl get pods</code> — notify ke pods mein <b>2/2</b> containers?', check: s => s.cluster.rev === 4 && ranAfter(s, s.cluster.upAt, /^kubectl get (pods?|po)\b/) },
+  ];
+  addLab('helmtemplating', {
+    type: 'terminal',
+    title: '🖥️ Mission: naya template, aur helm upgrade ne mana kar diya',
+    instructions: 'ChaiPay ki notify service SMS aur email bhejti hai. Version 2.4.0 mein Priya ne chart badla (PR #530): ab har channel (sms, email) ka apna worker container banega — values.yaml ki "channels" list se. CI mein helm upgrade fail ho gaya. Prod abhi purani revision 3 par hai, aur OTP SMS dheere ja rahe hain. Chart ki files ls se dikhti hain.',
+    goal: `<code>notify</code> chart ko theek karo aur prod par <b>revision 4</b> lagao — har pod mein <b>2 containers</b> (worker-sms, worker-email).
+      Template badalne ke liye: <code>vi notify/templates/deployment.yaml</code> → 💾 Save → <code>helm template notify ./notify</code> se dekho.
+      Error aaye toh line number aur <code>at &lt;…&gt;</code> wala hissa padho.`,
+    tasks: T_HT,
+    cluster: {
+      rev: 3, hash: '7c5d9b',
+      nodes: NODES,
+      pods: PAY_API.concat(['k2x7q', 'm4p8t'].map((x, i) => ({ name: 'notify-7c5d9b-' + x, ready: '1/1', status: 'Running', restarts: 0, age: '4d', node: NODES[i + 1].name, ip: '10.0.1' + (3 + i) + '.44' }))),
+      deployments: [{ name: 'pay-api', ready: '2/2', upToDate: 2, available: 2, age: '40d' }, { name: 'notify', ready: '2/2', upToDate: 2, available: 2, age: '56d' }],
+      services: [{ name: 'notify', type: 'ClusterIP', clusterIP: '10.100.88.12', ports: '8080/TCP', age: '56d' }],
+    },
+    responses: [
+      { re: /^helm template\b.*$/,
+        out: (s, m) => {
+          const a = htArgs((m && m[0]) || ''), chart = a.pos.length > 1 ? a.pos[1] : a.pos[0], rel = a.pos.length > 1 ? a.pos[0] : 'release-name';
+          if (!chart) return 'Error: "helm template" requires at least 1 argument\n\nUsage:  helm template [NAME] [CHART] [flags]';
+          if (!htChart(chart)) return `Error: path "${chart}" not found`;
+          s.cluster.rendered = true;
+          const r = htRender(s, rel, a.fl.ns || 'default');
+          if (r.err && r.kind === 'yaml') return (a.fl.debug ? `---\n# Source: ${r.path}\n${r.text.replace(/\s+$/, '')}\n` : '') + `Error: ${r.err}\n` + (a.fl.debug ? '' : 'Use --debug flag to render out invalid YAML');
+          if (r.err) return 'Error: ' + r.err;
+          return htOut(r.docs);
+        } },
+      { re: /^helm lint\b.*$/,
+        out: (s, m) => {
+          const a = htArgs((m && m[0]) || ''), chart = a.pos[0] || '.';
+          if (!htChart(chart)) return `==> Linting ${chart}\nError unable to check Chart.yaml file in chart: stat ${chart}/Chart.yaml: no such file or directory\n\nError: 1 chart(s) linted, 1 chart(s) failed`;
+          const r = htRender(s, 'test-release', 'test-namespace'), head = `==> Linting ${chart}\n[INFO] Chart.yaml: icon is recommended\n`;
+          if (r.err) { s.cluster.lintText = null; return head + (r.kind === 'yaml' ? `[ERROR] templates/${r.path.split('/').pop()}: unable to parse YAML: ${r.err.replace(/^YAML parse error on [^:]+: /, '')}` : `[ERROR] templates/: ${r.err}`) + '\n\nError: 1 chart(s) linted, 1 chart(s) failed'; }
+          s.cluster.lintText = htText(s, HT_DEP);
+          return head + '\n1 chart(s) linted, 0 chart(s) failed';
+        } },
+      { re: /^helm (?:upgrade|install)\b.*$/,
+        out: (s, m) => {
+          const c = s.cluster, a = htArgs((m && m[0]) || '');
+          const [rel, chart] = a.pos;
+          if (a.verb === 'install') return rel === 'notify' && (a.fl.ns === 'payments') ? 'Error: INSTALLATION FAILED: cannot re-use a name that is still in use' : '(simulator ne roka) naya release mat banao — prod par "notify" release pehle se hai: helm upgrade notify ./notify -n payments';
+          if (!rel || !chart) return 'Error: "helm upgrade" requires 2 arguments\n\nUsage:  helm upgrade [RELEASE] [CHART] [flags]';
+          if (!htChart(chart)) return `Error: path "${chart}" not found`;
+          if (rel !== 'notify') return `Error: UPGRADE FAILED: "${rel}" has no deployed releases`;
+          if (a.fl.ns !== 'payments') return a.fl.install ? '(simulator ne roka) -n payments bhool gaye — --install default namespace mein ek NAYA notify bana deta. -n payments jodo.' : 'Error: UPGRADE FAILED: "notify" has no deployed releases\n(release payments namespace mein hai — -n payments jodo)';
+          if (a.fl.set || a.fl.values || a.fl.f) return '(simulator) is mission mein --set / -f nahi chahiye — galti template mein hai, values mein nahi.';
+          const r = htRender(s, 'notify', 'payments');
+          if (r.err) return 'Error: UPGRADE FAILED: ' + r.err;
+          const dep = (r.docs.find(d => (d.obj || {}).kind === 'Deployment') || {}).obj;
+          const apiErr = htApiCheck(dep);
+          if (apiErr) return `Error: UPGRADE FAILED: cannot patch "notify" with kind Deployment: ${apiErr}`;
+          if (c.rev === 4 && c.upText === htText(s, HT_DEP)) return `Release "notify" has been upgraded. Happy Helming!\nNAME: notify\nLAST DEPLOYED: Mon Nov 24 11:06:12 2026\nNAMESPACE: payments\nSTATUS: deployed\nREVISION: 5\nTEST SUITE: None\n(simulator: kuch nahi badla — naya revision bana par pods wahi.)`;
+          const ctrs = dep.spec.template.spec.containers, n = Number(dep.spec.replicas) || 1;
+          c.rev = 4; c.hash = '5f8e2a'; c.upText = htText(s, HT_DEP); c.upAt = s.history.length;
+          c.pods = c.pods.filter(p => !/^notify-/.test(p.name)).concat(htPods(c, n, ctrs));
+          Object.assign(c.deployments[1], { ready: `${n}/${n}`, upToDate: n, available: n });
+          return `Release "notify" has been upgraded. Happy Helming!\nNAME: notify\nLAST DEPLOYED: Mon Nov 24 11:04:41 2026\nNAMESPACE: payments\nSTATUS: deployed\nREVISION: 4\nTEST SUITE: None`;
+        } },
+      { re: /^helm (?:list|ls)\b.*$/,
+        out: (s, m) => /(-n|--namespace)[ =]payments|-A\b|--all-namespaces/.test(String(m && m[0]))
+          ? tbl([['NAME', 'NAMESPACE', 'REVISION', 'UPDATED', 'STATUS', 'CHART', 'APP VERSION'],
+            s.cluster.rev === 4 ? ['notify', 'payments', '4', '2026-11-24 11:04:41.118204 +0530 IST', 'deployed', 'notify-0.7.0', '2.4.0'] : ['notify', 'payments', '3', '2026-11-20 16:40:12.402117 +0530 IST', 'deployed', 'notify-0.6.2', '2.3.1']])
+          : 'NAME\tNAMESPACE\tREVISION\tUPDATED\tSTATUS\tCHART\tAPP VERSION\n(default namespace mein koi release nahi — -n payments jodo)' },
+      { re: /^helm history\b.*$/,
+        out: s => tbl(HT_HIST.map(r => r.slice()).map((r, i) => (i === 3 && s.cluster.rev === 4 ? Object.assign(r, { 2: 'superseded' }) : r))
+          .concat(s.cluster.rev === 4 ? [['4', 'Mon Nov 24 11:04:41 2026', 'deployed', 'notify-0.7.0', '2.4.0', 'Upgrade complete']] : [])) + (s.cluster.rev === 4 ? '' : '\n(CI ka fail hua upgrade yahan nahi dikhta — template render hi nahi hua, toh revision bana hi nahi)') },
+      { re: /^helm (?:show|inspect) values\b.*$/, out: s => htText(s, 'notify/values.yaml') },
+      { re: /^helm get values\b.*$/, out: 'USER-SUPPLIED VALUES:\nnull' },
+      { re: /^helm\b.*$/, err: true, out: '(simulator: is mission mein yeh helm commands chalte hain — template, lint, upgrade, list, history, show values)' },
+      { re: /^ls(?: -l| -la)? (?!-)(\S+?)\/?$/,
+        out: (s, m) => {
+          const dir = String((m && m[1]) || '').replace(/^\.\//, ''), names = new Set();
+          Object.keys(HT_FILES).forEach(f => { if (f.startsWith(dir + '/')) { const r = f.slice(dir.length + 1); names.add(r.includes('/') ? r.split('/')[0] + '/' : r); } });
+          return names.size ? [...names].join('  ') : `ls: cannot access '${(m && m[1]) || ''}': No such file or directory`;
+        } },
+    ],
+    files: Object.assign({}, ...Object.keys(HT_FILES).map(f => ({
+      [f]: {
+        editable: f === HT_DEP, rawApply: true,
+        desc: f === HT_DEP ? 'Priya ka template — vi se badlo' : 'chart ki file (sirf padhne ke liye)',
+        content: HT_FILES[f],
+        saveTip: f === HT_DEP ? 'Render karke dekho: helm template notify ./notify' : undefined,
+        apply: () => (/\{\{/.test(HT_FILES[f]) || f === HT_DEP
+          ? { err: `error: error parsing ${f}: error converting YAML to JSON: yaml: invalid map key: map[interface {}]interface {}{"include \\"notify.fullname\\" .":interface {}(nil)}\n(Yeh Helm TEMPLATE hai, seedha YAML nahi — {{ }} Helm bharta hai. Lagane ke liye: helm upgrade notify ./notify -n payments)` }
+          : { err: `(simulator ne roka) ${f} Kubernetes object nahi — chart ki file hai. helm template / helm upgrade use karo.` }),
+      },
+    }))),
+    success: KG.allOf(T_HT),
+    successText: `<b>Galti 1 — <code>range</code> ke andar <code>.</code> badal jaata hai:</b> <code>{{ range .Values.channels }}</code> ke andar <code>.</code> = ek channel (<code>{name, concurrency}</code>).
+      Uske andar <code>.Values</code> hai hi nahi → <code>nil pointer evaluating interface {}.image</code>. Bahar ke root tak <code>$</code> se pahuncho: <code>$.Values.image.tag</code>. (<code>with</code> ke andar bhi yahi hota hai.)<br>
+      <b>Galti 2 — <code>indent</code> vs <code>nindent</code>:</b> line par pehle se 8 space the, upar se <code>indent 10</code> ne pehli line ko aur khiska diya → <code>did not find expected key</code>.
+      Pattern yaad rakho: <code>{{- toYaml … | nindent N }}</code> — <code>{{-</code> pichhli line ka khaali hissa khaata hai, <code>nindent</code> nayi line + N space deta hai.<br>
+      <b>Kram:</b> <code>helm template</code> (aur <code>--debug</code>) → <code>helm lint</code> → <code>helm upgrade</code>. Render ka error template mein hota hai; upgrade ka error (jaise <code>Duplicate value</code>) Kubernetes API deta hai.`,
+    hints: [
+      'helm template notify ./notify — error ki line 21 hai, at <.Values.image.repository>. Phir cat notify/values.yaml: range .Values.channels ke andar "." ek channel hai ({name, concurrency}) — usme Values kahan?',
+      'Range ke andar root tak $ se pahuncho: {{ $.Values.image.repository }} aur {{ $.Values.image.tag }}, aur toYaml $.Values.resources. Save, phir helm template notify ./notify.',
+      'Ab YAML error? resources wali line ko {{- toYaml $.Values.resources | nindent 10 }} karo (indent ki jagah nindent, aur {{-). Phir helm lint ./notify aur helm upgrade notify ./notify -n payments.',
+    ],
+    solution: ['helm template notify ./notify', 'cat notify/values.yaml',
+      { edit: HT_DEP, change: [['{{ .Values.image.repository }}:{{ .Values.image.tag }}', '{{ $.Values.image.repository }}:{{ $.Values.image.tag }}'],
+        ['        {{ toYaml .Values.resources | indent 10 }}', '        {{- toYaml $.Values.resources | nindent 10 }}']] },
+      'helm template notify ./notify', 'helm lint ./notify', 'helm upgrade notify ./notify -n payments', 'kubectl get pods'],
+  }, {
+    objectives: ['🖥️ <b>Mission:</b> asli Go-template engine par chart theek karo — <code>range</code> mein <code>$</code>, aur <code>toYaml | nindent</code>'],
+    success: ['Main Helm ka "nil pointer evaluating" aur "did not find expected key" error padh kar template theek kar sakta hoon'],
+    cards: [
+      { front: '<code>{{ range .Values.channels }}</code> ke andar <code>{{ .Values.image.tag }}</code> — kya hoga?', back: '<code>nil pointer evaluating interface {}.image</code>. Range ke andar <code>.</code> = list ka ek item. Root ke liye <code>$</code>: <code>{{ $.Values.image.tag }}</code>.' },
+      { front: 'Map ko YAML mein daalne ka sahi pattern?', back: '<code>{{- toYaml .Values.resources | nindent 10 }}</code>. Bina <code>toYaml</code> → <code>wrong type for value; expected string</code> (ya <code>map[…]</code> chhapta hai). <code>indent</code> + pehle se space = galat indentation.' },
+    ],
+  });
+
+  /* =====================================================================
+     🤖 operators — ledger-db (CloudNativePG Cluster CR) ki disk badhani hai,
+     par apply par "failed calling webhook": webhook operator khud chalata hai,
+     aur operator OOMKilled hai. Helm values se memory badhao → CR lagao.
+     ===================================================================== */
+  const OP_POD0 = 'cnpg-cloudnative-pg-6d8f9c7b5-x2k9p';
+  const OP_PODS = ['cnpg-cloudnative-pg-7b4c2d9e1-q8w3r', 'cnpg-cloudnative-pg-5e9a3f7c2-m6t1z', 'cnpg-cloudnative-pg-8c1f6b4a9-d3k7n', 'cnpg-cloudnative-pg-4a7e2c8f5-h9p2w'];
+  const OP_CR = `apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: ledger-db
+  namespace: payments
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+  primaryUpdateStrategy: unsupervised
+  storage:
+    storageClass: gp3
+    size: 100Gi          # Amit: 50Gi → 100Gi (disk 92% bhar gayi)
+  postgresql:
+    parameters:
+      max_connections: "300"
+`;
+  const OP_VALUES = `# CloudNativePG operator — Helm values (platform team)
+# 2025 mein cluster mein 3 Postgres clusters the; ab 41 hain (har team ka apna DB)
+replicaCount: 1
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 200Mi
+monitoring:
+  podMonitorEnabled: true
+`;
+  const QTY_RE = /^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$/;
+  const toMi = q => {
+    if (typeof q === 'number') return q / 1048576;
+    const m = String(q).match(/^([0-9.]+)(Ki|Mi|Gi|Ti|k|M|G|T|m)?$/);
+    if (!m) return null;
+    const n = Number(m[1]), u = m[2] || '';
+    return n * ({ Ki: 1 / 1024, Mi: 1, Gi: 1024, Ti: 1048576, k: 1000 / 1048576, M: 1e6 / 1048576, G: 1e9 / 1048576, T: 1e12 / 1048576, m: 0.001 / 1048576 }[u] || 1 / 1048576);
+  };
+  const toGi = q => { const mi = toMi(q); return mi == null ? null : mi / 1024; };
+  const opPod = c => c.opPods[c.opPods.length - 1];
+  const opRow = c => { const p = opPod(c); return [p.name, p.ok ? '1/1' : '0/1', p.ok ? 'Running' : 'CrashLoopBackOff', p.ok ? '0' : `${p.restarts} (${p.restarts > 5 ? '3m12s' : '9s'} ago)`, p.age]; };
+  const opDesc = c => {
+    const p = opPod(c);
+    return `Name:             ${p.name}
+Namespace:        cnpg-system
+Service Account:  cnpg-cloudnative-pg
+Node:             node-2/10.0.13.5
+Labels:           app.kubernetes.io/instance=cnpg
+                  app.kubernetes.io/name=cloudnative-pg
+Status:           Running
+Controlled By:    ReplicaSet/${p.name.replace(/-[a-z0-9]{5}$/, '')}
+Containers:
+  manager:
+    Image:         ghcr.io/cloudnative-pg/cloudnative-pg:1.24.1
+    Port:          9443/TCP (webhook-server), 8080/TCP (metrics)
+    Command:
+      /manager
+    Args:
+      controller
+      --leader-elect
+      --webhook-port=9443
+` + (p.ok ? `    State:          Running
+      Started:      Mon, 24 Nov 2026 11:12:40 +0530
+    Ready:          True
+    Restart Count:  0` : `    State:          Waiting
+      Reason:       CrashLoopBackOff
+    Last State:     Terminated
+      Reason:       OOMKilled
+      Exit Code:    137
+      Started:      Mon, 24 Nov 2026 11:01:05 +0530
+      Finished:     Mon, 24 Nov 2026 11:01:16 +0530
+    Ready:          False
+    Restart Count:  ${p.restarts}`) + `
+    Limits:
+      memory:  ${p.lim}
+    Requests:
+      cpu:     100m
+      memory:  ${p.req}
+    Readiness:  http-get https://:9443/readyz delay=0s timeout=1s period=10s #success=1 #failure=3
+Events:
+  Type     Reason   Age                  From     Message
+  ----     ------   ----                 ----     -------
+` + (p.ok ? `  Normal   Started  12s                  kubelet  Started container manager` : `  Normal   Pulled   ${p.restarts > 5 ? '3m12s (x24 over 3h)' : '9s (x3 over 40s)'}  kubelet  Container image "ghcr.io/cloudnative-pg/cloudnative-pg:1.24.1" already present on machine
+  Warning  BackOff  ${p.restarts > 5 ? '41s (x790 over 3h)' : '4s (x4 over 35s)'}   kubelet  Back-off restarting failed container manager in pod ${p.name}_cnpg-system(8a1f3c5e-7b9d-4e2a-9c6f-1d3b5e7a9c2f)`);
+  };
+  const OP_LOGS = `{"level":"info","ts":"2026-11-24T05:31:05.118Z","msg":"Starting CloudNativePG Operator","version":"1.24.1","build":{"Version":"1.24.1","Commit":"3f96930d","Date":"2024-10-16"}}
+{"level":"info","ts":"2026-11-24T05:31:05.412Z","logger":"setup","msg":"Listing namespaces to watch","namespaces":[""]}
+{"level":"info","ts":"2026-11-24T05:31:06.877Z","msg":"Starting EventSource","controller":"cluster","controllerGroup":"postgresql.cnpg.io","controllerKind":"Cluster","source":"kind source: *v1.Cluster"}
+{"level":"info","ts":"2026-11-24T05:31:09.204Z","msg":"Starting workers","controller":"cluster","controllerGroup":"postgresql.cnpg.io","controllerKind":"Cluster","worker count":10}
+{"level":"info","ts":"2026-11-24T05:31:10.551Z","msg":"Reconciling Cluster","controller":"cluster","namespace":"fraud","name":"fraud-db"}
+{"level":"info","ts":"2026-11-24T05:31:10.902Z","msg":"Reconciling Cluster","controller":"cluster","namespace":"kyc","name":"kyc-db"}`;
+  const crDesc = c => `Name:         ledger-db
+Namespace:    payments
+API Version:  postgresql.cnpg.io/v1
+Kind:         Cluster
+Spec:
+  Image Name:  ghcr.io/cloudnative-pg/postgresql:16.4
+  Instances:   3
+  Storage:
+    Size:           ${c.size}
+    Storage Class:  gp3
+Status:
+  Current Primary:  ledger-db-1
+  Instances:        3
+  Ready Instances:  3
+  Phase:            Cluster in healthy state
+  Conditions:
+    Last Transition Time:  ${c.opOk ? '2026-11-24T05:43:12Z' : '2026-11-24T02:11:07Z'}
+    Message:               Cluster is Ready
+    Reason:                ClusterIsReady
+    Status:                True
+    Type:                  Ready
+Events:                    <none>`;
+  const pvcRow = (i, size) => ({ name: 'ledger-db-' + i, status: 'Bound', volume: 'pvc-' + ['3a9f1c2e', '7d4b8e6a', 'c2e5f9b1'][i - 1] + '-5b7d-4e1a-9c3f-8a2d6e4b1f7' + i, capacity: size, accessModes: 'RWO', storageClass: 'gp3', age: '40d' });
+  // operator ki nayi pod: memory limit kaafi hai ya phir OOMKilled
+  function opRoll(c, vals) {
+    const r = (vals && vals.resources) || {}, lim = ((r.limits || {}).memory), req = ((r.requests || {}).memory);
+    const n = c.opPods.length - 1;
+    const ok = lim == null || toMi(lim) >= 384;
+    c.opPods.push({ name: OP_PODS[n % OP_PODS.length], ok, restarts: ok ? 0 : 3, age: ok ? '14s' : '41s', lim: lim == null ? '<none>' : String(lim), req: req == null ? '<none>' : String(req) });
+    c.opOk = ok;
+  }
+  const opWebhookErr = file => `Error from server (InternalError): error when applying patch:
+{"spec":{"storage":{"size":"100Gi"}}}
+to:
+Resource: "postgresql.cnpg.io/v1, Resource=clusters", GroupVersionKind: "postgresql.cnpg.io/v1, Kind=Cluster"
+Name: "ledger-db", Namespace: "payments"
+for: "${file}": error when patching "${file}": Internal error occurred: failed calling webhook "mcluster.cnpg.io": failed to call webhook: Post "https://cnpg-webhook-service.cnpg-system.svc:443/mutate-postgresql-cnpg-io-v1-cluster?timeout=10s": no endpoints available for service "cnpg-webhook-service"`;
+  const KSO = '(?=.*(?:-n|--namespace)[ =]cnpg-system\\b)';
+  const T_OP = [
+    { text: '<code>kubectl apply -f ledger-db.yaml</code> — error padho: kaunsa webhook, kaunsi service?', check: s => !!s.cluster.sawWh },
+    { text: 'Webhook operator khud chalata hai — uske pods dekho (<code>kubectl get pods -n cnpg-system</code>)', check: s => !!s.cluster.sawOp },
+    { text: 'Operator kyun gir raha hai? Pod ka describe padho (<b>Last State</b>)', check: s => !!s.cluster.sawOom },
+    { text: 'Operator ki memory <b>Helm values</b> se badhao (<code>vi cnpg-values.yaml</code> → <code>helm upgrade …</code>)', check: s => !!s.cluster.opOk && !!s.cluster.viaHelm },
+    { text: 'Ab CR lagao: <code>kubectl apply -f ledger-db.yaml</code>', check: s => s.cluster.size === '100Gi' },
+    { text: '<code>kubectl get pvc</code> — ledger-db ki teeno disks <b>100Gi</b>?', check: s => s.cluster.size === '100Gi' && ranAfter(s, s.cluster.sizeAt, /^kubectl get (pvc|persistentvolumeclaims?)\b/) },
+  ];
+  addLab('operators', {
+    type: 'terminal',
+    title: '🖥️ Mission: disk 92% bhari, aur kubectl apply ko webhook ne rok diya',
+    instructions: 'ChaiPay ka ledger database CloudNativePG (CNPG) operator chalata hai: Cluster naam ka custom resource (CR) "ledger-db" — 3 Postgres pods, har ek ki 50Gi disk. Disk 92% bhar chuki hai. Amit ne ledger-db.yaml mein size 100Gi kiya, par kubectl apply har baar fail ho raha hai. Amit ka sujhaav: "webhook hi delete kar do". Platform team ke operator ki Helm values cnpg-values.yaml mein hain.',
+    goal: `ledger-db ki teeno disks <b>100Gi</b> karo — CR ke zariye, jaise operator chahta hai. Pehle samjho apply kyun fail hai: error mein webhook ka naam aur service padho.
+      Operator <code>cnpg-system</code> namespace mein hai (<code>-n cnpg-system</code>). Helm release: <code>cnpg</code>, chart <code>cnpg/cloudnative-pg</code>.`,
+    tasks: T_OP,
+    cluster: {
+      size: '50Gi', opOk: false,
+      opPods: [{ name: OP_POD0, ok: false, restarts: 23, age: '3h', lim: '200Mi', req: '128Mi' }],
+      nodes: NODES,
+      pods: PAY_API.concat([1, 2, 3].map(i => ({ name: 'ledger-db-' + i, ready: '1/1', status: 'Running', restarts: 0, age: '40d', node: NODES[i - 1].name, ip: '10.0.1' + (1 + i) + '.31' }))),
+      deployments: [{ name: 'pay-api', ready: '2/2', upToDate: 2, available: 2, age: '40d' }],
+      pvcs: [1, 2, 3].map(i => pvcRow(i, '50Gi')),
+      custom: {
+        cluster: { names: ['cluster', 'clusters', 'clusters.postgresql.cnpg.io'],
+          cols: ['NAME', 'AGE', 'INSTANCES', 'READY', 'STATUS', 'PRIMARY'],
+          items: [{ name: 'ledger-db', row: ['40d', '3', '3', 'Cluster in healthy state', 'ledger-db-1'] }] },
+      },
+    },
+    responses: [
+      { re: new RegExp('^kubectl ' + KSO + '(?:(?:-n|--namespace)[ =]cnpg-system )?get (?:pods?|po)\\b.*$'),
+        out: s => { s.cluster.sawOp = true; return tbl([['NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE'], opRow(s.cluster)]); } },
+      { re: new RegExp('^kubectl ' + KSO + '.*\\bdescribe\\b.*$'),
+        out: s => { if (!s.cluster.opOk) s.cluster.sawOom = true; return opDesc(s.cluster); } },
+      { re: new RegExp('^kubectl ' + KSO + '.*\\blogs\\b.*$'),
+        out: s => s.cluster.opOk ? OP_LOGS.split('\n').slice(0, 4).join('\n') + '\n{"level":"info","ts":"2026-11-24T05:43:12.204Z","msg":"Reconciling Cluster","controller":"cluster","namespace":"payments","name":"ledger-db"}'
+          : OP_LOGS + '\n(logs achanak ruk jaate hain — process ko bahar se maara gaya. Kisne aur kyun? Pod ke describe mein Last State dekho.)' },
+      { re: new RegExp('^kubectl ' + KSO + '.*\\bget (?:endpoints?|ep)\\b.*$'),
+        out: s => tbl([['NAME', 'ENDPOINTS', 'AGE'], ['cnpg-webhook-service', s.cluster.opOk ? '10.0.13.77:9443' : '<none>', '412d']]) + (s.cluster.opOk ? '' : '\n(ENDPOINTS khaali = koi Ready pod nahi jo webhook sune)') },
+      { re: new RegExp('^kubectl ' + KSO + '.*\\brollout restart\\b.*$'),
+        out: s => { const c = s.cluster; const p = opPod(c); opRoll(c, { resources: { limits: { memory: p.lim }, requests: { memory: p.req } } }); c.viaHelm = c.viaHelm && c.opOk; return `deployment.apps/cnpg-cloudnative-pg restarted${c.opOk ? '' : '\n(naya pod bhi wahi memory limit (' + p.lim + ') ke saath aaya — kubectl get pods -n cnpg-system se dekho)'}`; } },
+      { re: new RegExp('^kubectl ' + KSO + '.*\\bset resources\\b.*$'),
+        out: (s, m) => {
+          const c = s.cluster, mm = String((m && m[0]) || '').match(/--limits=(?:\S*?)memory=([^,\s]+)/);
+          if (!mm) return 'error: you must specify an update to requests or limits (in the form of --requests/--limits)';
+          opRoll(c, { resources: { limits: { memory: mm[1] }, requests: { memory: opPod(c).req } } });
+          c.viaHelm = false;
+          return `deployment.apps/cnpg-cloudnative-pg resource requirements updated\n(Dhyan do: yeh Deployment Helm chalata hai. Agla "helm upgrade cnpg …" values file ka ${(() => { try { return ((((KG.yaml.parse((s.edited || {})['cnpg-values.yaml'] || OP_VALUES) || {}).resources || {}).limits || {}).memory) || 'limit'; } catch (e) { return 'limit'; } })()} wapas laga dega — memory cnpg-values.yaml mein likho.)`;
+        } },
+      { re: /^kubectl delete (?:validatingwebhookconfigurations?|mutatingwebhookconfigurations?)\b.*$/, err: true,
+        out: '(simulator ne roka) Webhook delete karna = taala tod dena. Webhook hi CR ki jaanch karta hai (jaise "disk chhoti mat karo") — aur operator abhi bhi mara hua hai, toh CR lag bhi jaata toh disk badhane wala koi nahi. Pehle operator ko zinda karo.' },
+      { re: /^kubectl get (?:validatingwebhookconfigurations?|mutatingwebhookconfigurations?)\b.*$/,
+        out: (s, m) => tbl([['NAME', 'WEBHOOKS', 'AGE'], [/mutating/.test(String(m && m[0])) ? 'cnpg-mutating-webhook-configuration' : 'cnpg-validating-webhook-configuration', '5', '412d']]) },
+      { re: /^kubectl get (?:crds?|customresourcedefinitions?)\b.*$/,
+        out: tbl([['NAME', 'CREATED AT'], ['backups.postgresql.cnpg.io', '2025-10-08T06:12:41Z'], ['clusterimagecatalogs.postgresql.cnpg.io', '2025-10-08T06:12:41Z'], ['clusters.postgresql.cnpg.io', '2025-10-08T06:12:41Z'],
+          ['databases.postgresql.cnpg.io', '2025-10-08T06:12:41Z'], ['poolers.postgresql.cnpg.io', '2025-10-08T06:12:41Z'], ['scheduledbackups.postgresql.cnpg.io', '2025-10-08T06:12:41Z']]) },
+      { re: /^kubectl api-resources\b.*$/,
+        out: tbl([['NAME', 'SHORTNAMES', 'APIVERSION', 'NAMESPACED', 'KIND'], ['backups', '', 'postgresql.cnpg.io/v1', 'true', 'Backup'], ['clusters', '', 'postgresql.cnpg.io/v1', 'true', 'Cluster'],
+          ['poolers', '', 'postgresql.cnpg.io/v1', 'true', 'Pooler'], ['scheduledbackups', '', 'postgresql.cnpg.io/v1', 'true', 'ScheduledBackup']]) },
+      { re: rx('kubectl describe (?:clusters?|clusters\\.postgresql\\.cnpg\\.io)(?:[ /]ledger-db)?'), out: s => crDesc(s.cluster) },
+      { re: /^kubectl exec (?:-it? |-ti )?ledger-db-[123](?: (?:-n|--namespace)[ =]payments)? -- df\b.*$/,
+        out: s => s.cluster.size === '100Gi' ? 'Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme1n1     98G   45G   53G  46% /var/lib/postgresql/data' : 'Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme1n1     49G   45G  4.0G  92% /var/lib/postgresql/data' },
+      { re: /^helm\b.*$/,
+        out: (s, m) => {
+          const c = s.cluster, a = htArgs((m && m[0]) || '');
+          if (a.verb === 'list' || a.verb === 'ls') return /cnpg-system|-A\b|--all-namespaces/.test(String(m && m[0]))
+            ? tbl([['NAME', 'NAMESPACE', 'REVISION', 'UPDATED', 'STATUS', 'CHART', 'APP VERSION'], ['cnpg', 'cnpg-system', String(c.opRev || 6), '2026-06-11 10:20:41.402117 +0530 IST', 'deployed', 'cloudnative-pg-0.22.1', '1.24.1']])
+            : '(default namespace mein koi release nahi — -n cnpg-system jodo)';
+          if (a.verb === 'get' && a.pos[0] === 'values') return 'USER-SUPPLIED VALUES:\n' + OP_VALUES.split('\n').filter(l => !/^#/.test(l)).join('\n');
+          if (a.verb !== 'upgrade') return '(simulator: is mission mein helm list / get values / upgrade chalte hain)';
+          const [rel, chart] = a.pos;
+          if (rel !== 'cnpg' || chart !== 'cnpg/cloudnative-pg') return `Error: UPGRADE FAILED: ${rel !== 'cnpg' ? `"${rel}" has no deployed releases` : `chart "${chart}" not found — release cnpg ka chart cnpg/cloudnative-pg hai`}`;
+          if (a.fl.ns !== 'cnpg-system') return 'Error: UPGRADE FAILED: "cnpg" has no deployed releases\n(operator cnpg-system namespace mein hai — -n cnpg-system jodo)';
+          const vf = a.fl.f || a.fl.values;
+          if (!vf) return '(simulator ne roka) -f cnpg-values.yaml ke bina upgrade = platform team ki saari custom values (monitoring waghairah) chart ke default par chali jaati. -f cnpg-values.yaml do.';
+          if (vf.replace(/^\.\//, '') !== 'cnpg-values.yaml') return `Error: open ${vf}: no such file or directory`;
+          let vals;
+          try { vals = KG.yaml.parse((s.edited || {})['cnpg-values.yaml'] || OP_VALUES) || {}; } catch (e) { return `Error: failed to parse cnpg-values.yaml: error converting YAML to JSON: ${e.message}`; }
+          const r = vals.resources || {}, lim = (r.limits || {}).memory, req = (r.requests || {}).memory;
+          for (const [k, q] of [['limits', lim], ['requests', req]]) if (q != null && typeof q === 'string' && !QTY_RE.test(q))
+            return `Error: UPGRADE FAILED: failed to create resource: quantities must match the regular expression '^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$' (resources.${k}.memory: "${q}")`;
+          if (lim != null && req != null && toMi(req) > toMi(lim)) return `Error: UPGRADE FAILED: cannot patch "cnpg-cloudnative-pg" with kind Deployment: Deployment.apps "cnpg-cloudnative-pg" is invalid: spec.template.spec.containers[0].resources.requests: Invalid value: "${req}": must be less than or equal to memory limit of ${lim}`;
+          if (lim != null && toMi(lim) > 4096) return '(simulator) itni memory operator ko nahi chahiye — node ki memory doosre pods ki bhi hai. 512Mi–1Gi kaafi hai.';
+          c.opRev = (c.opRev || 6) + 1;
+          opRoll(c, vals);
+          c.viaHelm = true;
+          return `Release "cnpg" has been upgraded. Happy Helming!\nNAME: cnpg\nLAST DEPLOYED: Mon Nov 24 11:12:31 2026\nNAMESPACE: cnpg-system\nSTATUS: deployed\nREVISION: ${c.opRev}\nTEST SUITE: None\nNOTES:\nCloudNativePG operator should be installed in namespace "cnpg-system".`;
+        } },
+    ],
+    files: {
+      'ledger-db.yaml': {
+        editable: true,
+        desc: 'ledger-db Cluster CR (Amit ka badlaav: 100Gi)',
+        content: OP_CR,
+        apply: (s, text, docs) => {
+          const c = s.cluster, d = (docs || [])[0] || {};
+          if (d.kind !== 'Cluster') return { err: `error: is file mein Cluster CR chahiye (kind: ${d.kind || 'khaali'})` };
+          if (d.apiVersion !== 'postgresql.cnpg.io/v1') return { err: `error: resource mapping not found for name: "ledger-db" namespace: "payments" from "ledger-db.yaml": no matches for kind "Cluster" in version "${d.apiVersion}"\nensure CRDs are installed first` };
+          if ((d.metadata || {}).name !== 'ledger-db') return { err: '(simulator ne roka) naam badla toh operator ek NAYA khaali database cluster bana dega. metadata.name: ledger-db rakho.' };
+          const sp = d.spec || {}, st = sp.storage || {};
+          const SK = ['instances', 'imageName', 'primaryUpdateStrategy', 'storage', 'postgresql', 'description', 'bootstrap', 'backup', 'monitoring', 'resources', 'affinity'];
+          const uk = Object.keys(sp).find(k => !SK.includes(k)) || Object.keys(st).map(k => ['size', 'storageClass', 'resizeInUseVolumes', 'pvcTemplate'].includes(k) ? null : 'storage.' + k).find(Boolean);
+          if (uk) return { err: `Error from server (BadRequest): error when patching "ledger-db.yaml": Cluster in version "v1" cannot be handled as a Cluster: strict decoding error: unknown field "spec.${uk}"` };
+          // asli kram: strict decoding → mutating webhook (operator) → schema → validating webhook
+          if (!c.opOk) { c.sawWh = true; return { err: opWebhookErr('ledger-db.yaml') }; }
+          if (typeof sp.instances !== 'number') return { err: `The Cluster "ledger-db" is invalid: spec.instances: Invalid value: "${typeof sp.instances}": spec.instances in body must be of type integer: "${typeof sp.instances}"` };
+          if (sp.instances < 1) return { err: `The Cluster "ledger-db" is invalid: spec.instances: Invalid value: ${sp.instances}: spec.instances in body should be greater than or equal to 1` };
+          if (typeof st.size !== 'string') return { err: `The Cluster "ledger-db" is invalid: spec.storage.size: Invalid value: "${st.size == null ? 'null' : typeof st.size === 'number' ? 'integer' : typeof st.size}": spec.storage.size in body must be of type string: "${st.size == null ? 'null' : typeof st.size === 'number' ? 'integer' : typeof st.size}"` };
+          const params = ((sp.postgresql || {}).parameters) || {};
+          const bad = Object.keys(params).find(k => typeof params[k] !== 'string');
+          if (bad) return { err: `The Cluster "ledger-db" is invalid: spec.postgresql.parameters.${bad}: Invalid value: "${typeof params[bad] === 'number' ? 'integer' : typeof params[bad]}": spec.postgresql.parameters.${bad} in body must be of type string: "${typeof params[bad] === 'number' ? 'integer' : typeof params[bad]}"` };
+          if (!QTY_RE.test(st.size) || toGi(st.size) == null) return { err: `Error from server (Forbidden): error when patching "ledger-db.yaml": admission webhook "vcluster.cnpg.io" denied the request: Cluster.postgresql.cnpg.io "ledger-db" is invalid: spec.storage.size: Invalid value: "${st.size}": quantities must match the regular expression '^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$'` };
+          if (toGi(st.size) < toGi(c.size)) return { err: `Error from server (Forbidden): error when patching "ledger-db.yaml": admission webhook "vcluster.cnpg.io" denied the request: Cluster.postgresql.cnpg.io "ledger-db" is invalid: spec.storage.size: Invalid value: "${st.size}": can't shrink existing storage from ${c.size} to ${st.size}` };
+          if (sp.instances !== 3 || st.storageClass !== 'gp3' || sp.imageName !== 'ghcr.io/cloudnative-pg/postgresql:16.4') return { err: '(simulator ne roka) is mission mein sirf storage.size badlo — instances / image / storageClass ka badlaav database ko restart ya re-create karwata.' };
+          if (toGi(st.size) > 500) return { err: '(simulator) 500Gi se zyada ki zaroorat nahi — 100Gi kaafi hai.' };
+          if (st.size === c.size) return 'cluster.postgresql.cnpg.io/ledger-db unchanged';
+          c.size = st.size; c.sizeAt = s.history.length;
+          c.pvcs = [1, 2, 3].map(i => pvcRow(i, st.size));
+          return 'cluster.postgresql.cnpg.io/ledger-db configured\n(operator ne naya size dekha → teeno PVCs ko resize kiya; gp3 StorageClass mein allowVolumeExpansion: true hai, toh disk chalte chalte badhti hai)';
+        },
+      },
+      'cnpg-values.yaml': {
+        editable: true,
+        desc: 'CNPG operator ki Helm values (release cnpg, namespace cnpg-system)',
+        content: OP_VALUES,
+        saveTip: 'Operator par lagao: helm upgrade cnpg cnpg/cloudnative-pg -n cnpg-system -f cnpg-values.yaml',
+        apply: () => ({ err: 'error: error validating "cnpg-values.yaml": error validating data: [apiVersion not set, kind not set]; if you choose to ignore these errors, turn validation off with --validate=false\n(Yeh Helm values file hai, Kubernetes object nahi — helm upgrade cnpg cnpg/cloudnative-pg -n cnpg-system -f cnpg-values.yaml)' }),
+      },
+    },
+    success: KG.allOf(T_OP),
+    successText: `<b>Chain:</b> 41 Postgres clusters ka hisaab rakhte rakhte operator ki memory 200Mi se upar gayi → kernel ne maara (<b>OOMKilled</b>, exit 137) → pod CrashLoopBackOff →
+      <code>cnpg-webhook-service</code> ke peeche koi Ready pod nahi → API server webhook ko call hi nahi kar paaya → <b>har</b> CNPG CR ka apply fail.<br>
+      <b>Operator = CRD + controller:</b> CR sirf ek likhi hui ichha hai. Disk badhana, failover, backup — yeh kaam operator karta hai. Operator mara = CR badlo ya na badlo, kuch nahi hota.<br>
+      <b>Webhook delete karna galat tha:</b> CR toh lag jaata, par badhane wala koi nahi — aur "disk chhoti mat karo" jaisi jaanch bhi chali jaati.<br>
+      <b>Debug kram:</b> CR ka status → operator pods → describe (Last State) → logs. Memory <b>Helm values</b> mein badhao — <code>kubectl set resources</code> agla helm upgrade mita deta.`,
+    hints: [
+      'kubectl apply -f ledger-db.yaml — error mein "failed calling webhook" aur "no endpoints available for service cnpg-webhook-service". Webhook ka server kaun hai? kubectl get pods -n cnpg-system',
+      `Operator CrashLoopBackOff mein hai. kubectl describe pod ${OP_POD0} -n cnpg-system — Last State: Reason kya hai? Limits mein memory kitni hai?`,
+      'vi cnpg-values.yaml — limits.memory 200Mi ko 1Gi karo, Save. helm upgrade cnpg cnpg/cloudnative-pg -n cnpg-system -f cnpg-values.yaml. Phir kubectl get pods -n cnpg-system (Running?), kubectl apply -f ledger-db.yaml, kubectl get pvc.',
+    ],
+    solution: ['kubectl apply -f ledger-db.yaml', 'kubectl get pods -n cnpg-system', `kubectl describe pod ${OP_POD0} -n cnpg-system`,
+      { edit: 'cnpg-values.yaml', change: [['    memory: 200Mi', '    memory: 1Gi']] },
+      'helm upgrade cnpg cnpg/cloudnative-pg -n cnpg-system -f cnpg-values.yaml', 'kubectl get pods -n cnpg-system', 'kubectl apply -f ledger-db.yaml', 'kubectl get pvc'],
+  }, {
+    objectives: ['🖥️ <b>Mission:</b> operator OOMKilled → webhook bina endpoints → CR apply fail. CR status, operator pods aur Last State se jaanch karo'],
+    success: ['Main "failed calling webhook" se operator tak pahunch kar uski memory Helm values se theek kar sakta hoon'],
+    cards: [
+      { front: '<code>kubectl apply</code> par <code>failed calling webhook … no endpoints available for service</code> — matlab?', back: 'Webhook ka server (aksar <b>operator ka pod</b>) Ready nahi. <code>kubectl get pods -n &lt;operator-ns&gt;</code> aur describe dekho. Webhook delete mat karo — operator mara hai toh CR lag kar bhi kuch nahi hoga.' },
+      { front: 'Operator mara hua ho toh CR badalne se kya hota hai?', back: '<b>Kuch nahi.</b> CR sirf desired state hai — kaam operator (controller) karta hai. Operator wapas aate hi woh CR padh kar reconcile karta hai.' },
+    ],
+  });
+
+  /* =====================================================================
+     🕸️ istio — pay-api v2 canary (10%) ke requests 503:
+     (1) VirtualService subset "v2" maangta hai, DestinationRule mein hai hi nahi (NC)
+     (2) v2 pod mein sidecar band, par DR "ISTIO_MUTUAL" bhejta hai → TLS error (UF,URX)
+     Har request ka nateeja live VS + DR + pods se nikalta hai.
+     ===================================================================== */
+  const IS_VS = `apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: pay-api
+  namespace: payments
+spec:
+  hosts:
+  - pay-api
+  http:
+  - route:
+    - destination:
+        host: pay-api
+        subset: v1
+      weight: 90
+    - destination:
+        host: pay-api
+        subset: v2           # Neha: naya UPI flow — 10% canary
+      weight: 10
+`;
+  const IS_DR = `apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: pay-api
+  namespace: payments
+spec:
+  host: pay-api
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL      # mesh ke andar mTLS (security team ka niyam)
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+`;
+  const IS_V2 = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pay-api-v2
+  namespace: payments
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pay-api
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: pay-api
+        version: v2
+      annotations:
+        sidecar.istio.io/inject: "false"   # debug ke liye band kiya tha
+    spec:
+      containers:
+      - name: pay-api
+        image: 111122223333.dkr.ecr.ap-south-1.amazonaws.com/pay-api:2.0.0-rc1
+        ports:
+        - containerPort: 8080
+`;
+  const IS_SH = `#!/bin/bash
+# sleep pod (mesh ke andar) se pay-api ko 100 requests.
+# Har line: kitni baar | jawab ki body | HTTP code
+kubectl exec deploy/sleep -c sleep -- sh -c '
+  for i in $(seq 1 100); do
+    curl -s -w " %{http_code}\\n" http://pay-api:8080/version
+  done' | sort | uniq -c | sort -rn`;
+  const IS_TLS = 'TLS_error:|268435703:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER:TLS_error_end';
+  const IS_DRK = ['host', 'trafficPolicy', 'subsets', 'exportTo', 'workloadSelector'];
+  const isPods = c => {
+    const v2 = c.v2Sidecar
+      ? { name: 'pay-api-v2-7c2e9d-p3n8w', ready: '2/2', status: 'Running', restarts: 0, age: '9s', node: 'node-3', ip: '10.0.14.36', labels: { app: 'pay-api', version: 'v2' }, sidecar: true }
+      : { name: 'pay-api-v2-9f4e1a-k7q2x', ready: '1/1', status: 'Running', restarts: 0, age: '2h', node: 'node-3', ip: '10.0.14.33', labels: { app: 'pay-api', version: 'v2' }, sidecar: false };
+    v2.describe = `Name:             ${v2.name}
+Namespace:        payments
+Node:             node-3/10.0.14.5
+Labels:           app=pay-api
+                  version=v2
+Annotations:      ${v2.sidecar ? 'istio.io/rev: default\n                  sidecar.istio.io/status: {"initContainers":["istio-init"],"containers":["istio-proxy"],"volumes":[...]}' : 'sidecar.istio.io/inject: false'}
+Status:           Running
+IP:               ${v2.ip}
+Containers:
+  pay-api:
+    Image:          111122223333.dkr.ecr.ap-south-1.amazonaws.com/pay-api:2.0.0-rc1
+    Port:           8080/TCP
+    State:          Running
+    Ready:          True` + (v2.sidecar ? `
+  istio-proxy:
+    Image:          docker.io/istio/proxyv2:1.24.2
+    State:          Running
+    Ready:          True` : '');
+    const v1 = ['a1', 'b2'].map((x, i) => ({ name: 'pay-api-v1-6b8d7c-' + x, ready: '2/2', status: 'Running', restarts: 0, age: '6d', node: NODES[i].name, ip: '10.0.1' + (2 + i) + '.21', labels: { app: 'pay-api', version: 'v1' }, sidecar: true }));
+    return v1.concat([v2, { name: 'sleep-5d7c8b-x1m9t', ready: '2/2', status: 'Running', restarts: 0, age: '30d', node: 'node-1', ip: '10.0.12.40', labels: { app: 'sleep' }, sidecar: true }]);
+  };
+  // ek destination (subset) ka nateeja: ok / NC / UH / TLS / PLAIN
+  function isOutcome(c, subset) {
+    const sub = c.dr.subsets[subset];
+    if (!sub) return { code: 503, flag: 'NC', detail: 'cluster_not_found', body: '' };
+    const eps = c.pods.filter(p => p.labels.app === 'pay-api' && Object.keys(sub).every(k => p.labels[k] === String(sub[k])));
+    if (!eps.length) return { code: 503, flag: 'UH', detail: 'no_healthy_upstream', body: 'no healthy upstream' };
+    const p = eps[0];
+    const mode = c.dr.tls;   // null = auto mTLS
+    if (mode === 'ISTIO_MUTUAL' && !p.sidecar) return { code: 503, flag: 'UF,URX', detail: `upstream_reset_before_response_started{remote_connection_failure|${IS_TLS}}`, body: `upstream connect error or disconnect/reset before headers. retried and the latest reset reason: remote connection failure, transport failure reason: ${IS_TLS}`, ep: p };
+    if ((mode === 'DISABLE' || mode === 'SIMPLE') && p.sidecar) return { code: 503, flag: 'UC,URX', detail: 'upstream_reset_before_response_started{connection_termination}', body: 'upstream connect error or disconnect/reset before headers. retried and the latest reset reason: connection termination', ep: p };
+    return { code: 200, body: p.labels.version, ep: p };
+  }
+  function isTraffic(c) {
+    const jitter = [1, -1, 0, 2, -2][(c.runs || 0) % 5];
+    const routes = c.vs.slice();
+    const counts = {};
+    let left = 100;
+    routes.forEach((r, i) => {
+      let n = i === routes.length - 1 ? left : Math.round(r.weight + (i === 0 ? jitter : 0));
+      n = Math.max(0, Math.min(left, n)); left -= n;
+      const o = isOutcome(c, r.subset), key = `${o.body} ${o.code}`;
+      counts[key] = (counts[key] || 0) + n;
+    });
+    return Object.keys(counts).filter(k => counts[k]).sort((a, b) => counts[b] - counts[a]).map(k => String(counts[k]).padStart(7) + ' ' + k).join('\n');
+  }
+  const isFails = c => c.vs.some(r => isOutcome(c, r.subset).code !== 200);
+  function isAccessLog(c) {
+    const rid = ['6c1d3b2a-9e4f-4a8b', 'a7d2c91e-4b3f-4c1e', '3e9b1c5a-7d2f-4b8e', 'f1b9e2c4-6a3d-4f7a'];
+    const lines = [];
+    c.vs.forEach((r, i) => {
+      const o = isOutcome(c, r.subset), cl = `outbound|8080|${r.subset}|pay-api.payments.svc.cluster.local`;
+      const up = o.ep ? `"${o.ep.ip}:8080" ${cl}` : `"-" ${o.flag === 'NC' ? '-' : cl}`;
+      lines.push(`[2026-11-24T05:52:0${i + 1}.118Z] "GET /version HTTP/1.1" ${o.code} ${o.flag || '-'} ${o.code === 200 ? 'via_upstream' : o.detail} - "-" 0 ${o.body.length} ${o.code === 200 ? 3 : 12} ${o.code === 200 ? 2 : '-'} "-" "curl/8.5.0" "${rid[i % 4]}-b7c1-2f5e8d9a0c41" "pay-api:8080" ${up} ${o.ep ? '10.0.12.40:42110' : '-'} 10.100.71.3:8080 10.0.12.40:5123${i} - default`);
+    });
+    return lines.join('\n');
+  }
+  function isAnalyze(c, ns) {
+    if (ns !== 'payments') return `✔ No validation issues found when analyzing namespace: ${ns}.`;
+    const out = [];
+    c.vs.forEach(r => { if (!c.dr.subsets[r.subset]) out.push(`Error [IST0101] (VirtualService payments/pay-api) Referenced host+subset in destinationrule not found: "pay-api+${r.subset}"`); });
+    c.pods.filter(p => !p.sidecar).forEach(p => out.push(`Warning [IST0103] (Pod payments/${p.name}) The pod payments/${p.name} is missing the Istio proxy. This can often be resolved by restarting or redeploying the workload.`));
+    if (!out.length) return '✔ No validation issues found when analyzing namespace: payments.';
+    return out.join('\n') + (out.some(l => /^Error/.test(l)) ? '\nError: Analyzers found issues when analyzing namespace: payments.\nSee https://istio.io/v1.24/docs/reference/config/analysis for more information about causes and resolutions.' : '');
+  }
+  const isBad = (kind, file, msg) => ({ err: `Error from server (BadRequest): error when patching "${file}": ${kind} in version "v1" cannot be handled as a ${kind}: ${msg}` });
+  const isWebhook = (file, msg) => ({ err: `Error from server: error when applying patch:\n...\nfor: "${file}": error when patching "${file}": admission webhook "validation.istio.io" denied the request: configuration is invalid: ${msg}` });
+  const T_IS = [
+    { text: 'Traffic test chalao: <code>bash test-traffic.sh</code> — 100 mein se kitne fail?', check: s => !!s.cluster.tested },
+    { text: 'Istio se poochho: <code>istioctl analyze -n payments</code>', check: s => !!s.cluster.analyzed },
+    { text: 'DestinationRule mein subset <code>v2</code> jodo — v2 pod tak raasta bane', check: s => !!s.cluster.dr.subsets.v2 && isOutcome(s.cluster, 'v2').flag !== 'NC' && isOutcome(s.cluster, 'v2').flag !== 'UH' },
+    { text: 'v2 pod ko mesh mein lao — sidecar ke saath (<b>READY 2/2</b>)', check: s => !!s.cluster.v2Sidecar },
+    { text: '<code>bash test-traffic.sh</code> dobara — <b>0 fail</b>, ~10% v2', check: s => !!s.cluster.cleanRun && !isFails(s.cluster) && s.cluster.v2Sidecar },
+  ];
+  addLab('istio', {
+    type: 'terminal',
+    title: '🖥️ Mission: canary 10% — aur woh 10% sab 503',
+    instructions: 'ChaiPay ka payments namespace Istio mesh mein hai: har pod ke saath Envoy sidecar, aur pods aapas mein mTLS se baat karte hain (PeerAuthentication: STRICT). Neha pay-api v2 (naya UPI flow) ko canary chala rahi hai — VirtualService ne 90% traffic v1 aur 10% v2 ko bheja. Tab se lagbhag 10% payments 503 de rahe hain. Neha ki files: pay-api-vs.yaml, pay-api-dr.yaml, pay-api-v2-deploy.yaml.',
+    goal: `Canary theek karo: 100 requests mein <b>0 fail</b>, lagbhag <b>10% v2</b> — aur v2 bhi mesh ke andar (sidecar + mTLS), bahar nahi.
+      Jaanch ke tool: <code>bash test-traffic.sh</code>, <code>istioctl analyze -n payments</code>, sleep pod ke Envoy ka access log (<code>kubectl logs deploy/sleep -c istio-proxy</code>).`,
+    tasks: T_IS,
+    cluster: (() => {
+      const c = { vs: [{ subset: 'v1', weight: 90 }, { subset: 'v2', weight: 10 }], dr: { tls: 'ISTIO_MUTUAL', subsets: { v1: { version: 'v1' } } }, v2Sidecar: false, runs: 0,
+        vsText: IS_VS, drText: IS_DR, nodes: NODES,
+        deployments: [{ name: 'pay-api-v1', ready: '2/2', upToDate: 2, available: 2, age: '6d' }, { name: 'pay-api-v2', ready: '1/1', upToDate: 1, available: 1, age: '2h' }, { name: 'sleep', ready: '1/1', upToDate: 1, available: 1, age: '30d' }],
+        services: [{ name: 'pay-api', type: 'ClusterIP', clusterIP: '10.100.71.3', ports: '8080/TCP', age: '40d' }] };
+      c.pods = isPods(c);
+      return c;
+    })(),
+    responses: [
+      { re: /^istioctl (?:analyze|x analyze)\b.*$/,
+        out: (s, m) => { const ns = (String((m && m[0]) || '').match(/(?:-n|--namespace)[ =](\S+)/) || [])[1] || (/-A\b|--all-namespaces/.test(String(m && m[0])) ? 'payments' : 'default'); if (ns === 'payments') s.cluster.analyzed = true; return isAnalyze(s.cluster, ns); } },
+      { re: /^istioctl (?:proxy-config|pc) (?:cluster|clusters) \S+.*$/,
+        out: s => tbl([['SERVICE FQDN', 'PORT', 'SUBSET', 'DIRECTION', 'TYPE', 'DESTINATION RULE'], ['pay-api.payments.svc.cluster.local', '8080', '-', 'outbound', 'EDS', 'pay-api.payments']]
+          .concat(Object.keys(s.cluster.dr.subsets).map(n => ['pay-api.payments.svc.cluster.local', '8080', n, 'outbound', 'EDS', 'pay-api.payments']))) + '\n(simulator: sirf pay-api ke clusters dikhaye)' },
+      { re: /^istioctl (?:proxy-status|ps)\b.*$/,
+        out: s => tbl([['NAME', 'CLUSTER', 'CDS', 'LDS', 'EDS', 'RDS', 'ECDS', 'ISTIOD', 'VERSION']].concat(s.cluster.pods.filter(p => p.sidecar).map(p => [p.name + '.payments', 'Kubernetes', 'SYNCED', 'SYNCED', 'SYNCED', 'SYNCED', 'IGNORED', 'istiod-7f6d8b9c4-tq2lw', '1.24.2']))) + (s.cluster.v2Sidecar ? '' : '\n(pay-api-v2 list mein nahi — uske paas Envoy hai hi nahi)') },
+      { re: /^istioctl\b.*$/, err: true, out: '(simulator: is mission mein istioctl analyze, proxy-config cluster, proxy-status chalte hain)' },
+      { re: /^kubectl logs\b.*sleep.*-c istio-proxy\b.*$|^kubectl logs\b.*-c istio-proxy\b.*sleep.*$/, out: s => isAccessLog(s.cluster) },
+      { re: rx('kubectl get (?:vs|virtualservices?)(?:[ /]pay-api)? -o ?yaml'), out: s => s.cluster.vsText },
+      { re: rx('kubectl get (?:dr|destinationrules?)(?:[ /]pay-api)? -o ?yaml'), out: s => s.cluster.drText },
+      { re: rx('kubectl get (?:vs|virtualservices?)(?:[ /]pay-api)?'), out: tbl([['NAME', 'GATEWAYS', 'HOSTS', 'AGE'], ['pay-api', '', '["pay-api"]', '2h']]) },
+      { re: rx('kubectl get (?:dr|destinationrules?)(?:[ /]pay-api)?'), out: tbl([['NAME', 'HOST', 'AGE'], ['pay-api', 'pay-api', '40d']]) },
+      { re: rx('kubectl get (?:pa|peerauthentications?)(?:[ /]default)?'), out: tbl([['NAME', 'MODE', 'AGE'], ['default', 'STRICT', '90d']]) },
+      { re: /^kubectl get (?:ns|namespaces?)(?:[ /]payments)?\b.*(--show-labels|-L).*$/, out: tbl([['NAME', 'STATUS', 'AGE', 'LABELS'], ['payments', 'Active', '412d', 'istio-injection=enabled,kubernetes.io/metadata.name=payments']]) },
+      { re: /^kubectl get (?:pods?|po)\b.*--show-labels\b.*$/,
+        out: s => tbl([['NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE', 'LABELS']].concat(s.cluster.pods.map(p => [p.name, p.ready, p.status, '0', p.age, Object.entries(p.labels).map(([k, v]) => k + '=' + v).join(',')]))) },
+    ],
+    files: {
+      'test-traffic.sh': { desc: 'sleep pod se pay-api ko 100 requests (jawab gin kar)', content: IS_SH,
+        apply: s => { const c = s.cluster; c.tested = true; c.runs = (c.runs || 0) + 1; if (!isFails(c) && c.v2Sidecar) c.cleanRun = true; return isTraffic(c); } },
+      'pay-api-vs.yaml': {
+        editable: true, desc: 'VirtualService — 90/10 traffic split (Neha)', content: IS_VS,
+        apply: (s, text, docs) => {
+          const c = s.cluster, d = (docs || [])[0] || {}, F = 'pay-api-vs.yaml';
+          if (d.kind !== 'VirtualService' || (d.metadata || {}).name !== 'pay-api') return { err: '(simulator ne roka) is file mein VirtualService "pay-api" hi rehna chahiye.' };
+          const http = ((d.spec || {}).http || [])[0] || {};
+          const uk = Object.keys(d.spec || {}).find(k => !['hosts', 'http', 'gateways', 'tcp', 'tls', 'exportTo'].includes(k));
+          if (uk) return isBad('VirtualService', F, `strict decoding error: unknown field "spec.${uk}"`);
+          const routes = http.route || [];
+          for (let i = 0; i < routes.length; i++) {
+            const rk = Object.keys(routes[i] || {}).find(k => !['destination', 'weight', 'headers'].includes(k));
+            if (rk) return isBad('VirtualService', F, `strict decoding error: unknown field "spec.http[0].route[${i}].${rk}"`);
+            if (routes[i].weight != null && typeof routes[i].weight !== 'number') return isBad('VirtualService', F, `json: cannot unmarshal string into Go struct field HTTPRouteDestination.spec.http.route.weight of type int32`);
+            if ((routes[i].weight || 0) < 0) return isWebhook(F, `weight ${routes[i].weight} < 0`);
+          }
+          if (!routes.length) return isWebhook(F, 'HTTP route is required');
+          const total = routes.reduce((a, r) => a + (r.weight || 0), 0);
+          if (routes.length > 1 && total !== 100) return isWebhook(F, `total destination weight ${total} != 100`);
+          if (routes.some(r => ((r.destination || {}).host) !== 'pay-api')) return { err: '(simulator ne roka) destination host pay-api hi rakho.' };
+          const vs = routes.map(r => ({ subset: (r.destination || {}).subset || 'v1', weight: routes.length === 1 ? 100 : r.weight || 0 }));
+          if (!vs.some(r => r.subset === 'v2' && r.weight > 0)) return { err: '(simulator ne roka) v2 ka traffic 0 karna = canary band karna. Woh jaldi ka ilaaj hai — mission mein canary CHALANA hai: 10% v2, bina 503.' };
+          if (JSON.stringify(vs) === JSON.stringify(c.vs)) return 'virtualservice.networking.istio.io/pay-api unchanged';
+          c.vs = vs; c.vsText = text; c.cleanRun = false;
+          return 'virtualservice.networking.istio.io/pay-api configured';
+        },
+      },
+      'pay-api-dr.yaml': {
+        editable: true, desc: 'DestinationRule — subsets + mTLS (Neha)', content: IS_DR,
+        apply: (s, text, docs) => {
+          const c = s.cluster, d = (docs || [])[0] || {}, F = 'pay-api-dr.yaml', sp = d.spec || {};
+          if (d.kind !== 'DestinationRule' || (d.metadata || {}).name !== 'pay-api') return { err: '(simulator ne roka) is file mein DestinationRule "pay-api" hi rehna chahiye.' };
+          const uk = Object.keys(sp).find(k => !IS_DRK.includes(k));
+          if (uk) return isBad('DestinationRule', F, `strict decoding error: unknown field "spec.${uk}"`);
+          const subs = sp.subsets || [];
+          if (!Array.isArray(subs)) return isBad('DestinationRule', F, 'json: cannot unmarshal object into Go struct field DestinationRule.spec.subsets of type []*v1.Subset');
+          const map = {};
+          for (let i = 0; i < subs.length; i++) {
+            const sk = Object.keys(subs[i] || {}).find(k => !['name', 'labels', 'trafficPolicy'].includes(k));
+            if (sk) return isBad('DestinationRule', F, `strict decoding error: unknown field "spec.subsets[${i}].${sk}"` + (sk === 'label' ? '\n(field ka naam "labels" hai)' : ''));
+            if (!subs[i].name) return isWebhook(F, 'subset name is invalid: ""');
+            if (map[subs[i].name]) return isWebhook(F, `duplicate subset names: ${subs[i].name}`);
+            map[subs[i].name] = Object.assign({}, subs[i].labels || {});
+          }
+          const tls = (((sp.trafficPolicy || {}).tls) || {}).mode;
+          const MODES = ['DISABLE', 'SIMPLE', 'MUTUAL', 'ISTIO_MUTUAL', 'OPTIONAL_MUTUAL'];
+          if (tls != null && !MODES.includes(tls)) return { err: `The DestinationRule "pay-api" is invalid: spec.trafficPolicy.tls.mode: Unsupported value: "${tls}": supported values: ${MODES.map(x => `"${x}"`).join(', ')}` };
+          const next = { tls: tls || null, subsets: map };
+          if (JSON.stringify(next) === JSON.stringify(c.dr)) return 'destinationrule.networking.istio.io/pay-api unchanged';
+          c.dr = next; c.drText = text; c.cleanRun = false;
+          return 'destinationrule.networking.istio.io/pay-api configured' + (tls !== 'ISTIO_MUTUAL' ? '\n(Dhyan do: ISTIO_MUTUAL hata diya — security team ka niyam tha ki pay-api tak traffic mTLS se jaaye.)' : '');
+        },
+      },
+      'pay-api-v2-deploy.yaml': {
+        editable: true, desc: 'pay-api v2 ka Deployment (canary)', content: IS_V2,
+        apply: (s, text, docs) => {
+          const c = s.cluster, d = (docs || [])[0] || {}, F = 'pay-api-v2-deploy.yaml';
+          if (d.kind !== 'Deployment' || (d.metadata || {}).name !== 'pay-api-v2') return { err: '(simulator ne roka) is file mein Deployment "pay-api-v2" hi rehna chahiye.' };
+          const sel = ((d.spec || {}).selector || {}).matchLabels || {};
+          if (sel.app !== 'pay-api' || sel.version !== 'v2' || Object.keys(sel).length !== 2) return { err: `The Deployment "pay-api-v2" is invalid: spec.selector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string{${Object.keys(sel).map(k => `"${k}":"${sel[k]}"`).join(', ')}}, MatchExpressions:[]v1.LabelSelectorRequirement(nil)}: field is immutable` };
+          const tm = ((d.spec || {}).template || {}).metadata || {}, ann = tm.annotations || {}, lab = tm.labels || {};
+          const badAnn = Object.keys(ann).find(k => typeof ann[k] !== 'string');
+          if (badAnn) return { err: `Error from server (BadRequest): error when patching "${F}": Deployment in version "v1" cannot be handled as a Deployment: json: cannot unmarshal ${typeof ann[badAnn] === 'boolean' ? 'bool' : 'number'} into Go struct field ObjectMeta.spec.template.metadata.annotations of type string\n(annotation ki value string hoti hai — "true" quotes mein)` };
+          if (lab.app !== 'pay-api' || lab.version !== 'v2') return { err: '`selector` does not match template `labels` — labels app: pay-api, version: v2 rehne do.' };
+          const img = ((((d.spec || {}).template || {}).spec || {}).containers || [{}])[0].image;
+          if (img !== '111122223333.dkr.ecr.ap-south-1.amazonaws.com/pay-api:2.0.0-rc1') return { err: '(simulator ne roka) image mat badlo — sirf sidecar wali annotation.' };
+          const inj = ann['sidecar.istio.io/inject'] == null ? (lab['sidecar.istio.io/inject'] || 'true') : ann['sidecar.istio.io/inject'];
+          const want = String(inj) !== 'false';
+          if (want === c.v2Sidecar) return 'deployment.apps/pay-api-v2 unchanged';
+          c.v2Sidecar = want; c.pods = isPods(c); c.cleanRun = false;
+          return 'deployment.apps/pay-api-v2 configured' + (want ? '\n(naya pod: istio-sidecar-injector webhook ne Envoy container joda — kubectl get pods)' : '');
+        },
+      },
+    },
+    success: KG.allOf(T_IS),
+    successText: `<b>Galti 1 — subset nahi tha:</b> VirtualService ne 10% ko <code>subset: v2</code> bheja, par DestinationRule mein sirf v1 tha. Envoy ke paas <code>outbound|8080|v2|…</code> naam ka cluster hi nahi →
+      <code>503 NC cluster_not_found</code>. <code>istioctl analyze</code> ne turant bataya (IST0101). <b>Niyam:</b> pehle DestinationRule (subsets), phir VirtualService.<br>
+      <b>Galti 2 — sidecar band:</b> DR <code>ISTIO_MUTUAL</code> kehta hai: "har pod se TLS mein baat karo". v2 mein Envoy tha hi nahi — app ne seedha HTTP suna, TLS ka hello samajh nahi aaya → <code>WRONG_VERSION_NUMBER</code>.
+      DR se mTLS hata dena "chal" jaata, par v2 mesh se bahar rehta (na mTLS, na metrics). Sahi ilaaj: v2 ko mesh mein laao.<br>
+      <b>Debug kram:</b> traffic test → <code>istioctl analyze</code> → Envoy access log ka <b>response flag</b> (NC = cluster nahi, UH = healthy pod nahi, UF = connection fail) → <code>proxy-config cluster</code>.`,
+    hints: [
+      'bash test-traffic.sh — 503 kitne? Phir istioctl analyze -n payments (namespace zaroor do). IST0101 kya bolta hai?',
+      'vi pay-api-dr.yaml — subsets mein v1 ke neeche ek aur subset jodo: name: v2, labels: version: v2 (v1 jaisi indentation). Save, kubectl apply -f pay-api-dr.yaml, phir bash test-traffic.sh.',
+      'Ab TLS_error / WRONG_VERSION_NUMBER? kubectl get pods — pay-api-v2 1/1 hai (Envoy nahi). vi pay-api-v2-deploy.yaml — sidecar.istio.io/inject: "false" ko "true" karo, Save, apply, phir bash test-traffic.sh.',
+    ],
+    solution: ['bash test-traffic.sh', 'istioctl analyze -n payments',
+      { edit: 'pay-api-dr.yaml', change: [['  - name: v1\n    labels:\n      version: v1\n', '  - name: v1\n    labels:\n      version: v1\n  - name: v2\n    labels:\n      version: v2\n']] },
+      'kubectl apply -f pay-api-dr.yaml', 'bash test-traffic.sh', 'kubectl get pods',
+      { edit: 'pay-api-v2-deploy.yaml', change: [['sidecar.istio.io/inject: "false"   # debug ke liye band kiya tha', 'sidecar.istio.io/inject: "true"']] },
+      'kubectl apply -f pay-api-v2-deploy.yaml', 'bash test-traffic.sh'],
+  }, {
+    objectives: ['🖥️ <b>Mission:</b> canary ke 503 — DestinationRule ka gayab subset aur sidecar ke bina mTLS; <code>istioctl analyze</code> aur Envoy response flags se jaanch'],
+    success: ['Main canary ke 503 ko istioctl analyze aur Envoy access log ke flags (NC / UH / UF) se pakad kar theek kar sakta hoon'],
+    cards: [
+      { front: 'Envoy access log mein <code>503 NC cluster_not_found</code> — sabse pehle kya dekho?', back: 'VirtualService jis <b>subset</b> ko bhejta hai, woh DestinationRule mein hai ya nahi. <code>istioctl analyze</code> → IST0101. Pehle DR (subsets), phir VS.' },
+      { front: 'DR mein <code>tls.mode: ISTIO_MUTUAL</code>, par target pod 1/1 (sidecar nahi) — kya hoga?', back: 'Client Envoy TLS bhejta hai, app plain HTTP samajhti hai → <code>TLS_error … WRONG_VERSION_NUMBER</code>, 503 <code>UF</code>. Pod ko mesh mein lao (sidecar inject), mTLS mat hatao.' },
+    ],
+  });
+
+  /* =====================================================================
+     ⚡ kubectl Speed Drills (drill.js) — haath ki yaaddasht: sawal padho,
+     command type karo. Teen drills: pod, deploy (rollout), kk-toolkit.
+     ===================================================================== */
+  const P1 = 'pay-api-6b8d7c-a1';
+  addLab('pod', {
+    type: 'drill', id: 'drill-pod', title: '⚡ Speed Drill: pod ki jaanch ke 8 commands', par: 110,
+    intro: 'ChaiPay ke <code>payments</code> namespace mein pay-api ke pods chal rahe hain (jaise <code>' + P1 + '</code>). Har sawal ka command type karo — jitna tez, utna achha.',
+    items: [
+      { ask: 'Saare pods — unka <b>IP aur NODE</b> bhi dikhe', answers: ['kubectl get pods -o wide'], explain: '<code>-o wide</code> do column jodta hai: IP aur NODE.' },
+      { ask: 'Sirf <code>pay-api</code> ke pods (label <code>app=pay-api</code>)', answers: ['kubectl get pods -l app=pay-api'], explain: '<code>-l</code> = label selector. Service bhi isi tarah pods chunti hai.' },
+      { ask: 'Pod <code>' + P1 + '</code> ka poora haal — <b>Events</b> samet', answers: ['kubectl describe pod ' + P1], explain: 'Pending ya CrashLoop mein sabse pehle describe ke Events padho.' },
+      { ask: '<code>' + P1 + '</code> ke logs — sirf <b>aakhri 50</b> lines', answers: ['kubectl logs ' + P1 + ' --tail=50'], explain: '<code>--tail=N</code> lambe logs mein se sirf aakhri N lines.' },
+      { ask: 'Container crash hokar restart hua — <b>pichhli</b> run ke logs (<code>' + P1 + '</code>)', answers: ['kubectl logs ' + P1 + ' --previous'], explain: '<code>--previous</code> (ya <code>-p</code>) = mare hue container ke logs. Crash ki wajah wahin hoti hai.' },
+      { ask: 'Pod <code>' + P1 + '</code> ke andar env variable <code>UPI_TIMEOUT_MS</code> ki value', answers: ['kubectl exec ' + P1 + ' -- printenv UPI_TIMEOUT_MS', 'kubectl exec ' + P1 + ' -- env | grep UPI_TIMEOUT_MS'], explain: '<code>--</code> ke baad wala command pod ke andar chalta hai.' },
+      { ask: 'Namespace ke events — <b>time ke hisaab se sort</b> (naye sabse neeche)', answers: ['kubectl get events --sort-by=.lastTimestamp', 'kubectl get events --sort-by=.metadata.creationTimestamp'], explain: 'Bina sort ke events ulte-seedhe aate hain. <code>--sort-by=.lastTimestamp</code> kahani ko kram mein rakhta hai.' },
+      { ask: 'Pods ki list <b>live</b> dekhte raho — badlaav aate hi nayi line aaye', answers: ['kubectl get pods -w'], explain: '<code>-w</code> (<code>--watch</code>) band nahi hota — Ctrl+C se roko.' },
+    ],
+  }, {
+    objectives: ['⚡ <b>Speed drill:</b> pod ki jaanch ke 8 commands bina soche type karna'],
+    success: ['Main pod debug karne ke 8 commands yaad se, tez type kar sakta hoon'],
+    cards: [{ front: 'Crash hue container ke logs kaise dekhte ho?', back: '<code>kubectl logs &lt;pod&gt; --previous</code> (ya <code>-p</code>). Bina <code>--previous</code> naye (abhi chal rahe) container ke logs aate hain.' }],
+  });
+  addLab('deploy', {
+    type: 'drill', id: 'drill-deploy', title: '⚡ Speed Drill: rollout ke 8 commands', par: 120,
+    intro: 'Friday shaam, pay-api ka naya version. Rollout dekho, history padho, wapas jao, scale karo — sab type karke.',
+    items: [
+      { ask: '<code>pay-api</code> ka rollout poora hua? (jab tak na ho, rukkar dekhta rahe)', answers: ['kubectl rollout status deployment/pay-api'], explain: 'Rollout poora hone tak rukta hai — CI scripts mein bhi yahi.' },
+      { ask: '<code>pay-api</code> ki rollout <b>history</b> (revisions)', answers: ['kubectl rollout history deployment/pay-api'], explain: 'Har revision = ek ReplicaSet. <code>--revision=N</code> se us revision ka template.' },
+      { ask: 'Naya version kharab — <b>pichhle</b> version par wapas', answers: ['kubectl rollout undo deployment/pay-api'], explain: 'Turant rahat. Baad mein git ki file bhi theek karo, warna agla deploy phir wahi laayega.' },
+      { ask: 'Seedha <b>revision 3</b> par wapas', answers: ['kubectl rollout undo deployment/pay-api --to-revision=3'], explain: '<code>--to-revision</code> ke bina hamesha sirf ek kadam peeche.' },
+      { ask: 'Sale ke liye abhi turant <b>5 replicas</b>', answers: ['kubectl scale deployment/pay-api --replicas=5'], explain: 'Jaldi ka ilaaj. Git ki file mein bhi replicas badlo, warna agla apply wapas kar dega (drift).' },
+      { ask: 'Container <code>pay-api</code> ka image <code>pay-api:1.9.0</code> karo', answers: ['kubectl set image deployment/pay-api pay-api=pay-api:1.9.0'], explain: 'Format: <code>&lt;container&gt;=&lt;image&gt;</code>. Naya rollout shuru hota hai.' },
+      { ask: 'Image wahi, par saare pods <b>naye sire se</b> (ConfigMap dobara padhne ke liye)', answers: ['kubectl rollout restart deployment/pay-api'], explain: 'Template mein ek annotation (restartedAt) badalta hai → rolling update, bina downtime.' },
+      { ask: '<code>pay-api</code> ke ReplicaSets dekho — purane bhi (label <code>app=pay-api</code>)', answers: ['kubectl get rs -l app=pay-api'], explain: 'Purane ReplicaSets 0 replicas par rakhe jaate hain — undo inhi se hota hai.' },
+    ],
+  }, {
+    objectives: ['⚡ <b>Speed drill:</b> rollout status / history / undo / scale / set image — type karke'],
+    success: ['Main rollout ke 8 commands yaad se, tez type kar sakta hoon'],
+    cards: [{ front: 'Sirf ek kadam nahi, seedha revision 3 par wapas kaise jaate ho?', back: '<code>kubectl rollout undo deployment/pay-api --to-revision=3</code>. Revisions: <code>kubectl rollout history deployment/pay-api</code>.' }],
+  });
+  addLab('kk-toolkit', {
+    type: 'drill', id: 'drill-toolkit', title: '⚡ Speed Drill: debugging toolkit ke 8 commands', par: 130,
+    intro: 'Incident ke beech yeh commands bina soche niklne chahiye: kaun kya kar sakta hai, kaun memory kha raha hai, kaun Running nahi, node kaise khaali karein.',
+    items: [
+      { ask: 'Service account <code>notify</code> (namespace <code>payments</code>) kya <b>secrets padh</b> sakta hai?', answers: ['kubectl auth can-i get secrets --as=system:serviceaccount:payments:notify', 'kubectl auth can-i list secrets --as=system:serviceaccount:payments:notify'], explain: '<code>--as</code> se kisi aur ki nazar se poochho. Jawab bas <code>yes</code> / <code>no</code>.' },
+      { ask: 'Sabse zyada <b>memory</b> khaane wale pods sabse upar', answers: ['kubectl top pods --sort-by=memory'], explain: 'metrics-server chahiye. <code>--sort-by=cpu</code> bhi chalta hai.' },
+      { ask: 'Poore cluster mein woh pods jo <b>Running nahi</b> hain', answers: ['kubectl get pods -A --field-selector=status.phase!=Running'], explain: '<code>-A</code> = saare namespaces. <code>--field-selector</code> server par hi filter karta hai.' },
+      { ask: '<code>pay-api</code> Service (port 8080) ko apne laptop ke port 8080 par lao', answers: ['kubectl port-forward svc/pay-api 8080:8080', 'kubectl port-forward svc/pay-api 8080'], explain: 'Format <code>local:remote</code>. Ingress / LB ke bina seedha test.' },
+      { ask: 'Deployment ke <code>spec.strategy</code> field ka matlab — docs, terminal mein hi', answers: ['kubectl explain deployment.spec.strategy', 'kubectl explain deploy.spec.strategy'], explain: '<code>kubectl explain</code> cluster ke apne schema se padhta hai — version ke hisaab se sahi.' },
+      { ask: '<code>node-2</code> par <b>naye</b> pods mat bhejo (maintenance se pehle)', answers: ['kubectl cordon node-2'], explain: 'Chal rahe pods rehte hain; sirf naye nahi aate. Wapas: <code>kubectl uncordon node-2</code>.' },
+      { ask: '<code>node-2</code> khaali karo — DaemonSet ke pods chhod kar', answers: ['kubectl drain node-2 --ignore-daemonsets', 'kubectl drain node-2 --ignore-daemonsets --delete-emptydir-data'], explain: 'drain = cordon + pods ko PDB ka dhyan rakhte hue nikaalna.' },
+      { ask: '<code>pay-api</code> Service ke peeche kaun se <b>pod IP</b> hain?', answers: ['kubectl get endpoints pay-api', 'kubectl get endpointslices -l kubernetes.io/service-name=pay-api'], explain: 'Khaali endpoints = selector kisi Ready pod se match nahi karta.' },
+    ],
+  }, {
+    objectives: ['⚡ <b>Speed drill:</b> can-i, top, field-selector, port-forward, explain, cordon/drain, endpoints — type karke'],
+    success: ['Main incident ke 8 toolkit commands yaad se, tez type kar sakta hoon'],
+    cards: [{ front: 'Kisi service account ki permission bina uska token liye kaise jaanchte ho?', back: '<code>kubectl auth can-i get secrets --as=system:serviceaccount:&lt;ns&gt;:&lt;sa&gt;</code> — jawab yes/no.' }],
+  });
+
 })();

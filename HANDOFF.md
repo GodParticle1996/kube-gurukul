@@ -1,4 +1,4 @@
-# KubeGurukul status — 2026-11-24 (hands-on labs job, batch 1–3)
+# KubeGurukul status — 2026-11-24 (hands-on labs job, batch 1–4)
 
 - User ka plan (4 jawab): pehle woh **16 levels** jinmein sirf quiz/sort/match/fill tha; phir naye lab types — YAML fix editor,
   random breakage mode, on-call shift, kubectl speed drill; user Docker + kind install karega taaki real labs (16–19 bhi) test hon;
@@ -16,8 +16,11 @@
   `helm` (Kustomize `images:` naam match nahi; chhota kustomize build). Ab 69 missions, replay 69/69.
   Editor bug theek: lambi file mein gutter aur text alag scroll hote the (`.te-body` `align-items: flex-start`).
   Chromium 1180/390: 5 naye + config/podsecurity jeete, 0 errors, 0 overflow; editor screenshots dekhe.
-- **Baaki 3 levels:** helmtemplating (Go-template engine chahiye), operators, istio. Phir naye lab types: kubectl speed drill,
-  random breakage (chaos), on-call shift. Real labs 16–19 abhi bhi untested (is machine par Docker/kind nahi).
+- **Batch 4 done (2026-11-24):** `helmtemplating` (naya `gotpl.js` — Go template + Sprig, Helm jaise errors), `operators`
+  (CNPG operator OOMKilled → webhook fail), `istio` (subset gayab → 503 NC; sidecar ke bina ISTIO_MUTUAL → TLS error).
+  Naya lab type ⚡ speed drill (`drill.js`) — 3 drills (pod, deploy, kk-toolkit). Ab saare 16 khaali levels mein hands-on.
+  72 missions, replay 72/72; validator mein gotpl + drill tests; Chromium 1180/390: 3 missions + 3 drills, 0 errors, 0 overflow.
+- **Baaki:** random breakage (chaos) mode, on-call shift. Real labs 16–19 abhi bhi untested (is machine par Docker/kind nahi).
 
 ---
 

@@ -173,6 +173,15 @@ Naye levels ke liye `scene` hi pehli pasand hai.
              spread: 'web' } ],            // spread = podAntiAffinity group (hostname topology)
   lesson: 'HTML — saare pods rakhne ke baad' }
 
+// ⚡ DRILL — kubectl speed drill (drill.js, 2026-11-24). Sawal padho → command TYPE karo → Enter.
+// Timer, har sawal par 2 koshish (phir sahi jawab dikhta hai, drill atakti nahi), Skip, ⭐ par (seconds),
+// best score KG.state.drillBest[id] mein. Milaan KG.drill.canon() se: aliases (po = pods), flags ka kram,
+// -o wide = -owide, deploy/x = deploy x, exec par -it optional, -n payments optional.
+{ type: 'drill', id: 'drill-pod', title: '⚡ …', intro: 'HTML', par: 110,
+  items: [ { ask: 'HTML', answers: ['kubectl get pods -o wide', /* variant */], explain: 'HTML' } ] }
+// answers[0] learner ko dikhta hai — "kubectl …" se shuru ho. Jo variant canon() mein pehle se same hai,
+// use mat likho (validator pakadta hai). Ek command do sawalon ka jawab na ho.
+
 // 🎁 BONUS — kisi bhi stage mein `bonus: true` daalo → golden bonus round ban jaata hai
 ```
 
@@ -247,6 +256,7 @@ solution: [ ..., { edit: 'app-config.yaml', change: [['purana text', 'naya text'
   `parseErr` = toota YAML (`.line`, `.message`). Asli tool ka log lautao (`kubelet: "Could not process manifest file"`).
 - **`saveTip: 'text'`**: save ke baad apna tip (jaise Kustomize overlay: "kubectl kustomize … phir kubectl apply -k …").
   `noApplyTip: true` = koi tip nahi.
+- **`rawApply: true`**: file YAML nahi (jaise Helm template) — `kubectl apply` pehle parse nahi karta, seedha `apply(sim, text, null)`.
 - Editor ka `.te-body` `align-items: flex-start` hai — lambi file (50+ lines) mein gutter aur text saath scroll hote hain.
 
 `solution` ko actual goal/tasks ke mutabik likho: validator asli renderer mein commands replay
@@ -496,6 +506,7 @@ aur unke goals ko solvable saabit karta hai:**
 | `triage` | Palette ki har command "click" karta hai, phir har choice — verdict khulna aur lab poora hona chahiye. Na khule to **SOFTLOCK** report hoti hai. Duplicate `cmd` bhi pakadta hai (Set mein ek hi register hoti hai) |
 | `slider` | **Poora knob sweep** — har combination par `readouts/bars/verdict/check` chalata hai. Ek bhi combination `check()` true na kare → **UNSOLVABLE**. Aur default values par `check()` already true ho → **"goal shuru mein hi poora hai"** |
 | `flow` | Poora flow chala ke, har `ask` ka sahi jawab de ke, aakhir tak pahunchta hai. Na pahunche to **SOFTLOCK** |
+| `drill` | "Shuru" dabata hai, har sawal ka aakhri answer type karke Enter, phir "Aage badho" — drill poori honi chahiye aur `firstTry` = sawalon ki ginti. Faltu (canonical same) variants aur do sawalon ka ek hi jawab bhi pakadta hai |
 | `board` | **Backtracking** se saabit karta hai ki saare pods ek saath schedule ho sakte hain. Plus: koi pod HAR node par fit ho (to lab kuch sikhata hi nahi), ya khaali board par bhi kahin fit na ho — dono report hote hain |
 
 Aur ek guard jo baar-baar kaam aaya hai: **non-Latin script leak**. Content Hinglish hai
@@ -825,8 +836,19 @@ Status (2026-11-23):
   (scheduler ki static pod file mein flag typo → pods Pending + `Events: <none>`; `onSave`), `affinity` (anti-affinity ka selector
   typo + zone `topologyKey` → asli rolling update atakta hai), `observability` (alert rule ka label + `for`; `promtool test rules`
   outage replay), `helm` (Kustomize `images:` ka naam image se match nahi → chupchaap 1.8.0).
-- Baaki: `helmtemplating` (chhota Go-template engine chahiye), `operators`, `istio` + naye lab types (kubectl speed drill,
-  random breakage, on-call shift) aage ke batches mein.
+- Batch 4 (2026-11-24): `helmtemplating` (notify chart: `range` ke andar `.Values` → `$`, `indent` → `nindent`; asli
+  Go-template engine `gotpl.js`), `operators` (CNPG operator OOMKilled → "failed calling webhook … no endpoints"; Helm values se
+  memory), `istio` (VS subset v2 DR mein nahi → `503 NC`; v2 bina sidecar + `ISTIO_MUTUAL` → TLS error). Naya lab type
+  ⚡ **speed drill** (`drill.js`, §3) — drills `pod`, `deploy`, `kk-toolkit` mein. Ab saare 16 khaali levels mein hands-on hai.
+- Baaki: random breakage (chaos) mode, on-call shift, real labs (Docker + kind ke baad).
+
+**`gotpl.js` (`KG.gotpl`)** — chhota Go text/template + Sprig. `renderChart({ path: text }, ctx)` → `{ files }` ya `{ err }`.
+Chalta hai: `{{- -}}` chomp, comments, `.a.b`, `$`, `$x :=`, `range` (list/map, `$i, $v :=`), `if / else if / else`, `with`,
+`define / include / template`, pipelines, `( )`, aur Sprig ke aam functions (`toYaml nindent indent quote default required
+trunc trimSuffix printf eq and or …`). Errors Helm jaise: `parse error at (f:L): function "x" not defined`,
+`template: f:L:C: executing "f" at <.Values.x>: nil pointer evaluating interface {}.x`,
+`… at <indent 10>: wrong type for value; expected string; got map[string]interface {}`, `execution error at (f:L:C): msg`.
+Map ki missing key = khaali (Helm `missingkey=zero`). Naya function chahiye toh `FUNCS` mein jodo — validator ka `gotpl:` test bhi badhao.
 
 Batch 3 ke chhote engines (sab `data-labs.js` ke andar, mission-specific):
 - `tbl(rows)` — kubectl jaisi table. `deployChecks(file, doc)` — Deployment file ke aam API errors (strict decoding `spec.*`,

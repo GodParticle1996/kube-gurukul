@@ -62,7 +62,7 @@ global.localStorage = { getItem: k => store[k] || null, setItem: (k, v) => { sto
 global.confirm = () => false;
 global.Element = function () {}; Element.prototype = {};
 
-const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'yaml.js', 'terminal.js',
+const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'drill.js', 'yaml.js', 'gotpl.js', 'terminal.js',
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
   'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-secure.js', 'data-eksnet.js', 'data-gaps.js', 'data-ext-sdd.js', 'data-labs.js',
@@ -232,6 +232,20 @@ KG.tracks.forEach(track => {
         }
         labStages.push({ at: sc, stage: s });
       }
+      if (s.type === 'drill') {
+        if (!s.id) problems.push(sc + ': drill ka id nahi (best score isi id par save hota hai)');
+        if (!s.items || s.items.length < 4) problems.push(sc + ': drill mein kam se kam 4 sawal chahiye');
+        const seenC = new Set();
+        (s.items || []).forEach((it, j) => {
+          if (!it.ask || !it.answers || !it.answers.length || !it.explain) { problems.push(sc + ' item' + j + ': ask/answers/explain adhoora'); return; }
+          if (!/^(kubectl|k) /.test(it.answers[0])) problems.push(sc + ' item' + j + ': pehla answer "kubectl …" se shuru ho (yahi learner ko dikhta hai)');
+          const cs = it.answers.map(a => KG.drill.canon(a));
+          if (new Set(cs).size !== cs.length) problems.push(sc + ' item' + j + ': do answers ek hi canonical command hain (faltu variant): ' + JSON.stringify(it.answers));
+          cs.forEach(c => { if (seenC.has(c)) problems.push(sc + ' item' + j + ': yahi command kisi aur sawal ka bhi jawab hai: ' + c); });
+          cs.forEach(c => seenC.add(c));
+        });
+        labStages.push({ at: sc, stage: s });
+      }
       if (s.type === 'flow') {
         if (!s.lanes || !s.lanes.length) problems.push(sc + ': koi lane nahi');
         if (!s.steps || s.steps.length < 3) problems.push(sc + ': 3+ steps chahiye');
@@ -381,6 +395,18 @@ function renderLab(at, st) {
       if (!choices.length && before === done) break;
     }
     if (!done) problems.push(at + ': saari commands + saare choices ke baad bhi lab poora nahi hua (SOFTLOCK)');
+  }
+
+  if (st.type === 'drill') {
+    /* Shuru → har sawal ka pehla answer type karo → Enter; aakhir mein "Aage badho" */
+    clickAll(arena, 'drill-start');
+    const nodes = walk(arena);
+    const input = nodes.find(x => x.classList && x.classList.contains('drill-in'));
+    if (!input) problems.push(at + ': drill input nahi mila');
+    else (st.items || []).forEach(it => { input.value = it.answers[it.answers.length - 1]; input.fire('keydown', { key: 'Enter' }); });
+    clickAll(arena, 'btn', b => !b.disabled && /Aage badho/.test(b.innerHTML || b.textContent || ''));
+    if (!done) problems.push(at + ': saare sahi jawab ke baad bhi drill poori nahi hui (SOFTLOCK)');
+    else if (done.firstTry !== (st.items || []).length) problems.push(at + ': saare jawab pehli baar sahi the, par firstTry = ' + done.firstTry + '/' + (st.items || []).length + ' — matching toota');
   }
 
   if (st.type === 'flow') {
@@ -1410,6 +1436,37 @@ t('yaml: galat YAML par go-yaml jaise error aur sahi line number', () => {
   assert(/line 3: key "a" already set in map/.test(err('a: 1\nb: 2\na: 3')), 'duplicate key');
   assert(/line 1: did not find expected alphabetic or numeric character/.test(err('schedule: */5 * * * *')), 'unquoted cron');
   assert(err('schedule: "*/5 * * * *"') === null, 'quoted cron theek hai');
+});
+t('drill: canon() aliases, flag ka kram, -o wide/-owide, deploy/x, -it (exec), -n payments optional', () => {
+  const same = (a, b) => assert(KG.drill.canon(a) === KG.drill.canon(b), a + '  ≠  ' + b + '  (' + KG.drill.canon(a) + ' | ' + KG.drill.canon(b) + ')');
+  const diff = (a, b) => assert(KG.drill.canon(a) !== KG.drill.canon(b), a + '  ==  ' + b);
+  same('k get po -n payments -owide', 'kubectl get pods --output=wide');
+  same('kubectl rollout status deploy/pay-api', 'kubectl rollout status deployment pay-api');
+  same('kubectl get po -l app=pay-api --all-namespaces', "kubectl get pods -A --selector='app=pay-api'");
+  same('kubectl exec -it x -- printenv A', 'kubectl exec x -- printenv A');
+  same('kubectl logs x -p', 'kubectl logs --previous x');
+  diff('kubectl get pods', 'kubectl get pods -o wide');
+  diff('kubectl logs x', 'kubectl logs x --previous');
+  diff('kubectl exec x -- printenv A', 'kubectl exec x -- printenv B');
+  assert(KG.drill.check('kubectl get pods -o yaml', ['kubectl get pods -o wide']).near === true, 'sirf flag galat = near');
+});
+t('gotpl: Helm jaisa render — $ / range / nindent / include, aur asli error messages', () => {
+  const H = '{{- define "c.name" -}}{{ .Release.Name | trunc 63 | trimSuffix "-" }}{{- end }}';
+  const T = 'name: {{ include "c.name" . }}\nitems:\n{{- range .Values.xs }}\n- n: {{ .n }}\n  img: {{ $.Values.img | quote }}\n  res:\n    {{- toYaml $.Values.r | nindent 4 }}\n{{- end }}\n';
+  const ctx = { Values: { xs: [{ n: 'a' }, { n: 'b' }], img: 'x:1', r: { cpu: '1m' } }, Release: { Name: 'rel' }, Chart: {} };
+  const r = KG.gotpl.renderChart({ 'c/templates/_h.tpl': H, 'c/templates/t.yaml': T }, ctx);
+  assert(!r.err, 'render error: ' + r.err);
+  assert(r.files['c/templates/t.yaml'] === 'name: rel\nitems:\n- n: a\n  img: "x:1"\n  res:\n    cpu: 1m\n- n: b\n  img: "x:1"\n  res:\n    cpu: 1m\n', 'output: ' + JSON.stringify(r.files['c/templates/t.yaml']));
+  const e1 = KG.gotpl.renderChart({ 'c/templates/t.yaml': '{{ range .Values.xs }}{{ .Values.img }}{{ end }}' }, ctx).err;
+  assert(/^template: c\/templates\/t\.yaml:1:\d+: executing "c\/templates\/t\.yaml" at <\.Values\.img>: nil pointer evaluating interface \{\}\.img$/.test(e1), 'nil pointer: ' + e1);
+  const e2 = KG.gotpl.renderChart({ 'c/templates/t.yaml': '{{ .Values.r | indent 2 }}' }, ctx).err;
+  assert(/at <indent 2>: wrong type for value; expected string; got map\[string\]interface \{\}/.test(e2), 'wrong type: ' + e2);
+  const e3 = KG.gotpl.renderChart({ 'c/templates/t.yaml': '{{ toYml .Values.r }}' }, ctx).err;
+  assert(e3 === 'parse error at (c/templates/t.yaml:1): function "toYml" not defined', 'unknown fn: ' + e3);
+  const e4 = KG.gotpl.renderChart({ 'c/templates/t.yaml': '{{ if .Values.img }}x' }, ctx).err;
+  assert(/unexpected EOF/.test(e4), 'missing end: ' + e4);
+  const e5 = KG.gotpl.renderChart({ 'c/templates/t.yaml': 'a: {{ required "img chahiye" .Values.nope }}' }, ctx).err;
+  assert(e5 === 'execution error at (c/templates/t.yaml:1:6): img chahiye', 'required: ' + e5);
 });
 t('YAML fix editor: vi → badlo → Save → cat naya text → apply ko text + docs milte hain; toota YAML apply nahi hota', () => {
   let got = null;

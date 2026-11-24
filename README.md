@@ -109,7 +109,7 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
   karta hai. Lab README ka kind v1.32 verification pehle ka recorded result hai;
   `node validate.js` real cluster ya current machine par lab execution verify nahi karta
 
-- **Interactive labs (4)** — `labs.js`. Inme "sahi option yaad karo" nahi hai;
+- **Interactive labs (5)** — `labs.js` + `drill.js`. Inme "sahi option yaad karo" nahi hai;
   inme tum kuch **chalate** ho aur simulator naya number ya naya output deta hai:
   - 🩺 **Triage terminal** (KodeKloud style) — symptom milta hai, command palette milti hai.
     Tum decide karte ho AGLA command kaunsa chale; har command apna asli output ugalti hai.
@@ -120,6 +120,8 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
     ek-ek kadam, play/pause, aur beech mein sawaal jinka jawab diye bina flow aage nahi badhta
   - 🧲 **Scheduler board** — pod chuno, har node turant ✅/❌ aur asli `FailedScheduling` wajah
     dikha deta hai. Asli predicates, asli order: taints → nodeSelector → capacity → podAntiAffinity
+  - ⚡ **kubectl speed drill** — sawal padho, command **type** karo, timer chalta hai. 2 koshish, phir sahi
+    jawab; aliases aur flags ka kram maaf (`po` = `pods`, `-owide` = `-o wide`). Best score yaad rehta hai
 
 - **Bhoolne ka ilaaj (retention system):**
   - 🧘 **Revision Dojo** — spaced-repetition flashcards (1→3→7→16→35 din intervals);
@@ -167,7 +169,9 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `core.js` | State, XP, ranks, streak, spaced-repetition engine, level registry |
 | `games.js` | Game renderers (bins/order/match/quiz/fill/hotspot/incident/render) |
 | `labs.js` | **Interactive labs** — triage · slider · flow player · scheduler board (+ `KG.allOf`) |
+| `drill.js` | ⚡ **kubectl speed drill** (`type: 'drill'`) — command type karo, timer + best score; `KG.drill.canon` aliases/flags milata hai |
 | `terminal.js` | kubectl simulator (mock cluster + command parser) |
+| `gotpl.js` | Chhota Go-template + Sprig engine (`KG.gotpl`) — Helm templating labs ke liye, Helm jaise errors |
 | `yaml.js` | Chhota YAML parser (`KG.yaml`) — terminal ka ✏️ YAML fix editor (`vi <file>`) isse toota YAML pakadta hai |
 | `helmsim.js` | helm simulator (releases, revisions, values merge, lifecycle) |
 | `argosim.js` | argocd simulator (Applications, sync/health, waves, prune, Rollouts) |

@@ -974,7 +974,7 @@ KG.renderers.terminal = function renderTerminal(stage, arena, onDone) {
       if (/\.sh$/.test(fname)) { print('err', `error: error parsing ${fname}: error converting YAML to JSON — yeh shell script hai, manifest nahi. Chalane ke liye: bash ${fname}`); return; }
       const text = fileText(fname);
       let docs = null;
-      if (f.editable) {
+      if (f.editable && !f.rawApply) {   // rawApply: file YAML nahi (Helm template) — mission khud jawab deta hai
         try { docs = KG.yaml.parseAll(text); }
         catch (e) {
           if (!e || !e.yaml) throw e;

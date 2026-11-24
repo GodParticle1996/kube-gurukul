@@ -1,4 +1,4 @@
-# KubeGurukul status — 2026-11-24 (hands-on labs job, batch 1–4)
+# KubeGurukul status — 2026-11-24 (hands-on labs job, batch 1–5)
 
 - User ka plan (4 jawab): pehle woh **16 levels** jinmein sirf quiz/sort/match/fill tha; phir naye lab types — YAML fix editor,
   random breakage mode, on-call shift, kubectl speed drill; user Docker + kind install karega taaki real labs (16–19 bhi) test hon;
@@ -20,7 +20,10 @@
   (CNPG operator OOMKilled → webhook fail), `istio` (subset gayab → 503 NC; sidecar ke bina ISTIO_MUTUAL → TLS error).
   Naya lab type ⚡ speed drill (`drill.js`) — 3 drills (pod, deploy, kk-toolkit). Ab saare 16 khaali levels mein hands-on.
   72 missions, replay 72/72; validator mein gotpl + drill tests; Chromium 1180/390: 3 missions + 3 drills, 0 errors, 0 overflow.
-- **Baaki:** random breakage (chaos) mode, on-call shift. Real labs 16–19 abhi bhi untested (is machine par Docker/kind nahi).
+- **Batch 5 done (2026-11-24):** 🎲 chaos mode (`chaos.js`) — boss1/2/3 mein chaos rounds; 15 breakages, ek file se poora
+  cluster; validator 15 akele + 24 do-galti combos jeet kar dikhata hai; replay 87/87 (72 + 15 chaos); Chromium 1180/390:
+  teeno boss levels mein 2-2 random rounds jeete, 0 errors, 0 overflow.
+- **Baaki:** on-call shift. Real labs 16–19 abhi bhi untested (is machine par Docker/kind nahi).
 
 ---
 

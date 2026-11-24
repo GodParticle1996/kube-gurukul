@@ -885,6 +885,11 @@ pre {
 .drill-li.miss code { color: var(--bad); }
 .drill-you { color: #7d8aa5; margin-left: 6px; }
 
+/* ---- 🎲 CHAOS (chaos.js) ---- */
+.chaos-start { margin: 6px 0 4px; }
+.chaos-round { margin-top: 8px; }
+.chaos-term .lab-goal { margin-top: 4px; }
+
 /* ---- TRIAGE ---- */
 .tg-symptom {
   background: linear-gradient(135deg, #2a0f13, #1a0d16);

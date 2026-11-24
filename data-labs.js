@@ -3932,4 +3932,27 @@ Containers:
     cards: [{ front: 'Kisi service account ki permission bina uska token liye kaise jaanchte ho?', back: '<code>kubectl auth can-i get secrets --as=system:serviceaccount:&lt;ns&gt;:&lt;sa&gt;</code> — jawab yes/no.' }],
   });
 
+  /* =====================================================================
+     🎲 Chaos rounds (chaos.js) — teeno boss levels mein: har baar naya,
+     random breakage. Level ke hisaab se breakages ka pool.
+     ===================================================================== */
+  addLab('boss1', { type: 'chaos', id: 'chaos-beginner', level: 1, title: '🎲 Chaos Round: kya toota, khud dhoondho',
+    intro: 'Beginner pool: image tag, Service selector, replicas, memory, ConfigMap key.' }, {
+    objectives: ['🎲 <b>Chaos round:</b> random toota hua pay-api — bina bataye wajah dhoondho aur file theek karo'],
+    success: ['Main bina hint ke STATUS → describe → logs ke kram se toota hua Deployment theek kar sakta hoon'],
+    cards: [{ front: 'Pod ka STATUS dekh kar pehla shak? (Pending / ImagePullBackOff / CreateContainerConfigError / CrashLoopBackOff / 0/1)', back: 'Pending = scheduler (describe: FailedScheduling) · ImagePullBackOff = image/tag · CreateContainerConfigError = ConfigMap/Secret · CrashLoopBackOff = logs + Last State · Running 0/1 = readiness probe.' }],
+  });
+  addLab('boss2', { type: 'chaos', id: 'chaos-intermediate', level: 2, title: '🎲 Chaos Round: pre-sale chaos drill',
+    intro: 'Intermediate pool: upar wale + CPU request, probes, targetPort, ConfigMap value, nodeSelector.' }, {
+    objectives: ['🎲 <b>Chaos round:</b> probes, targetPort, scheduling — random breakage, khud pakdo'],
+    success: ['Main "pods 1/1 par curl fail" aur "Running 0/1" jaisi chhupi galtiyan bhi pakad sakta hoon'],
+    cards: [{ front: 'Pods 1/1 Running, endpoints bhi dikhte hain — phir bhi curl "Couldn\'t connect"?', back: 'Service ka <b>targetPort</b> dekho: endpoints kis port par hain (<code>kubectl get endpoints</code>) aur app kis port par sunti hai.' }],
+  });
+  addLab('boss3', { type: 'chaos', id: 'chaos-advanced', level: 3, title: '🎲 Chaos Round: senior on-call drill',
+    intro: 'Advanced pool: sab 15 galtiyan — command, securityContext, ConfigMap naam, PORT env — aur kabhi do ek saath.' }, {
+    objectives: ['🎲 <b>Chaos round:</b> 15 tarah ki galtiyan, kabhi do ek saath — senior ki tarah kram se jaancho'],
+    success: ['Main ek saath do galtiyan bhi alag-alag pakad kar theek kar sakta hoon'],
+    cards: [{ front: 'CrashLoopBackOff aur <code>kubectl logs</code> bilkul khaali — kya dekho?', back: '<code>kubectl describe pod</code> ka <b>Last State</b>: <code>StartError</code> (exit 128, command/binary galat) ya <code>OOMKilled</code> (exit 137). Process shuru hi nahi hua toh logs nahi hote.' }],
+  });
+
 })();

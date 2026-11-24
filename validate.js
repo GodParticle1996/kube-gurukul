@@ -62,7 +62,7 @@ global.localStorage = { getItem: k => store[k] || null, setItem: (k, v) => { sto
 global.confirm = () => false;
 global.Element = function () {}; Element.prototype = {};
 
-const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'drill.js', 'yaml.js', 'gotpl.js', 'terminal.js',
+const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'drill.js', 'yaml.js', 'gotpl.js', 'terminal.js', 'chaos.js',
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
   'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-secure.js', 'data-eksnet.js', 'data-gaps.js', 'data-ext-sdd.js', 'data-labs.js',
@@ -232,6 +232,11 @@ KG.tracks.forEach(track => {
         }
         labStages.push({ at: sc, stage: s });
       }
+      if (s.type === 'chaos') {
+        if (!s.id) problems.push(sc + ': chaos stage ka id nahi (stats isi id par save hote hain)');
+        if (![1, 2, 3].includes(s.level)) problems.push(sc + ': chaos level 1, 2 ya 3 hona chahiye');
+        labStages.push({ at: sc, stage: s });
+      }
       if (s.type === 'drill') {
         if (!s.id) problems.push(sc + ': drill ka id nahi (best score isi id par save hota hai)');
         if (!s.items || s.items.length < 4) problems.push(sc + ': drill mein kam se kam 4 sawal chahiye');
@@ -395,6 +400,29 @@ function renderLab(at, st) {
       if (!choices.length && before === done) break;
     }
     if (!done) problems.push(at + ': saari commands + saare choices ke baad bhi lab poora nahi hua (SOFTLOCK)');
+  }
+
+  if (st.type === 'chaos') {
+    /* round shuru karo → jo breakage aaya uska solution asli terminal mein chalao → round jeeto → Aage badho */
+    clickAll(arena, 'chaos-start');
+    const ch = arena._chaos;
+    if (!ch) problems.push(at + ': chaos round shuru nahi hua');
+    else {
+      const termEl = ch.sub.children[1], input = termEl.querySelector('input');
+      ch.mission.solution.forEach(step => {
+        input.value = step && typeof step === 'object' ? 'vi ' + step.edit : step;
+        input.fire('keydown', { key: 'Enter' });
+        if (step && typeof step === 'object' && termEl._editor && termEl._editor.isOpen()) {
+          let txt = termEl._editor.ta.value;
+          (step.change || []).forEach(pair => { txt = txt.replace(pair[0], pair[1]); });
+          termEl._editor.ta.value = txt; termEl._editor.save.click();
+        }
+      });
+      if (!ch.sub.children.some(x => x.classList && x.classList.contains('stage-summary'))) problems.push(at + ': chaos round (' + ch.mission.chaos.join('+') + ') solution se nahi jeeta');
+      ch.roundDone({ firstTry: 1, total: 1 });
+      clickAll(arena, 'btn', b => !b.disabled && /Aage badho/.test(b.innerHTML || b.textContent || ''));
+      if (!done) problems.push(at + ': chaos round ke baad "Aage badho" se stage poora nahi hua (SOFTLOCK)');
+    }
   }
 
   if (st.type === 'drill') {
@@ -1436,6 +1464,37 @@ t('yaml: galat YAML par go-yaml jaise error aur sahi line number', () => {
   assert(/line 3: key "a" already set in map/.test(err('a: 1\nb: 2\na: 3')), 'duplicate key');
   assert(/line 1: did not find expected alphabetic or numeric character/.test(err('schedule: */5 * * * *')), 'unquoted cron');
   assert(err('schedule: "*/5 * * * *"') === null, 'quoted cron theek hai');
+});
+t('chaos: BASE theek hai, har breakage sach mein todta hai, har akela + har do-galti combo apne solution se jeetta hai', () => {
+  const C = KG.chaos;
+  C.BREAKS.forEach(b => assert(C.BASE.split(b.from).length === 2, b.id + ': "from" BASE mein exactly ek baar nahi'));
+  assert(C.works(C.mission([]).cluster), 'BASE (bina breakage) mein pay-api kaam nahi karta');
+  const play = ids => {
+    const m = C.mission(ids);
+    assert(!C.works(m.cluster), ids.join('+') + ': breakage ke baad bhi pay-api theek chal raha hai — kuch toota hi nahi');
+    const arena = document.createElement('div');
+    KG.renderers.terminal(m, arena, () => {});
+    const termEl = arena.children[1], input = termEl.querySelector('input'), outEl = termEl.querySelector('.term-out');
+    const won = () => arena.children.some(c => c.classList && c.classList.contains('stage-summary'));
+    m.solution.forEach((step, i) => {
+      assert(!won(), ids.join('+') + ': step ' + i + ' se pehle hi jeet gaya');
+      const before = outEl.children.length;
+      input.value = step && typeof step === 'object' ? 'vi ' + step.edit : step; input.fire('keydown', { key: 'Enter' });
+      if (step && typeof step === 'object') {
+        let txt = termEl._editor.ta.value;
+        step.change.forEach(([a, b]) => { assert(txt.includes(a), ids.join('+') + ': edit text nahi mila: ' + a); txt = txt.replace(a, b); });
+        termEl._editor.ta.value = txt; termEl._editor.save.click();
+      }
+      const out = outEl.children.slice(before).map(c => c.textContent).join('\n');
+      assert(!/Simulator error/.test(out), ids.join('+') + ': ' + out);
+    });
+    assert(won(), ids.join('+') + ': solution ke baad bhi round nahi jeeta');
+  };
+  C.BREAKS.forEach(b => play([b.id]));
+  const svc = ['svc-selector', 'svc-targetport'];
+  let n = 0;
+  svc.forEach(a => C.BREAKS.filter(b => !svc.includes(b.id) && b.id !== 'replicas-zero').forEach(b => { play([b.id, a]); n++; }));
+  assert(n === 24, 'do-galti combos: ' + n);
 });
 t('drill: canon() aliases, flag ka kram, -o wide/-owide, deploy/x, -it (exec), -n payments optional', () => {
   const same = (a, b) => assert(KG.drill.canon(a) === KG.drill.canon(b), a + '  ≠  ' + b + '  (' + KG.drill.canon(a) + ' | ' + KG.drill.canon(b) + ')');

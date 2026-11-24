@@ -182,6 +182,14 @@ Naye levels ke liye `scene` hi pehli pasand hai.
 // answers[0] learner ko dikhta hai — "kubectl …" se shuru ho. Jo variant canon() mein pehle se same hai,
 // use mat likho (validator pakadta hai). Ek command do sawalon ka jawab na ho.
 
+// 🎲 CHAOS — random breakage (chaos.js, 2026-11-24). pay-api ki ek file (ConfigMap + Deployment + Service) mein
+// chaos monkey 15 mein se koi galti daalta hai (level 3 par kabhi do). Cluster ki poori haalat FILE se nikalti hai
+// (kubelet ka kram: scheduling → image → config → start → app → memory → liveness → readiness → endpoints),
+// isliye koi bhi sahi fix chalta hai. Har round naya; stats KG.state.chaosStats[id] mein.
+{ type: 'chaos', id: 'chaos-beginner', title: '🎲 …', level: 1 /* 1 | 2 | 3 */, intro: 'HTML (optional)' }
+// Naya breakage: KG.chaos.BREAKS mein { id, level, fix, title, from, to, diag, clue, reveal } — "from" BASE mein
+// exactly ek baar ho; validator har akela breakage aur har do-galti combo apne solution se jeet kar dikhata hai.
+
 // 🎁 BONUS — kisi bhi stage mein `bonus: true` daalo → golden bonus round ban jaata hai
 ```
 
@@ -506,6 +514,7 @@ aur unke goals ko solvable saabit karta hai:**
 | `triage` | Palette ki har command "click" karta hai, phir har choice — verdict khulna aur lab poora hona chahiye. Na khule to **SOFTLOCK** report hoti hai. Duplicate `cmd` bhi pakadta hai (Set mein ek hi register hoti hai) |
 | `slider` | **Poora knob sweep** — har combination par `readouts/bars/verdict/check` chalata hai. Ek bhi combination `check()` true na kare → **UNSOLVABLE**. Aur default values par `check()` already true ho → **"goal shuru mein hi poora hai"** |
 | `flow` | Poora flow chala ke, har `ask` ka sahi jawab de ke, aakhir tak pahunchta hai. Na pahunche to **SOFTLOCK** |
+| `chaos` | Round shuru karta hai, jo breakage aaya uska solution asli terminal mein chalata hai, round jeet kar "Aage badho". Alag test: BASE theek hai, har breakage sach mein todta hai (`KG.chaos.works`), har akela (15) aur har do-galti combo (24) apne solution se jeetta hai |
 | `drill` | "Shuru" dabata hai, har sawal ka aakhri answer type karke Enter, phir "Aage badho" — drill poori honi chahiye aur `firstTry` = sawalon ki ginti. Faltu (canonical same) variants aur do sawalon ka ek hi jawab bhi pakadta hai |
 | `board` | **Backtracking** se saabit karta hai ki saare pods ek saath schedule ho sakte hain. Plus: koi pod HAR node par fit ho (to lab kuch sikhata hi nahi), ya khaali board par bhi kahin fit na ho — dono report hote hain |
 
@@ -840,7 +849,10 @@ Status (2026-11-23):
   Go-template engine `gotpl.js`), `operators` (CNPG operator OOMKilled → "failed calling webhook … no endpoints"; Helm values se
   memory), `istio` (VS subset v2 DR mein nahi → `503 NC`; v2 bina sidecar + `ISTIO_MUTUAL` → TLS error). Naya lab type
   ⚡ **speed drill** (`drill.js`, §3) — drills `pod`, `deploy`, `kk-toolkit` mein. Ab saare 16 khaali levels mein hands-on hai.
-- Baaki: random breakage (chaos) mode, on-call shift, real labs (Docker + kind ke baad).
+- Batch 5 (2026-11-24): 🎲 **chaos mode** (`chaos.js`, §3) — chaos rounds `boss1` (level 1), `boss2` (2), `boss3` (3) mein.
+  15 breakages, ek file se poora cluster (pods / describe / logs / events / endpoints / curl). Partial apply asli kubectl jaisa
+  (jo doc theek, woh lagta hai; errors aakhir mein). `node tools/replay-missions.js run '' 'chaos|<id>'` (aur `chaos|a+b`) transcript deta hai.
+- Baaki: on-call shift, real labs (Docker + kind ke baad).
 
 **`gotpl.js` (`KG.gotpl`)** — chhota Go text/template + Sprig. `renderChart({ path: text }, ctx)` → `{ files }` ya `{ err }`.
 Chalta hai: `{{- -}}` chomp, comments, `.a.b`, `$`, `$x :=`, `range` (list/map, `$i, $v :=`), `if / else if / else`, `with`,

@@ -20,6 +20,8 @@ function missions() {
     l.stages.filter(x => x.type === 'terminal').forEach((m, i) => out.push([l.id + '|t' + i, m, tr.id]));
     (l.interview.questions || []).filter(q => q.terminal).forEach((q, i) => out.push([l.id + '|iv' + i, q.terminal, tr.id]));
   }));
+  // 🎲 chaos: har breakage ek alag mission (chaos|<id>), aur do-galti wale (chaos|a+b)
+  if (KG.chaos) KG.chaos.BREAKS.forEach(b => out.push(['chaos|' + b.id, KG.chaos.mission([b.id]), 'chaos']));
   return out;
 }
 function runOne(m, cmds) {
@@ -50,6 +52,8 @@ function runOne(m, cmds) {
 }
 const [mode, a1, a2] = process.argv.slice(2);
 const all = missions();
+// chaos ke do-galti wale combo: run sols.json 'chaos|image-tag+svc-selector'
+if (KG.chaos && /^chaos\|.+\+/.test(process.argv[4] || '')) all.push([process.argv[4], KG.chaos.mission(process.argv[4].slice(6).split('+')), 'chaos']);
 if (mode === 'list') all.forEach(([k, m, tr]) => console.log(k.padEnd(34), tr.padEnd(12), m.solution ? 'SOL' : '---', strip(m.title)));
 if (mode === 'info') {
   all.filter(([k]) => k === a1 || k.startsWith(a1 + '|')).forEach(([k, m]) => {

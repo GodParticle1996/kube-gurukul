@@ -31,6 +31,9 @@
   kind v0.33.0, helm v4.3.2. `real-labs/setup.sh` se 3-node kind cluster (Kubernetes v1.37.0). **Saare 19 labs** chale:
   setup → verify ❌ → solution → verify ✅; 16–19 ka har step README se milaya; lab 01 ka beech wala OOM, lab 11 ka PDB-blocked
   drain, lab 15 ka Helm 4 `--rollback-on-failure` + config-leak bhi asli mein dikha. 16–19 se `untested` flag hata.
+- **Real labs ke browser missions:** `d2-rightsize` (lab 17) aur `sec-runtime` (lab 19) mein naye terminal missions — outputs asli
+  cluster se; simulator ke naye dawe cluster par dobara jaanche. Labs 16 / 18 ke jaise missions pehle se `d2-debug` / `sec-policy` mein.
+  Replay 90/90. kind cluster `gurukul` test ke baad hata diya (`real-labs/setup.sh` ~1 min mein dobara banata hai).
 
 ---
 

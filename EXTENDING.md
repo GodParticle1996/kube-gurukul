@@ -864,6 +864,10 @@ Status (2026-11-23):
 - Batch 6 (2026-11-24): 📟 **on-call shift** (`oncall.js`, §3) — `boss2` mein "Diwali sale ki raat": 4 jude hue alerts, pager,
   report card. `node tools/replay-missions.js run '' 'oncall|shift'` poori shift ka transcript deta hai.
 - Real labs: 2026-11-24 ko saare 19 asli kind cluster par test hue (§13) — 16–19 ka `untested` flag hata.
+- Real lab ke browser roop (2026-11-24): `d2-rightsize` = lab 17 (CPU throttling: `cpu.max`, `cpu.stat`, `set resources`, Pending),
+  `sec-runtime` = lab 19 (quarantine ki NetworkPolicy starter ke TODO + 4 wget jaanch). Outputs asli cluster se pakde gaye; simulator
+  ke do dawe (sirf-Ingress policy ke baad egress khula, egress band par naam se wget = `bad address`) cluster par dobara jaanche.
+  Niyam: asli lab ka browser mission banao toh outputs cluster se pakdo, aur jo naya bartaav simulator dikhaye use cluster par chala kar milao.
 
 **`gotpl.js` (`KG.gotpl`)** — chhota Go text/template + Sprig. `renderChart({ path: text }, ctx)` → `{ files }` ya `{ err }`.
 Chalta hai: `{{- -}}` chomp, comments, `.a.b`, `$`, `$x :=`, `range` (list/map, `$i, $v :=`), `if / else if / else`, `with`,

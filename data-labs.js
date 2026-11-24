@@ -3965,4 +3965,316 @@ Containers:
     cards: [{ front: 'HPA max badhaya, phir DB "too many clients" — kyun?', back: 'Har pod apna connection pool kholta hai: <b>pods × pool</b> ≤ DB <code>max_connections</code> (minus reserved). Pool chhota karo aur <code>rollout restart</code> (env sirf start par padha jaata hai).' }],
   });
 
+  /* =====================================================================
+     🐢 d2-rightsize — real lab 17 ka browser roop: fraud-check CPU limit se
+     roka ja raha hai. Outputs 2026-11-24 ko asli kind cluster (v1.37) se
+     milaye gaye: cpu.max, cpu.stat (cgroup v2), set resources ka error.
+     ===================================================================== */
+  const FC_PODS = ['fraud-check-6c9d7b5f4-q7x2k', 'fraud-check-7f2a9c8d1-m4t8z', 'fraud-check-5b8e1d3a7-w2r6n', 'fraud-check-9d4c7e2b6-k5p1x', 'fraud-check-4a7f3b9e2-h8n3v'];
+  const FC_FREE = 1.8;   // node-2 par fraud-check ke liye bachi CPU (m6i.xlarge, 3920m allocatable)
+  const cpuQ = v => { if (v == null) return null; const m = String(v).match(/^([0-9.]+)(m)?$/); return m ? Number(m[1]) / (m[2] ? 1000 : 1) : NaN; };
+  const fmtCpu = v => v == null ? '<none>' : Number.isInteger(v) ? String(v) : Math.round(v * 1000) + 'm';
+  const fcThrottle = lim => lim == null || lim >= 1.2 ? 0 : lim >= 1 ? 0.2 : 1;
+  const fcMs = (lim, k) => Math.round((1230 * (lim == null ? 1 : Math.max(1, 1 / lim) * (lim >= 1 && lim < 1.2 ? 1.22 : 1)) + [10, -20, 40, -10, 30][k % 5]) / 10) * 10;
+  const fcCur = c => c.pods.find(p => p.cur) || c.pods[0];
+  const fcGood = c => { const p = fcCur(c); return p.status === 'Running' && p.req >= 0.5 && (p.lim == null || p.lim >= 1.5) && !!p.memLim; };
+  function fcDesc(p) {
+    return `Name:             ${p.name}\nNamespace:        payments\nNode:             ${p.status === 'Pending' ? '<none>' : 'node-2/10.0.13.5'}\nLabels:           app=fraud-check\nStatus:           ${p.status}\nContainers:\n  fraud-check:\n    Image:      111122223333.dkr.ecr.ap-south-1.amazonaws.com/fraud-check:3.1.0\n` +
+      `    Limits:\n${p.lim != null ? `      cpu:     ${fmtCpu(p.lim)}\n` : ''}      memory:  ${p.memLim}\n    Requests:\n      cpu:        ${fmtCpu(p.req)}\n      memory:     64Mi\nQoS Class:       Burstable\n` +
+      (p.status === 'Pending' ? `Events:\n  Type     Reason            Age   From               Message\n  ----     ------            ----  ----               -------\n  Warning  FailedScheduling  6s    default-scheduler  0/3 nodes are available: 3 Insufficient cpu. preemption: 0/3 nodes are available: 3 No preemption victims found for incoming pod.` : 'Events:          <none>');
+  }
+  // naya template → naya pod (rolling update: request fit na ho toh naya Pending, purana chalta rahe)
+  function fcRoll(c, req, lim, memLim) {
+    const old = fcCur(c);
+    const p = { name: FC_PODS[(++c.rs) % FC_PODS.length], req, lim, memLim, t: 0, cur: true, ready: '1/1', restarts: 0, age: '6s', node: 'node-2', ip: '10.0.13.' + (60 + c.rs) };
+    if (req > FC_FREE) {
+      Object.assign(p, { status: 'Pending', ready: '0/1', node: '<none>', ip: '<none>' });
+      c.pods = c.pods.filter(x => !x.cur || x === old).map(x => Object.assign(x, { cur: false })).concat([p]);
+      old.keep = true;
+    } else {
+      p.status = 'Running';
+      c.pods = [p];
+      c.fixAt = fcGood(c) ? c.hist : c.fixAt;
+    }
+    c.pods.forEach(x => { x.describe = fcDesc(x); });
+  }
+  function fcStat(c) {
+    const p = c.pods.find(x => x.status === 'Running' && (x.cur || x.keep)) || fcCur(c);
+    const t = Math.max(1, p.t), per = t * 10, fr = fcThrottle(p.lim), use = Math.min(1, p.lim == null ? 1 : p.lim);
+    const thr = fr === 1 ? per : Math.round(per * fr);
+    const usage = Math.round(use * t * 1e6 * 0.98);
+    return `usage_usec ${usage}\nuser_usec ${Math.round(usage * 0.994)}\nsystem_usec ${Math.round(usage * 0.006)}\nnr_periods ${per}\nnr_throttled ${thr}\nthrottled_usec ${thr * (fr === 1 ? 69900 : 8000)}\nnr_bursts 0\nburst_usec 0`;
+  }
+  const FC_PATCH = `# kubectl -n payments patch deploy fraud-check --patch-file fraud-check-resources.yaml
+# "null" ka matlab: yeh field hata do (CPU limit hi nahi rahegi)
+spec:
+  template:
+    spec:
+      containers:
+        - name: fraud-check
+          resources:
+            requests: { cpu: "1", memory: 64Mi }
+            limits:   { cpu: null, memory: 128Mi }
+`;
+  const T_FC = [
+    { text: 'Ek batch kitna samay leta hai? (<code>kubectl logs deploy/fraud-check --tail=3</code>)', check: s => ran(s, /^kubectl logs\b.*fraud-check/) },
+    { text: '<code>kubectl top pod</code> — CPU usage kitna, aur limit kitni?', check: s => ran(s, /^kubectl top (pods?|po)\b/) },
+    { text: 'Kernel ka naka padho: <code>cat /sys/fs/cgroup/cpu.max</code> (pod ke andar)', check: s => !!s.cluster.sawMax },
+    { text: 'Saboot: <code>cpu.stat</code> <b>do baar</b> padho — <code>nr_throttled</code> badha?', check: s => (s.cluster.statBefore || 0) >= 2 },
+    { text: 'Resources theek karo: CPU limit ≥ 1500m (ya hatao), request ≥ 500m, memory limit rehne do', check: s => fcGood(s.cluster) },
+    { text: 'Fark pakka karo: fix ke baad <code>cpu.stat</code> aur logs', check: s => fcGood(s.cluster) && (s.cluster.statAfter || 0) >= 1 && ranAfter(s, s.cluster.fixAt, /^kubectl logs\b.*fraud-check/) },
+  ];
+  const FCX = '(?:deploy(?:ment)?\\/fraud-check|fraud-check-[a-z0-9-]+)';
+  addLab('d2-rightsize', {
+    type: 'terminal',
+    title: '🖥️ Mission: CPU sirf 200m, phir bhi fraud-check dheema',
+    instructions: 'ChaiPay ki fraud-check service har payment ka fraud score banati hai. Diwali se pehle kisi ne "kharcha bachane" ke liye uski CPU limit 200m kar di. Ab har batch dheema hai, aur payments ka p99 badh gaya hai. Grafana kehta hai: "CPU usage sirf 200m — pod to aaram mein hai". (Yeh mission real lab 17 ka browser roop hai — outputs asli kind cluster se milaye gaye hain.)',
+    goal: `fraud-check ka dheemapan <b>saboot ke saath</b> pakdo (logs → top → <code>cpu.max</code> → <code>cpu.stat</code>), phir resources theek karo.
+      Pod ke andar padhne ke liye: <code>kubectl exec deploy/fraud-check -- cat /sys/fs/cgroup/cpu.stat</code>.
+      Fix: <code>kubectl set resources deploy/fraud-check --requests=cpu=… --limits=cpu=…</code> (ya patch file — <code>ls</code>).`,
+    tasks: T_FC,
+    cluster: (() => {
+      const c = { rs: 0, hist: 0, nodes: NODES, statBefore: 0, statAfter: 0,
+        pods: [{ name: FC_PODS[0], req: 0.1, lim: 0.2, memLim: '128Mi', t: 40, cur: true, status: 'Running', ready: '1/1', restarts: 0, age: '2d', node: 'node-2', ip: '10.0.13.60' }],
+        deployments: [{ name: 'fraud-check', ready: '1/1', upToDate: 1, available: 1, age: '90d' }] };
+      c.pods.forEach(p => { p.describe = fcDesc(p); });
+      return c;
+    })(),
+    onTick: sim => { const c = sim.cluster; c.hist = sim.history.length; c.pods.forEach(p => { if (p.status === 'Running') p.t += 5; }); if (fcGood(c) && c.fixAt == null) c.fixAt = c.hist; },
+    responses: [
+      { re: new RegExp('^kubectl logs ' + FCX + '\\b.*$'),
+        out: s => { const p = s.cluster.pods.find(x => x.status === 'Running' && (x.cur || x.keep)) || fcCur(s.cluster); s.cluster.lk = (s.cluster.lk || 0) + 1;
+          return [0, 1, 2].map(i => `fraud-check: 10 lakh jaanch ka batch ${fcMs(p.lim, s.cluster.lk * 3 + i)} ms mein poora`).join('\n'); } },
+      { re: /^kubectl top (?:pods?|po)\b.*$/,
+        out: s => tbl([['NAME', 'CPU(cores)', 'MEMORY(bytes)']].concat(s.cluster.pods.filter(p => p.status === 'Running').map(p => [p.name, (Math.round(Math.min(1, p.lim == null ? 1 : p.lim) * 1000) + 1) + 'm', '1Mi']))) },
+      { re: new RegExp('^kubectl exec (?:-it? )?' + FCX + '(?: (?:-n|--namespace)[ =]payments)? -- cat /sys/fs/cgroup/cpu\\.max$'),
+        out: s => { s.cluster.sawMax = true; const p = s.cluster.pods.find(x => x.status === 'Running' && (x.cur || x.keep)); return p.lim == null ? 'max 100000' : `${Math.round(p.lim * 100000)} 100000`; } },
+      { re: new RegExp('^kubectl exec (?:-it? )?' + FCX + '(?: (?:-n|--namespace)[ =]payments)? -- cat /sys/fs/cgroup/cpu\\.stat$'),
+        out: s => { const c = s.cluster; if (fcGood(c)) c.statAfter++; else c.statBefore++; return fcStat(c); } },
+      { re: new RegExp('^kubectl exec (?:-it? )?' + FCX + '(?: (?:-n|--namespace)[ =]payments)? -- cat /sys/fs/cgroup/cpu/\\S+$'), err: true,
+        out: 'cat: can\'t open \'/sys/fs/cgroup/cpu/cpu.stat\': No such file or directory\n(yeh node cgroup v2 par hai — raasta /sys/fs/cgroup/cpu.stat aur /sys/fs/cgroup/cpu.max)' },
+      { re: /^kubectl set resources (?:deploy(?:ment)?)[ /]fraud-check\b.*$/,
+        out: (s, m) => {
+          const c = s.cluster, cmd = String((m && m[0]) || ''), cur = fcCur(c);
+          const get = (part, k) => { const mm = cmd.match(new RegExp('--' + part + '=(\\S+)')); if (!mm) return undefined; const kv = mm[1].split(',').map(x => x.split('=')); const f = kv.find(x => x[0] === k); return f ? f[1] : undefined; };
+          if (!/--(requests|limits)=/.test(cmd)) return 'error: you must specify an update to requests or limits (in the form of --requests/--limits)';
+          const rq = get('requests', 'cpu'), lm = get('limits', 'cpu');
+          for (const v of [rq, lm]) if (v !== undefined && isNaN(cpuQ(v))) return `error: quantities must match the regular expression '^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$'`;
+          const req = rq !== undefined ? cpuQ(rq) : cur.req, lim = lm !== undefined ? (lm === '0' ? null : cpuQ(lm)) : cur.lim;
+          if (lim != null && req > lim) return `error: failed to patch resources update to pod template Deployment.apps "fraud-check" is invalid: spec.template.spec.containers[0].resources.requests: Invalid value: "${rq !== undefined ? rq : fmtCpu(req)}": must be less than or equal to cpu limit of ${fmtCpu(lim)}`;
+          if (req === cur.req && lim === cur.lim) return 'deployment.apps/fraud-check resource requirements updated';
+          fcRoll(c, req, lim, cur.memLim);
+          return 'deployment.apps/fraud-check resource requirements updated';
+        } },
+      { re: /^kubectl patch (?:deploy(?:ment)?)[ /]?(?: )?fraud-check\b.*--patch-file[ =](\S+).*$/,
+        out: (s, m) => { const f = String((m && m[1]) || '').replace(/^\.\//, ''); if (f !== 'fraud-check-resources.yaml') return `error: open ${f}: no such file or directory`;
+          fcRoll(s.cluster, 1, null, '128Mi'); return 'deployment.apps/fraud-check patched'; } },
+      { re: /^kubectl rollout status (?:deploy(?:ment)?)[ /]fraud-check\b.*$/,
+        out: s => fcCur(s.cluster).status === 'Pending' ? 'Waiting for deployment "fraud-check" rollout to finish: 1 old replicas are pending termination...\n(simulator: naya pod Pending hai — kubectl describe pod se wajah dekho. Rollout yahin atka rehta.)' : 'deployment "fraud-check" successfully rolled out' },
+      { re: /^kubectl delete (?:pods?|po)[ /](fraud-check-\S+).*$/,
+        out: (s, m) => { const c = s.cluster, p = c.pods.find(x => x.name === (m && m[1])); if (!p) return `Error from server (NotFound): pods "${(m && m[1]) || ''}" not found`;
+          const keep = Object.assign({}, p); fcRoll(c, keep.req, keep.lim, keep.memLim); return `pod "${keep.name}" deleted\n(naya pod wahi resources le kar aaya — restart se naka nahi badalta)`; } },
+    ],
+    files: {
+      'fraud-check-resources.yaml': { desc: 'patch file — CPU limit hatane ka raasta (cpu: null)', content: FC_PATCH,
+        apply: () => ({ err: 'error: error validating "fraud-check-resources.yaml": error validating data: [apiVersion not set, kind not set]; if you choose to ignore these errors, turn validation off with --validate=false\n(Yeh poori Deployment nahi, sirf PATCH hai: kubectl patch deploy fraud-check --patch-file fraud-check-resources.yaml)' }) },
+    },
+    success: KG.allOf(T_FC),
+    successText: `<b>Jaal:</b> <code>kubectl top</code> ka "200m" kam use nahi tha — woh <b>limit</b> thi. <b>Usage = limit</b> dikhe toh shak karo: container roka ja raha hai.<br>
+      <b>Saboot:</b> <code>cpu.max</code> = <code>20000 100000</code> → har 100 ms mein sirf 20 ms CPU. <code>cpu.stat</code> mein <code>nr_throttled</code> lagbhag har daur badha (10 s mein ~100).<br>
+      <b>Fix:</b> request sach bole (~1 core kaam), limit kaam se upar ya hata do. Fix ke baad batch ~5 guna tez, <code>nr_throttled</code> 0.
+      Bahut badi request (node se zyada) → naya pod <b>Pending</b>, purana dheema pod chalta rehta.<br>
+      Yahi lab asli cluster par: <b>Real Labs → Lab 17</b> (<code>real-labs/17-cpu-throttling</code>).`,
+    hints: [
+      'kubectl logs deploy/fraud-check --tail=3 (batch ka samay), phir kubectl top pod — CPU usage limit ke barabar to nahi?',
+      'kubectl exec deploy/fraud-check -- cat /sys/fs/cgroup/cpu.max, phir cpu.stat do baar — nr_throttled kitna badha?',
+      'kubectl set resources deploy/fraud-check --requests=cpu=1 --limits=cpu=1500m, phir kubectl rollout status deploy/fraud-check, cpu.stat aur logs dobara.',
+    ],
+    solution: ['kubectl logs deploy/fraud-check --tail=3', 'kubectl top pod', 'kubectl exec deploy/fraud-check -- cat /sys/fs/cgroup/cpu.max',
+      'kubectl exec deploy/fraud-check -- cat /sys/fs/cgroup/cpu.stat', 'kubectl exec deploy/fraud-check -- cat /sys/fs/cgroup/cpu.stat',
+      'kubectl set resources deploy/fraud-check --requests=cpu=1 --limits=cpu=1500m', 'kubectl rollout status deploy/fraud-check',
+      'kubectl exec deploy/fraud-check -- cat /sys/fs/cgroup/cpu.stat', 'kubectl logs deploy/fraud-check --tail=3'],
+  }, {
+    objectives: ['🖥️ <b>Mission (real lab 17 ka roop):</b> CPU throttling ko <code>cpu.max</code> / <code>cpu.stat</code> se saabit karo aur request/limit theek karo'],
+    success: ['Main "usage = limit" ka matlab samajhta hoon aur cpu.stat ke nr_throttled se throttling saabit kar sakta hoon'],
+    cards: [{ front: '<code>kubectl top</code> mein CPU = limit (jaise 200m / 200m) — matlab?', back: 'Pod aaram mein nahi, <b>roka ja raha hai</b>. <code>cat /sys/fs/cgroup/cpu.stat</code> → <code>nr_throttled</code> badhta dikhega. Limit badhao ya hatao, request sach rakho.' }],
+  });
+
+  /* =====================================================================
+     🚨 sec-runtime — real lab 19 ka browser roop: quarantine ki NetworkPolicy
+     khud likho (starter ke TODO) aur 4 raaste ek-ek karke jaancho. Errors aur
+     outputs asli kind cluster (v1.37, kindnet enforce karta hai) se.
+     ===================================================================== */
+  const QB = 'notify-789b5dc7bd-2vftv', QG = 'notify-789b5dc7bd-ncwbz', QN = 'notify-789b5dc7bd-t5s9d';
+  const Q_IP = { [QB]: '10.0.13.49', [QG]: '10.0.12.52', [QN]: '10.0.14.54', 'ledger-0': '10.0.14.11', client: '10.0.12.70' };
+  const Q_LEDGER = '10.100.70.248', Q_NOTIFY = '10.100.33.17';
+  const Q_STARTER = `# Quarantine wali NetworkPolicy. Do TODO bharo, phir: kubectl apply -f quarantine-starter.yaml
+# Niyam: jis pod ko policy CHUNTI hai, uske liye sirf "allow" likha traffic chalta hai.
+# Is policy mein koi allow nahi likha → chune hue pod ka SAARA traffic band.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: quarantine
+  namespace: payments
+spec:
+  podSelector:
+    matchLabels:
+      TODO-label-ka-naam: "TODO-label-ki-value"     # 👈 TODO 1: pod par kaunsa label lagaya tha?
+  policyTypes:
+    - TODO                                          # 👈 TODO 2: aana (Ingress) aur jaana (Egress) — dono, do alag lines
+`;
+  const qPods = c => c.qpods;
+  const qMatch = (sel, labels) => Object.keys(sel || {}).length > 0 && Object.keys(sel).every(k => labels[k] === sel[k]);
+  const qPicked = (c, name) => !!c.np && qMatch(c.np.sel, (qPods(c).find(p => p.name === name) || {}).labels || {});
+  const qInBlocked = (c, name) => qPicked(c, name) && c.np.types.includes('Ingress') && !c.np.ingress;
+  const qOutBlocked = (c, name) => qPicked(c, name) && c.np.types.includes('Egress') && !c.np.egress;
+  const qEndpoints = c => qPods(c).filter(p => p.labels.app === 'notify' && p.ready === '1/1');
+  function qRefresh(c) {
+    c.pods = qPods(c).map(p => Object.assign({}, p, { describe: `Name:         ${p.name}\nNamespace:    payments\nLabels:       ${Object.entries(p.labels).map(([k, v]) => k + '=' + v).join('\n              ')}\nStatus:       Running\nIP:           ${p.ip}` }));
+  }
+  // wget <src> → <target>: egress / ingress band? DNS (port 53) bhi egress hai
+  function qWget(c, src, url) {
+    const m = String(url).match(/^(?:https?:\/\/)?([A-Za-z0-9.-]+)(?::(\d+))?/) || [];
+    const host = m[1] || '';
+    const isName = !/^\d+\.\d+\.\d+\.\d+$/.test(host);
+    const fail = msg => `${msg}\ncommand terminated with exit code 1`;
+    if (isName && qOutBlocked(c, src)) return fail(`wget: bad address '${host}'`);
+    let dst;
+    if (/^ledger(\.payments(\.svc(\.cluster\.local)?)?)?$/.test(host) || host === Q_LEDGER) dst = 'ledger-0';
+    else if (/^notify(\.payments(\.svc(\.cluster\.local)?)?)?$/.test(host) || host === Q_NOTIFY) { const eps = qEndpoints(c); dst = eps.length ? eps[0].name : null; if (!dst) return fail('wget: download timed out'); }
+    else dst = Object.keys(Q_IP).find(k => Q_IP[k] === host);
+    if (!dst) return isName ? fail(`wget: bad address '${host}'`) : fail('wget: download timed out');
+    if (qOutBlocked(c, src) || qInBlocked(c, dst)) return fail('wget: download timed out');
+    return dst === 'ledger-0' ? 'ledger-ok' : 'notify-ok';
+  }
+  const qIsolatedOk = c => { const b = qPods(c).find(p => p.name === QB); return !!b && b.labels.quarantine === 'true' && !b.labels.app && qEndpoints(c).length >= 2 && !qEndpoints(c).some(p => p.name === QB); };
+  const qPolicyOk = c => qIsolatedOk(c) && qInBlocked(c, QB) && qOutBlocked(c, QB) && !qPods(c).some(p => p.name !== QB && qPicked(c, p.name));
+  const T_Q = [
+    { text: 'Alert sach hai? <code>kubectl exec … -- ps</code> se dekho (kuch badlo mat)', check: s => !!s.cluster.sawXmrig },
+    { text: 'Saboot bachao: hack hue pod ka <code>-o yaml</code> aur <code>logs</code> (file mein)', check: s => ran(s, new RegExp('^kubectl get (pods?|po)[ /]' + QB + '\\b.*-o ?yaml.*>')) && ran(s, new RegExp('^kubectl logs ' + QB + '\\b.*>')) },
+    { text: 'Users se alag karo: <code>app</code> label hatao, <code>quarantine=true</code> lagao', check: s => qIsolatedOk(s.cluster) },
+    { text: 'Network band: <code>vi quarantine-starter.yaml</code> ke TODO bharo, apply karo', check: s => qPolicyOk(s.cluster) },
+    { text: 'Chaar jaanch (policy ke baad): hack pod → ledger <b>band</b> · client → hack pod <b>band</b> · client → notify <b>chalu</b> · <code>exec ps</code> <b>chalu</b>', check: s => qPolicyOk(s.cluster) && ['a', 'b', 'c', 'd'].every(k => (s.cluster.qchk || {})[k]) },
+  ];
+  const QEX = (pod, rest) => new RegExp('^kubectl exec (?:-it? )?' + pod + '(?: (?:-n|--namespace)[ =]payments)? -- ' + rest + '$');
+  addLab('sec-runtime', {
+    type: 'terminal',
+    title: '🖥️ Mission: quarantine ki deewar khud likho — aur saabit karo',
+    instructions: `Raat 2:14 — Falco: "Crypto miner (xmrig) in ${QB}". Pod abhi zinda hai aur payments namespace mein hai. Delete karoge toh saboot (process, files) chala jayega aur attacker ka raasta pata nahi chalega. Kaam: pehle saboot, phir users se alag, phir network band — aur har deewar ko JAANCH kar dikhao. (Real lab 19 ka browser roop — outputs asli kind cluster se.)`,
+    goal: `Hack pod <code>${QB}</code> ko quarantine karo: saboot → label (<code>app-</code>, <code>quarantine=true</code>) → NetworkPolicy (<code>vi quarantine-starter.yaml</code>) → 4 jaanch.
+      IPs: ledger Service <code>${Q_LEDGER}</code>, hack pod <code>${Q_IP[QB]}</code>. Test pod: <code>client</code>.`,
+    tasks: T_Q,
+    cluster: (() => {
+      const c = { nodes: NODES, np: null, qchk: {},
+        qpods: [{ name: QB, labels: { app: 'notify', 'pod-template-hash': '789b5dc7bd' } }, { name: QG, labels: { app: 'notify', 'pod-template-hash': '789b5dc7bd' } },
+          { name: 'ledger-0', labels: { app: 'ledger' } }, { name: 'client', labels: { run: 'client' } }]
+          .map(p => Object.assign(p, { ready: '1/1', status: 'Running', restarts: 0, age: p.name === 'ledger-0' ? '12d' : '4h', node: 'node-' + (1 + Object.keys(Q_IP).indexOf(p.name) % 3), ip: Q_IP[p.name] })),
+        deployments: [{ name: 'notify', ready: '2/2', upToDate: 2, available: 2, age: '40d' }],
+        services: [{ name: 'notify', type: 'ClusterIP', clusterIP: Q_NOTIFY, ports: '80/TCP', age: '40d' }, { name: 'ledger', type: 'ClusterIP', clusterIP: Q_LEDGER, ports: '80/TCP', age: '40d' }] };
+      c.qpods.find(p => p.name === QB).logs = '[notify] sms queue worker started\n[notify] GET /healthz 200';
+      c.qpods.forEach(p => { p.logs = p.logs || '[ok]'; });
+      qRefresh(c);
+      return c;
+    })(),
+    responses: [
+      { re: /^kubectl logs\b.*falco.*$/, out: `{"hostname":"node-2","output":"02:14:07.118 Critical Detect crypto miners using the Stratum protocol (proc=xmrig cmdline=/bin/sh /tmp/xmrig k8s.ns=payments k8s.pod=${QB})","priority":"Critical","rule":"Detect crypto miners using the Stratum protocol"}` },
+      { re: QEX('(notify-789b5dc7bd-[a-z0-9]+)', 'ps(?: aux)?'),
+        out: (s, m) => { const n = m && m[1]; if (!qPods(s.cluster).some(p => p.name === n)) return `Error from server (NotFound): pods "${n}" not found`;
+          if (n === QB) { s.cluster.sawXmrig = true; if (qPolicyOk(s.cluster)) s.cluster.qchk.d = true; }
+          return 'PID   USER     TIME  COMMAND\n    1 root      0:00 httpd -f -h /w -p 8080' + (n === QB ? '\n   25 root      2h13 {xmrig} /bin/sh /tmp/xmrig' : '') + '\n   31 root      0:00 ps'; } },
+      { re: QEX('([a-z0-9-]+)', 'wget (?:-q ?O- |-qO- |-O- -q )?(?:-T \\d+ )?(\\S+)'),
+        out: (s, m) => { const c = s.cluster, src = m && m[1], url = m && m[2];
+          if (!qPods(c).some(p => p.name === src)) return `Error from server (NotFound): pods "${src}" not found`;
+          const out = qWget(c, src, url);
+          if (qPolicyOk(c)) {
+            if (src === QB && /ledger|10\.100\.70\.248/.test(url) && /timed out|bad address/.test(out)) c.qchk.a = true;
+            if (src === 'client' && url.includes(Q_IP[QB]) && /timed out/.test(out)) c.qchk.b = true;
+            if (src === 'client' && /notify|10\.100\.33\.17/.test(url) && out === 'notify-ok') c.qchk.c = true;
+          }
+          return out; } },
+      { re: new RegExp('^kubectl get (?:pods?|po)[ /]([a-z0-9-]+)(?: (?:-n|--namespace)[ =]payments)? -o ?yaml$'),
+        out: (s, m) => { const p = qPods(s.cluster).find(x => x.name === (m && m[1])); if (!p) return `Error from server (NotFound): pods "${(m && m[1]) || ''}" not found`;
+          return `apiVersion: v1\nkind: Pod\nmetadata:\n  labels:\n${Object.entries(p.labels).map(([k, v]) => `    ${k}: ${JSON.stringify(v)}`).join('\n')}\n  name: ${p.name}\n  namespace: payments\nspec:\n  containers:\n  - image: 111122223333.dkr.ecr.ap-south-1.amazonaws.com/notify:2.3.0\n    name: notify\n  nodeName: ${p.node}\nstatus:\n  phase: Running\n  podIP: ${p.ip}`; } },
+      { re: /^kubectl label (?:pods?|po)[ /](\S+)((?: [a-zA-Z0-9./-]+(?:=[^ ]*|-))+)(?: --overwrite)?(?: (?:-n|--namespace)[ =]payments)?$/,
+        out: (s, m) => {
+          const c = s.cluster, name = m && m[1], p = qPods(c).find(x => x.name === name);
+          if (!p) return `Error from server (NotFound): pods "${name}" not found`;
+          const ops = String(m[2]).trim().split(' ');
+          for (const o of ops) {
+            if (/-$/.test(o) && !o.includes('=')) { delete p.labels[o.slice(0, -1)]; continue; }
+            const [k, v] = o.split('=');
+            if (p.labels[k] != null && p.labels[k] !== v && !/--overwrite/.test(m[0])) return `error: '${k}' already has a value (${p.labels[k]}), and --overwrite is false`;
+            p.labels[k] = v;
+          }
+          // ReplicaSet: app=notify wale pods 2 se kam → naya pod
+          if (qPods(c).filter(x => x.labels.app === 'notify').length < 2 && !qPods(c).some(x => x.name === QN)) {
+            c.qpods.push({ name: QN, labels: { app: 'notify', 'pod-template-hash': '789b5dc7bd' }, ready: '1/1', status: 'Running', restarts: 0, age: '6s', node: 'node-3', ip: Q_IP[QN], logs: '[notify] sms queue worker started' });
+          }
+          qRefresh(c);
+          return `pod/${name} labeled`;
+        } },
+      { re: /^kubectl get (?:pods?|po)\b.*--show-labels\b.*$/,
+        out: s => tbl([['NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE', 'LABELS']].concat(qPods(s.cluster).map(p => [p.name, p.ready, p.status, '0', p.age, Object.entries(p.labels).map(([k, v]) => k + '=' + v).join(',') || '<none>']))) },
+      { re: /^kubectl get endpointslices?\b.*notify.*$/,
+        out: s => tbl([['NAME', 'ADDRESSTYPE', 'PORTS', 'ENDPOINTS', 'AGE'], ['notify-h8l8r', 'IPv4', '8080', qEndpoints(s.cluster).map(p => p.ip).join(',') || '<unset>', '40d']]) },
+      { re: rx('kubectl get (?:netpol|networkpolic(?:y|ies))(?:[ /]quarantine)?'),
+        out: s => s.cluster.np ? tbl([['NAME', 'POD-SELECTOR', 'AGE'], ['quarantine', Object.entries(s.cluster.np.sel).map(([k, v]) => k + '=' + v).join(','), '20s']]) : 'No resources found in payments namespace.' },
+      { re: rx('kubectl describe (?:netpol|networkpolic(?:y|ies))(?:[ /]quarantine)?'),
+        out: s => { const np = s.cluster.np; if (!np) return 'No resources found in payments namespace.';
+          const part = (dir, on, rules) => !on ? `  Not affecting ${dir} traffic` : rules
+            ? `  Allowing ${dir} traffic:\n    To Port: <any> (traffic allowed to all ports)\n    ${dir === 'ingress' ? 'From: <any> (traffic not restricted by source)' : 'To: <any> (traffic not restricted by destination)'}`
+            : `  Allowing ${dir} traffic:\n    <none> (Selected pods are isolated for ${dir} connectivity)`;
+          return `Name:         quarantine\nNamespace:    payments\nSpec:\n  PodSelector:     ${Object.entries(np.sel).map(([k, v]) => k + '=' + v).join(',')}\n` +
+            part('ingress', np.types.includes('Ingress'), np.ingress) + '\n' + part('egress', np.types.includes('Egress'), np.egress) + `\n  Policy Types: ${np.types.join(', ')}`; } },
+      { re: new RegExp('^kubectl delete (?:pods?|po)[ /]' + QB + '\\b.*$'), err: true,
+        out: '(simulator ne roka) Abhi delete nahi — pod ke andar ka process aur files hi saboot hain (attacker kahan se aaya, kya le gaya). Quarantine karo; forensics ke baad delete.' },
+    ],
+    files: {
+      'quarantine-starter.yaml': {
+        editable: true, desc: 'NetworkPolicy starter — do TODO bharo', content: Q_STARTER,
+        apply: (s, text, docs) => {
+          const c = s.cluster, d = (docs || [])[0] || {}, sp = d.spec || {}, F = 'quarantine-starter.yaml';
+          if (d.kind !== 'NetworkPolicy') return { err: `error: is file mein NetworkPolicy chahiye (kind: ${d.kind || 'khaali'})` };
+          if ((d.metadata || {}).namespace && d.metadata.namespace !== 'payments') return { err: `(simulator) namespace payments rakho — hack pod wahin hai` };
+          const uk = Object.keys(sp).find(k => !['podSelector', 'policyTypes', 'ingress', 'egress'].includes(k));
+          if (uk) return { err: `Error from server (BadRequest): error when creating "${F}": NetworkPolicy in version "v1" cannot be handled as a NetworkPolicy: strict decoding error: unknown field "spec.${uk}"` };
+          const ml = ((sp.podSelector || {}).matchLabels) || {};
+          const nb = Object.keys(ml).find(k => typeof ml[k] !== 'string');
+          if (nb) return { err: `Error from server (BadRequest): error when creating "${F}": NetworkPolicy in version "v1" cannot be handled as a NetworkPolicy: json: cannot unmarshal ${typeof ml[nb] === 'boolean' ? 'bool' : 'number'} into Go struct field LabelSelector.spec.podSelector.matchLabels of type string` };
+          const types = Array.isArray(sp.policyTypes) ? sp.policyTypes.map(String) : [];
+          const bad = types.findIndex(t => !['Ingress', 'Egress'].includes(t));
+          if (bad >= 0) return { err: `The NetworkPolicy "quarantine" is invalid: spec.policyTypes[${bad}]: Unsupported value: "${types[bad]}": supported values: "Ingress", "Egress"` };
+          const next = { sel: Object.assign({}, ml), types: types.length ? types : ['Ingress'], ingress: Array.isArray(sp.ingress) && sp.ingress.length > 0, egress: Array.isArray(sp.egress) && sp.egress.length > 0 };
+          const verb = c.np ? 'configured' : 'created';
+          if (c.np && JSON.stringify(c.np) === JSON.stringify(next)) return 'networkpolicy.networking.k8s.io/quarantine unchanged';
+          c.np = next; c.qchk = {};
+          return `networkpolicy.networking.k8s.io/quarantine ${verb}`;
+        },
+      },
+    },
+    success: KG.allOf(T_Q),
+    successText: `<b>Kram:</b> saboot (<code>-o yaml</code>, logs) → <b>label</b> se Service aur ReplicaSet se alag (ReplicaSet ne turant naya saaf pod banaya, users ko farak nahi) → <b>NetworkPolicy</b> se andar-bahar sab band.<br>
+      <b>Policy ka niyam:</b> jo pod chuna gaya, uske liye sirf likha hua "allow" chalta hai. Koi allow nahi + <code>Ingress</code> aur <code>Egress</code> dono = poora band.
+      Label ki value <code>"true"</code> quotes mein — bina quotes YAML use boolean bana deta hai aur API mana karta hai.<br>
+      <b>Jaanch kyun:</b> TODO wali label (ya sirf <code>Ingress</code>) ke saath policy "created" bolti hai par kuch nahi rokti. Deewar tabhi maano jab <code>wget</code> se dikhe.
+      <code>kubectl exec</code> kubelet ke raaste jaata hai, pod ke network se nahi — isliye jaanch ke liye pod abhi bhi khula hai.<br>
+      Yahi lab asli cluster par: <b>Real Labs → Lab 19</b> (<code>real-labs/19-quarantine</code>).`,
+    hints: [
+      `kubectl exec ${QB} -- ps (xmrig?). Phir saboot: kubectl get pod ${QB} -o yaml > evidence-pod.yaml aur kubectl logs ${QB} > evidence-logs.txt`,
+      `kubectl label pod ${QB} app- quarantine=true, phir kubectl get endpointslices -l kubernetes.io/service-name=notify — hack pod ka IP (${Q_IP[QB]}) nahi hona chahiye.`,
+      'vi quarantine-starter.yaml — TODO 1: quarantine: "true" (quotes ke saath). TODO 2: do lines "- Ingress" aur "- Egress". Save, apply, phir 4 wget/ps jaanch (goal mein IPs hain).',
+    ],
+    solution: [`kubectl exec ${QB} -- ps`, `kubectl exec ${QB} -- wget -qO- -T 3 http://${Q_LEDGER}`,
+      `kubectl get pod ${QB} -o yaml > evidence-pod.yaml`, `kubectl logs ${QB} > evidence-logs.txt`,
+      `kubectl label pod ${QB} app- quarantine=true`, 'kubectl get endpointslices -l kubernetes.io/service-name=notify',
+      { edit: 'quarantine-starter.yaml', change: [['TODO-label-ka-naam: "TODO-label-ki-value"', 'quarantine: "true"'], ['    - TODO ', '    - Ingress\n    - Egress ']] },
+      'kubectl apply -f quarantine-starter.yaml',
+      `kubectl exec ${QB} -- wget -qO- -T 3 http://${Q_LEDGER}`, `kubectl exec client -- wget -qO- -T 3 http://${Q_IP[QB]}:8080`,
+      'kubectl exec client -- wget -qO- -T 3 http://notify', `kubectl exec ${QB} -- ps`],
+  }, {
+    objectives: ['🖥️ <b>Mission (real lab 19 ka roop):</b> quarantine ki NetworkPolicy khud likho, aur 4 raaste jaanch kar saabit karo ki deewar khadi hai'],
+    success: ['Main hack hue pod ko saboot bachate hue alag kar sakta hoon aur NetworkPolicy ka asar wget se saabit kar sakta hoon'],
+    cards: [{ front: 'NetworkPolicy "created" bol diya — kya deewar khadi ho gayi?', back: 'Pakka nahi. Selector galat (ya sirf Ingress) ho toh kuch nahi rukta. <b>wget se jaancho:</b> hack pod → bahar band, bahar → hack pod band, users → Service chalu.' }],
+  });
+
 })();

@@ -204,6 +204,10 @@ Naye levels ke liye `scene` hi pehli pasand hai.
 //                   Velero schedule paused → ledger ka planned move (PDB 0 → 1 → wapas 0)
 //   'blind' ob-boss release ki raat: TargetDown (404, Service targetPort) → cardinality (txn_id) → error budget burn
 //                   (fraud-check v2 timeout) → rollout undo ke baad TargetDown phir (aadha rollback)
+//   'leak'  sec-boss CI token leak: radd (Secret delete) → backdoor SA + cluster-admin (saboot pehle) → miner DaemonSet
+//                   (backdoor zinda ho toh attacker wapas banata) → CI ko Role get/list/watch/patch + 1h token
+//   'peak'  eks-boss sale ki raat (3 alerts): VPC CNI warm pool → IP khatam (add-on config WARM_IP_TARGET) → CoreDNS
+//                   linklocal_allowance_exceeded (replicaCount) → scale-down par ALB 502 (preStop sleep ACTION; distroless)
 // Har INC: { id, sev, text, fixed: c => bool, verify: /regex/, verifyText, hints: [3], onFire? }. fixed sirf STATE se tay ho
 // (kis raaste se pahunche, isse nahi) — learner kisi bhi kram mein theek kare, engine sahi chalta hai.
 
@@ -531,7 +535,7 @@ aur unke goals ko solvable saabit karta hai:**
 | `triage` | Palette ki har command "click" karta hai, phir har choice — verdict khulna aur lab poora hona chahiye. Na khule to **SOFTLOCK** report hoti hai. Duplicate `cmd` bhi pakadta hai (Set mein ek hi register hoti hai) |
 | `slider` | **Poora knob sweep** — har combination par `readouts/bars/verdict/check` chalata hai. Ek bhi combination `check()` true na kare → **UNSOLVABLE**. Aur default values par `check()` already true ho → **"goal shuru mein hi poora hai"** |
 | `flow` | Poora flow chala ke, har `ask` ka sahi jawab de ke, aakhir tak pahunchta hai. Na pahunche to **SOFTLOCK** |
-| `oncall` | Har oncall stage ki poori shift ka solution asli terminal mein chalata hai → report card → "Aage badho"; bina hint `firstTry` = alerts ki ginti; `shift` registered hona chahiye. Har shift ka alag test: `sale` (kram, bina fix resolve nahi, restart ke bina pool ka asar nahi), `patch` (limit badhane se OOM nahi rukta, `-Xmx` se rukta hai; PDB ki asli errors; khatarnaak PDB badlaav gine jaate), `blind` (targets down = error query khaali; labeldrop / SLO metric girane wala regex roka; aadha rollback TargetDown phir laata hai) |
+| `oncall` | Har oncall stage ki poori shift ka solution asli terminal mein chalata hai → report card → "Aage badho"; bina hint `firstTry` = alerts ki ginti; `shift` registered hona chahiye. Har shift ka alag test: `sale` (kram, bina fix resolve nahi, restart ke bina pool ka asar nahi), `patch` (limit badhane se OOM nahi rukta, `-Xmx` se rukta hai; PDB ki asli errors; khatarnaak PDB badlaav gine jaate), `blind` (targets down = error query khaali; labeldrop / SLO metric girane wala regex roka; aadha rollback TargetDown phir laata hai), `leak` (radd ke agle minute Unauthorized; saboot ke bina delete gina; backdoor zinda = miner wapas; get+patch wala Role rollout status par atakta), `peak` (env number = add-on schema error; prefix delegation / kubectl set env roke; distroless mein exec sleep = PreStopHook failed + 502 jaari) |
 | `chaos` | Round shuru karta hai, jo breakage aaya uska solution asli terminal mein chalata hai, round jeet kar "Aage badho". Alag test: BASE theek hai, har breakage sach mein todta hai (`KG.chaos.works`), har akela (15) aur har do-galti combo (24) apne solution se jeetta hai |
 | `drill` | "Shuru" dabata hai, har sawal ka aakhri answer type karke Enter, phir "Aage badho" — drill poori honi chahiye aur `firstTry` = sawalon ki ginti. Faltu (canonical same) variants aur do sawalon ka ek hi jawab bhi pakadta hai |
 | `board` | **Backtracking** se saabit karta hai ki saare pods ek saath schedule ho sakte hain. Plus: koi pod HAR node par fit ho (to lab kuch sikhata hi nahi), ya khaali board par bhi kahin fit na ho — dono report hote hain |
@@ -879,6 +883,12 @@ Status (2026-11-23):
   transcript deta hai. PDB (`get/describe pdb`, dono-set error, percent-string error, drain error), memory request > limit,
   Service targetPort errors, `describe svc`, `rollout history/undo` ke outputs 2026-11-25 ko asli kind (v1.37) se milaye.
   Velero (`schedule pause/unpause`, PAUSED column) cluster par NAHI jaancha — CLI download ki ijazat nahi mili.
+- Batch 8 (2026-11-25): `sec-boss` ('leak') aur `eks-boss` ('peak') shifts. kind (v1.37) se milaye: legacy token Secret delete
+  ke ~10 second baad Unauthorized, `auth whoami`, `can-i --list`, Forbidden texts, `rollout status` ka "Failed to watch"
+  (list/watch na ho), `get clusterrolebindings -o wide`, preStop `sleep` ki validation errors, distroless par `PreStopHook failed`
+  aur `exec … sleep` ka OCI error. AWS ke outputs (update-addon, describe-subnets, ENA counters, CloudWatch) cluster par nahi
+  jaanche ja sakte — AWS docs ke format par likhe. kubectl v1.37 delete par "deleted from <ns> namespace" likhta hai; app ki
+  kahani v1.33 ki hai, isliye purana `secret "x" deleted` format rakha.
 - Real lab ke browser roop (2026-11-24): `d2-rightsize` = lab 17 (CPU throttling: `cpu.max`, `cpu.stat`, `set resources`, Pending),
   `sec-runtime` = lab 19 (quarantine ki NetworkPolicy starter ke TODO + 4 wget jaanch). Outputs asli cluster se pakde gaye; simulator
   ke do dawe (sirf-Ingress policy ke baad egress khula, egress band par naam se wget = `bad address`) cluster par dobara jaanche.

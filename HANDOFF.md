@@ -7,6 +7,9 @@
   `d2-boss` "node migration ki raat" ('patch') aur `ob-boss` "release ki raat — monitoring andhi" ('blind'), 4-4 jude alerts.
   Validator: har shift ka galat-raasta test; replay 92/92; Chromium 1180/390: teeno shifts poori, 0 errors, 0 overflow.
   PDB / Service / rollout outputs asli kind cluster se milaye (Velero wale nahi — CLI download ki ijazat nahi mili).
+- **Batch 8 done:** `sec-boss` "token leak ki raat" ('leak', 4 alerts) aur `eks-boss` "sale ki raat — EKS ki parten" ('peak',
+  3 alerts). Validator mein dono ke galat-raasta tests; replay 94/94; Chromium 1180/390: 0 errors, 0 overflow.
+  RBAC, token revoke, preStop ke outputs kind se milaye; AWS wale (add-on, subnets, ENA, CloudWatch) docs ke format par.
 
 ---
 

@@ -123,8 +123,9 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
   - ⚡ **Speed drill** (11 levels) — sawal padho, command **type** karo, timer chalta hai. 2 koshish, phir sahi
     jawab; aliases aur flags ka kram maaf (`po` = `pods`, `-owide` = `-o wide`). Best score yaad rehta hai.
     kubectl ke saath helm, argocd, kubeadm, crictl aur etcdctl ke drills bhi
-  - 🎲 **Chaos mode** (boss levels) — chaos monkey pay-api ki file mein 15 mein se koi random galti daalta hai.
-    Kuch bataya nahi jaata; pods / describe / logs / endpoints se khud pakdo, file theek karo. Har round naya
+  - 🎲 **Chaos mode** (boss levels) — chaos monkey ek git file mein random galti daalta hai: pay-api.yaml (15 galtiyan),
+    Helm ki values-prod.yaml (8), ArgoCD Application (6), Karpenter NodePool (6). Kuch bataya nahi jaata;
+    describe / logs / endpoints / argocd app get / karpenter ke events se khud pakdo, file theek karo. Har round naya
   - 📟 **On-call shift** (Intermediate, Day-2, Observe, Secure, EKS, ArgoCD, Karpenter aur Helm ke boss levels) — ek raat, 4 jude hue alerts, pager ki ghadi,
     khatarnaak commands par rok-tok, aur aakhir mein MTTR wala report card (grade A/B/C). Shifts: Diwali sale
     (crash → HPA → CPU → DB connections), node migration (PDB → cgroup v2 OOM → Velero → ledger ka move),
@@ -181,7 +182,8 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `labs.js` | **Interactive labs** — triage · slider · flow player · scheduler board (+ `KG.allOf`) |
 | `oncall.js` | 📟 **On-call shift** (`type: 'oncall'`) — generic shift engine (ghadi, alerts ka kram, pager, report card) + Diwali sale shift — `KG.oncall` |
 | `data-oncall.js` | Production tracks ki on-call shifts (`KG.oncall.add`) — `d2-boss` node migration, `ob-boss` release ki raat, `sec-boss` token leak, `eks-boss` EKS sale ki raat, `argoboss` GitOps, `karpenterboss` spot, `helmship` Helm release |
-| `chaos.js` | 🎲 **Chaos mode** (`type: 'chaos'`) — random breakage; ek YAML file se poora cluster (kubelet ke kram mein) — `KG.chaos` |
+| `chaos.js` | 🎲 **Chaos mode** (`type: 'chaos'`) — random breakage; ek YAML file se poora cluster (kubelet ke kram mein) — `KG.chaos` + decks (`addDeck`) |
+| `data-chaos.js` | Chaos decks: `helm` (values file), `argo` (Application), `karp` (NodePool) — helmship / argoboss / karpenterboss mein |
 | `drill.js` | ⚡ **kubectl speed drill** (`type: 'drill'`) — command type karo, timer + best score; `KG.drill.canon` aliases/flags milata hai |
 | `terminal.js` | kubectl simulator (mock cluster + command parser) |
 | `gotpl.js` | Chhota Go-template + Sprig engine (`KG.gotpl`) — Helm templating labs ke liye, Helm jaise errors |

@@ -545,8 +545,30 @@ Containers:
   }
   // pay-api sach mein kaam kar raha hai? (pods Ready + Service ke endpoints sahi port par)
   const works = c => isHealthy(c) && (st => st.eps.length > 0 && st.tp === st.appPort)(svcState(c));
-  return { BREAKS, BASE, mission, pick, apply, outcome, works };
+  return { id: 'payapi', BREAKS, BASE, mission, pick, apply, outcome, works };
 })();
+
+/* =====================================================================
+   🎲 Decks (2026-11-25): chaos ab sirf pay-api.yaml tak seemit nahi.
+   Har deck = { id, file, BREAKS: [{ id, level, title, from, to, fix, clue, reveal }], mission(ids), intro? }
+   Stage: { type: 'chaos', id, level, deck: 'helm' }   (deck na ho toh 'payapi' = upar wala)
+   Naye decks data-chaos.js mein: KG.chaos.addDeck(def).
+   ===================================================================== */
+KG.chaos.decks = { payapi: KG.chaos };
+KG.chaos.addDeck = def => { KG.chaos.decks[def.id] = def; return def; };
+KG.chaos.deck = id => KG.chaos.decks[id || 'payapi'];
+// deck ka apna pick() na ho toh: ek breakage, haal hi mein aaya hua dobara jaldi nahi
+KG.chaos.pickFrom = function (deck, level, rnd) {
+  rnd = rnd || Math.random;
+  const pool = deck.BREAKS.filter(b => (b.level || 1) <= level);
+  KG.state.chaosSeenBy = KG.state.chaosSeenBy || {};
+  const seen = KG.state.chaosSeenBy[deck.id] || [];
+  const fresh = pool.filter(b => !seen.includes(b.id));
+  const from = fresh.length ? fresh : pool;
+  const a = from[Math.floor(rnd() * from.length)];
+  KG.state.chaosSeenBy[deck.id] = seen.concat([a.id]).slice(-Math.max(2, pool.length - 2));
+  return [a.id];
+};
 
 /* =====================================================================
    🎲 stage renderer — har round naya random breakage, terminal ke andar
@@ -559,8 +581,9 @@ Containers:
     KG.state.chaosStats = KG.state.chaosStats || {};
     const st = KG.state.chaosStats[stage.id] || { won: 0, best: null };
     const lv = stage.level || 1;
-    const pool = KG.chaos.BREAKS.filter(b => b.level <= lv).length;
-    const intro = el('div', 'lab-goal', `🎲 <b>CHAOS MODE:</b> ${stage.intro || ''} Chaos monkey <b>${pool}</b> tarah ki galtiyon mein se koi ek chupke se daalta hai${lv >= 3 ? ' (kabhi-kabhi <b>do</b> ek saath)' : ''}.
+    const D = KG.chaos.deck(stage.deck);
+    const pool = D.BREAKS.filter(b => (b.level || 1) <= lv).length;
+    const intro = el('div', 'lab-goal', `🎲 <b>CHAOS MODE:</b> ${stage.intro || ''} Chaos monkey <b>${pool}</b> tarah ki galtiyon mein se koi ek chupke se <code>${D.file || 'pay-api.yaml'}</code> mein daalta hai${lv >= 3 && D === KG.chaos ? ' (kabhi-kabhi <b>do</b> ek saath)' : ''}.
       Tumhe kuch nahi bataya jaayega — <code>kubectl</code> se khud pakdo. Har round naya.${st.won ? `<br><span class="drill-rules">Ab tak jeete: <b>${st.won}</b> round${st.best ? ` · sabse tez: <b>${Math.floor(st.best / 60)}:${String(st.best % 60).padStart(2, '0')}</b>` : ''}</span>` : ''}`);
     const startBtn = el('button', 'btn big chaos-start', '🎲 Chaos monkey ko chhodo');
     const stageBox = el('div', 'chaos-round');
@@ -570,8 +593,8 @@ Containers:
     function play() {
       after.innerHTML = '';
       stageBox.innerHTML = '';
-      const ids = KG.chaos.pick(lv);
-      const m = KG.chaos.mission(ids);
+      const ids = D.pick ? D.pick(lv) : KG.chaos.pickFrom(D, lv);
+      const m = D.mission(ids);
       m.title = `🎲 Chaos round ${rounds + 1}`;
       const sub = el('div', 'chaos-term');
       stageBox.appendChild(sub);

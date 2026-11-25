@@ -22,6 +22,8 @@ function missions() {
   }));
   // 🎲 chaos: har breakage ek alag mission (chaos|<id>), aur do-galti wale (chaos|a+b)
   if (KG.chaos) KG.chaos.BREAKS.forEach(b => out.push(['chaos|' + b.id, KG.chaos.mission([b.id]), 'chaos']));
+  // naye decks (data-chaos.js): chaos|<deck>:<id>
+  if (KG.chaos && KG.chaos.decks) Object.values(KG.chaos.decks).filter(d => d.id !== 'payapi').forEach(d => d.BREAKS.forEach(b => out.push(['chaos|' + d.id + ':' + b.id, d.mission([b.id]), 'chaos'])));
   if (KG.oncall) KG.oncall.ids().forEach(id => out.push(['oncall|' + id, KG.oncall.mission(null, id), 'oncall']));
   return out;
 }

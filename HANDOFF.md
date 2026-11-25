@@ -15,6 +15,10 @@
   error format alag hai — `gotpl.js` abhi Helm 3 jaisa (theek nahi kiya, user ko bataya).
 - **Batch 10 done:** 8 nayi speed drills (service, config, scheduler, rbac, d2-debug, kk-clusterops, helmbasics,
   argobasics) — ab 11 drills. drill.js mein naye value-flags; Chromium 1180/390: 8/8 har drill, 0 errors, 0 overflow.
+- **Batch 11 done:** chaos decks (`chaos.js` decks + nayi `data-chaos.js`): Helm values (8), ArgoCD Application (6),
+  Karpenter NodePool (6). Replay 117/117; Chromium 1180/390 clean. **Labs job part 2 ke saare 5 batches poore.**
+- Baaki (user ke faisle ke liye): `gotpl.js` Helm 3 ka ek-line error format deta hai (Helm 4 teen line); d2-boss incident
+  ka "v1.33 mein autoscaling/v2beta2 hata" galat hai (v1.26 mein hata tha).
 
 ---
 

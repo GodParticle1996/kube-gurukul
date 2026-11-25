@@ -192,6 +192,13 @@ Naye levels ke liye `scene` hi pehli pasand hai.
 { type: 'chaos', id: 'chaos-beginner', title: '🎲 …', level: 1 /* 1 | 2 | 3 */, intro: 'HTML (optional)' }
 // Naya breakage: KG.chaos.BREAKS mein { id, level, fix, title, from, to, diag, clue, reveal } — "from" BASE mein
 // exactly ek baar ho; validator har akela breakage aur har do-galti combo apne solution se jeet kar dikhata hai.
+// 2026-11-25 se DECKS: { type: 'chaos', id, level, deck: 'helm' } — deck na ho toh 'payapi' (upar wala).
+// KG.chaos.addDeck({ id, file, BREAKS, BASE, mission(ids) }) — naye decks data-chaos.js mein:
+//   'helm' helmship       values-prod.yaml: schema (type / minimum), YAML indent, image tag, Secret naam, OOM, targetPort, provider
+//   'argo' argoboss       pay-api-app.yaml: repoURL, targetRevision, path, AppProject, destination namespace, auto-sync
+//   'karp' karpenterboss  nodepool-batch.yaml: limits, family typo, taint, size "large", nodeClassRef, arch (Graviton → exec format error)
+// mission(ids) ek terminal mission lautata hai jiska cluster.healthy file ki haalat se nikle; deck ka apna pick() na ho toh
+// KG.chaos.pickFrom (ek breakage, haal ka dobara jaldi nahi; KG.state.chaosSeenBy[deck]).
 
 // 📟 ONCALL — on-call shift (oncall.js, 2026-11-24): ek cluster, 4 JUDE hue incidents (crash → HPA max → CPU Pending →
 // DB connections). Simulated ghadi (har command = 1 min), pager panel, incident tabhi resolve jab haalat theek AUR fix ke
@@ -545,7 +552,7 @@ aur unke goals ko solvable saabit karta hai:**
 | `slider` | **Poora knob sweep** — har combination par `readouts/bars/verdict/check` chalata hai. Ek bhi combination `check()` true na kare → **UNSOLVABLE**. Aur default values par `check()` already true ho → **"goal shuru mein hi poora hai"** |
 | `flow` | Poora flow chala ke, har `ask` ka sahi jawab de ke, aakhir tak pahunchta hai. Na pahunche to **SOFTLOCK** |
 | `oncall` | Har oncall stage ki poori shift ka solution asli terminal mein chalata hai → report card → "Aage badho"; bina hint `firstTry` = alerts ki ginti; `shift` registered hona chahiye. Har shift ka alag test: `sale` (kram, bina fix resolve nahi, restart ke bina pool ka asar nahi), `patch` (limit badhane se OOM nahi rukta, `-Xmx` se rukta hai; PDB ki asli errors; khatarnaak PDB badlaav gine jaate), `blind` (targets down = error query khaali; labeldrop / SLO metric girane wala regex roka; aadha rollback TargetDown phir laata hai), `leak` (radd ke agle minute Unauthorized; saboot ke bina delete gina; backdoor zinda = miner wapas; get+patch wala Role rollout status par atakta), `peak` (env number = add-on schema error; prefix delegation / kubectl set env roke; distroless mein exec sleep = PreStopHook failed + 502 jaari), `gitops` (rollback band, selfHeal palatta, force push gina, replicas hatane par ek baar 1, Job immutable), `spot` (limit ke baad ICE, families raasta, CRD pattern errors), `ship` (pending par upgrade band, list -a nahi, reuse-values nil pointer, Secret ka naam) |
-| `chaos` | Round shuru karta hai, jo breakage aaya uska solution asli terminal mein chalata hai, round jeet kar "Aage badho". Alag test: BASE theek hai, har breakage sach mein todta hai (`KG.chaos.works`), har akela (15) aur har do-galti combo (24) apne solution se jeetta hai |
+| `chaos` | Round shuru karta hai, jo breakage aaya uska solution asli terminal mein chalata hai, round jeet kar "Aage badho". Alag test: BASE theek hai, har breakage sach mein todta hai (`KG.chaos.works`), har akela (15) aur har do-galti combo (24) apne solution se jeetta hai. Decks ka alag test (`chaos decks …`): har naye deck ka BASE theek, har breakage sach mein todta, har breakage apne solution se jeetta; stage ka `deck` registered hona chahiye |
 | `drill` | "Shuru" dabata hai, har sawal ka aakhri answer type karke Enter, phir "Aage badho" — drill poori honi chahiye aur `firstTry` = sawalon ki ginti. Faltu (canonical same) variants, do sawalon ka ek hi jawab, aur pehla answer asli tool (kubectl / helm / argocd / kubeadm / crictl / etcdctl) se shuru — teeno pakadta hai. `drill: canon()` test helm/rbac/debug flags ka kram bhi jaanchta hai |
 | `board` | **Backtracking** se saabit karta hai ki saare pods ek saath schedule ho sakte hain. Plus: koi pod HAR node par fit ho (to lab kuch sikhata hi nahi), ya khaali board par bhi kahin fit na ho — dono report hote hain |
 
@@ -895,6 +902,10 @@ Status (2026-11-23):
 - Batch 10 (2026-11-25): ⚡ 8 nayi speed drills — `service`, `config`, `scheduler`, `rbac`, `d2-debug`, `kk-clusterops`,
   `helmbasics`, `argobasics` (8-8 sawal). Ab 11 drills. `drill.js` FLAGV mein naye value-flags; validator pehle answer mein
   helm / argocd / kubeadm / crictl / etcdctl bhi maanta hai. Chromium 1180/390: saari 8 drills 8/8, 0 errors, 0 overflow.
+- Batch 11 (2026-11-25): 🎲 chaos decks — `chaos.js` mein `KG.chaos.decks` / `addDeck` / `pickFrom`; nayi file **`data-chaos.js`**
+  (data-oncall.js ke baad) mein 3 decks: `helm` (helmship, 8), `argo` (argoboss, 6), `karp` (karpenterboss, 6). Replay
+  `chaos|<deck>:<id>` (117/117). Helm 4 ke schema / YAML parse errors kind + Helm v4.3.2 se milaye. ArgoCD / Karpenter ke
+  messages cluster par nahi jaanche — ArgoCD / Karpenter ke jaane-maane formats par likhe.
 - Batch 8 (2026-11-25): `sec-boss` ('leak') aur `eks-boss` ('peak') shifts. kind (v1.37) se milaye: legacy token Secret delete
   ke ~10 second baad Unauthorized, `auth whoami`, `can-i --list`, Forbidden texts, `rollout status` ka "Failed to watch"
   (list/watch na ho), `get clusterrolebindings -o wide`, preStop `sleep` ki validation errors, distroless par `PreStopHook failed`

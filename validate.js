@@ -65,7 +65,7 @@ global.Element = function () {}; Element.prototype = {};
 const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'drill.js', 'yaml.js', 'gotpl.js', 'terminal.js', 'chaos.js', 'oncall.js',
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
-  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-secure.js', 'data-eksnet.js', 'data-gaps.js', 'data-ext-sdd.js', 'data-labs.js', 'data-oncall.js',
+  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-secure.js', 'data-eksnet.js', 'data-gaps.js', 'data-ext-sdd.js', 'data-labs.js', 'data-oncall.js', 'data-chaos.js',
   'data-decisions.js', 'data-decisions-prod.js', 'app.js'];
 
 const missing = FILES.filter(f => !fs.existsSync(path.join(DIR, f)));
@@ -240,6 +240,7 @@ KG.tracks.forEach(track => {
       if (s.type === 'chaos') {
         if (!s.id) problems.push(sc + ': chaos stage ka id nahi (stats isi id par save hote hain)');
         if (![1, 2, 3].includes(s.level)) problems.push(sc + ': chaos level 1, 2 ya 3 hona chahiye');
+        if (!KG.chaos.deck(s.deck)) problems.push(sc + ': chaos deck "' + s.deck + '" registered nahi (KG.chaos.addDeck)');
         labStages.push({ at: sc, stage: s });
       }
       if (s.type === 'drill') {
@@ -1523,6 +1524,31 @@ t('chaos: BASE theek hai, har breakage sach mein todta hai, har akela + har do-g
   let n = 0;
   svc.forEach(a => C.BREAKS.filter(b => !svc.includes(b.id) && b.id !== 'replicas-zero').forEach(b => { play([b.id, a]); n++; }));
   assert(n === 24, 'do-galti combos: ' + n);
+});
+t('chaos decks (helm, argo, karp): BASE theek; har breakage sach mein todta; har breakage apne solution se jeetta', () => {
+  const decks = Object.values(KG.chaos.decks).filter(d => d.id !== 'payapi');
+  assert(decks.length >= 3, 'kam se kam 3 naye decks chahiye, mile ' + decks.length);
+  decks.forEach(d => {
+    assert(d.mission([]).cluster.healthy === true, d.id + ': BASE file par cluster theek hona chahiye');
+    d.BREAKS.forEach(b => {
+      assert(d.BASE.split(b.from).length === 2, d.id + '/' + b.id + ': "from" BASE mein exactly ek baar ho');
+      const m = d.mission([b.id]);
+      assert(m.cluster.healthy !== true, d.id + '/' + b.id + ': breakage ke baad bhi cluster theek — breakage kuch nahi todta');
+      const arena = document.createElement('div');
+      KG.renderers.terminal(m, arena, () => {});
+      const termEl = arena.children[1], input = termEl.querySelector('input');
+      m.solution.forEach(step => {
+        input.value = step && typeof step === 'object' ? 'vi ' + step.edit : step;
+        input.fire('keydown', { key: 'Enter' });
+        if (step && typeof step === 'object' && termEl._editor && termEl._editor.isOpen()) {
+          let txt = termEl._editor.ta.value;
+          step.change.forEach(([x, y]) => { txt = txt.replace(x, y); });
+          termEl._editor.ta.value = txt; termEl._editor.save.click();
+        }
+      });
+      assert(arena.children.some(c => c.classList && c.classList.contains('stage-summary')), d.id + '/' + b.id + ': solution se round nahi jeeta');
+    });
+  });
 });
 t('oncall: 4 incidents kram se fire + resolve hote hain; fix ke bina pakka karna kaam nahi; khatarnaak command gine jaate hain', () => {
   const m = KG.oncall.mission();

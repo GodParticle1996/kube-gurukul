@@ -1,3 +1,15 @@
+# KubeGurukul status — 2026-11-25 (labs job part 2: on-call / chaos / drill aur tracks mein)
+
+- User ka plan (2026-11-25): teeno naye lab types aur tracks tak — batch 7: on-call engine multi-shift + Day-2 aur Observe
+  shift; 8: Secure + EKS shift; 9: ArgoCD, Karpenter, Helm shift; 10: 6–8 naye speed drills; 11: Helm/ArgoCD/Karpenter chaos.
+  Har batch: validate + replay + Chromium 1180/390, commit + push.
+- **Batch 7 done:** `oncall.js` generic shift engine (`KG.oncall.add`, stage ka `shift`); nayi file `data-oncall.js` —
+  `d2-boss` "node migration ki raat" ('patch') aur `ob-boss` "release ki raat — monitoring andhi" ('blind'), 4-4 jude alerts.
+  Validator: har shift ka galat-raasta test; replay 92/92; Chromium 1180/390: teeno shifts poori, 0 errors, 0 overflow.
+  PDB / Service / rollout outputs asli kind cluster se milaye (Velero wale nahi — CLI download ki ijazat nahi mili).
+
+---
+
 # KubeGurukul status — 2026-11-24 (hands-on labs job, batch 1–6)
 
 - User ka plan (4 jawab): pehle woh **16 levels** jinmein sirf quiz/sort/match/fill tha; phir naye lab types — YAML fix editor,

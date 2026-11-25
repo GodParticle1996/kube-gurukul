@@ -9,11 +9,82 @@
    haalat theek ho AUR fix ke baad tumne pakka kiya (verify command).
    Aakhir mein report card: MTTR, hints, verify, roke gaye khatarnaak commands, grade.
 
-   stage: { type: 'oncall', id: 'oncall-sale', title, intro?: 'HTML' }
-   KG.oncall.mission() → poora terminal mission (validator / replay isi se)
+   stage: { type: 'oncall', id: 'oncall-sale', shift: 'sale', title, intro?: 'HTML' }   (shift na ho toh 'sale')
+   KG.oncall.mission(onUpdate, shiftId) → poora terminal mission (validator / replay isi se)
    Engine hooks (terminal.js): stage.onTick(sim, print), stage.hintsFor(sim)
+
+   🧩 Nayi shift jodna (data-oncall.js mein, 2026-11-25 se):
+   KG.oncall.add({
+     id: 'patch', start: 23 * 60,                // ghadi 23:00 se
+     INC: [ { id, sev: '🔴 SEV1' | '🟠 SEV2', text, fixed: c => bool, verify: /regex/, verifyText, hints: [3],
+              onFire?: (c, sim) => {} } ],       // onFire = alert aate hi cluster mein kuch shuru karo
+     build: ({ risky }) => ({ cluster, title, instructions, goal, responses, files, successText, solution }),
+     reconcile: (c, sim) => {},                  // har command (1 minute) par cluster aage badhao
+     views: c => {},                             // c.pods / c.deployments / c.custom … taaza karo (kubectl get/describe)
+   })
+   Engine khud jodta hai: ghadi, alerts ka kram, "theek → pakka karo", tasks, hints, report card.
+   risky(re, why) = khatarnaak command roko aur report card mein gino.
    ===================================================================== */
 KG.oncall = (function () {
+  const SHIFTS = {};
+  const hhmm = c => { const m = (c.start == null ? 22 * 60 : c.start) + (c.clock || 0); return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+  function tbl(rows) {
+    const w = rows[0].map((_, i) => Math.max(...rows.map(r => String(r[i] == null ? '' : r[i]).length)));
+    return rows.map(r => r.map((x, i) => i === r.length - 1 ? String(x) : String(x).padEnd(w[i] + 3)).join('')).join('\n');
+  }
+  const add = def => { SHIFTS[def.id] = def; return def; };
+  const get = id => SHIFTS[id || 'sale'];
+  const ids = () => Object.keys(SHIFTS);
+  /* ---------- controller: har command = 1 minute ---------- */
+  function tick(def, sim, print, onUpdate) {
+    const c = sim.cluster, INC = def.INC;
+    if (c.over) return;
+    c.clock++;
+    def.reconcile(c, sim);
+    const k = c.inc, cur = c.incs[k];
+    if (!cur.fixedAt && INC[k].fixed(c, sim)) { cur.fixedAt = c.clock; cur.fixedIdx = sim.history.length; }
+    if (cur.fixedAt && !cur.verified && sim.history.slice(cur.fixedIdx).some(h => INC[k].verify.test(h))) cur.verified = true;
+    if (cur.fixedAt && cur.verified) {
+      cur.resolved = c.clock;
+      cur.hints = (sim.hintPos || {})['i' + k] || 0;
+      if (print) print('task', `📟 ${hhmm(c)}  ✅ RESOLVED  ${INC[k].id} — MTTR ${cur.resolved - cur.fired} min`);
+      if (k + 1 < INC.length) {
+        c.inc = k + 1;
+        c.incs[k + 1].fired = c.clock;
+        if (INC[k + 1].onFire) INC[k + 1].onFire(c, sim);
+        if (print) print('err', `📟 ${hhmm(c)}  [FIRING] ${INC[k + 1].sev} ${INC[k + 1].id} — ${INC[k + 1].text}`);
+      } else { c.over = true; if (print) print('task', `📟 ${hhmm(c)}  🌅 Saare alerts shaant. Shift handover ka waqt.`); }
+    } else if (cur.fixedAt && !cur.verified && !cur.nudged && print) {
+      cur.nudged = true;
+      print('sys', `(📟 alert ${INC[k].id} ki haalat theek lag rahi hai — resolve karne se pehle ${INC[k].verifyText})`);
+    }
+    def.views(c, sim);
+    if (onUpdate) onUpdate(c);
+  }
+  /* ---------- poora mission: shift ka build() + engine ke hisse ---------- */
+  function mission(onUpdate, id) {
+    const def = get(id);
+    if (!def) throw new Error('oncall: shift "' + id + '" registered nahi hai');
+    const INC = def.INC;
+    const risky = (re, why) => ({ re, err: true, out: s => { s.cluster.risky++; s.cluster.riskyList.push(why.split(' — ')[0]); return '(simulator ne roka — report card mein gina jayega) ' + why; } });
+    const b = def.build({ risky });
+    const c0 = Object.assign(b.cluster, { clock: 0, start: def.start, inc: 0, over: false, risky: 0, riskyList: [], incs: INC.map((x, i) => ({ fired: i === 0 ? 0 : null })) });
+    def.views(c0);
+    const T = INC.map((inc, i) => ({ text: `📟 ${i + 1}. <b>${inc.id}</b> — theek karo, phir pakka karo`, check: s => !!s.cluster.incs[i].resolved }));
+    return Object.assign({ hints: INC[0].hints }, b, {
+      type: 'terminal', oncall: true, shift: def.id, tasks: T, cluster: c0, success: KG.allOf(T),
+      onTick: (sim, print) => tick(def, sim, print, onUpdate),
+      hintsFor: sim => ({ key: 'i' + sim.cluster.inc, list: INC[sim.cluster.inc].hints }),
+    });
+  }
+  return { add, get, ids, mission, hhmm, tbl };
+})();
+
+/* =====================================================================
+   📟 Shift 'sale' — boss2: Diwali sale ki raat (22:00 se)
+   ===================================================================== */
+(function () {
+  const tbl = KG.oncall.tbl;
   const NODES = [{ name: 'node-1', ip: '10.0.12.5', net: '10.0.12' }, { name: 'node-2', ip: '10.0.13.5', net: '10.0.13' }, { name: 'node-3', ip: '10.0.14.5', net: '10.0.14' }];
   const ALLOC = 3.92 * 3, OTHER = 0.9 + 1.0 + 0.5 + 0.05, BF_CPU = 1.2, PAY_CPU = 0.5, NEED = 8, MAXCONN = 300, RESERVED = 3;
   const SUF = ['k2x7q', 'm4p8t', 'r8w3z', 'c5n1v', 'h6j2b', 'q9d4s', 't3f8g', 'w7y5k', 'b1z6n', 'p5r2c', 'd8f3h', 'g2k7m', 'j4n9p', 'l6q1r', 'v3s5t', 'y7u2w'];
@@ -86,12 +157,7 @@ Mat chhuna: ledger-0 (PRIMARY DB) · namespace · HPA delete · node drain
         '8 pods × DB_POOL_SIZE 50 = 400, ledger max 300 (3 reserved). Pool itna rakho ki 8 × pool ≤ 297 — par bahut chhota bhi nahi (≥ 20).',
         'vi pay-api-config.yaml — DB_POOL_SIZE "50" ko "30" karo, Save, apply. Env sirf start par padha jaata hai: kubectl rollout restart deployment/pay-api. Phir psql se gino.'] },
   ];
-  const hhmm = c => { const m = 22 * 60 + c.clock; return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
   const intOk = v => /^\d+$/.test(String(v == null ? '' : v));
-  function tbl(rows) {
-    const w = rows[0].map((_, i) => Math.max(...rows.map(r => String(r[i] == null ? '' : r[i]).length)));
-    return rows.map(r => r.map((x, i) => i === r.length - 1 ? String(x) : String(x).padEnd(w[i] + 3)).join('')).join('\n');
-  }
   const pays = c => c.pods.filter(p => p.app === 'pay-api');
   const running = c => pays(c).filter(p => p.st === 'Running');
   const poolOf = p => Number(p.env.DB_POOL_SIZE) || 0;
@@ -130,30 +196,7 @@ Mat chhuna: ledger-0 (PRIMARY DB) · namespace · HPA delete · node drain
     c => pays(c).length >= NEED && pays(c).every(p => p.st === 'Running'),
     c => pays(c).every(p => p.st === 'Running') && !overConn(c) && running(c).every(p => poolOf(p) >= 20),
   ];
-  function tick(sim, print, onUpdate) {
-    const c = sim.cluster;
-    if (c.over) return;
-    c.clock++;
-    reconcile(c);
-    const k = c.inc, cur = c.incs[k];
-    if (!cur.fixedAt && fixed[k](c)) { cur.fixedAt = c.clock; cur.fixedIdx = sim.history.length; }
-    if (cur.fixedAt && !cur.verified && sim.history.slice(cur.fixedIdx).some(h => INC[k].verify.test(h))) cur.verified = true;
-    if (cur.fixedAt && cur.verified) {
-      cur.resolved = c.clock;
-      cur.hints = (sim.hintPos || {})['i' + k] || 0;
-      if (print) print('task', `📟 ${hhmm(c)}  ✅ RESOLVED  ${INC[k].id} — MTTR ${cur.resolved - cur.fired} min`);
-      if (k + 1 < INC.length) {
-        c.inc = k + 1;
-        c.incs[k + 1].fired = c.clock;
-        if (print) print('err', `📟 ${hhmm(c)}  [FIRING] ${INC[k + 1].sev} ${INC[k + 1].id} — ${INC[k + 1].text}`);
-      } else { c.over = true; if (print) print('task', `📟 ${hhmm(c)}  🌅 Saare alerts shaant. Shift handover ka waqt.`); }
-    } else if (cur.fixedAt && !cur.verified && !cur.nudged && print) {
-      cur.nudged = true;
-      print('sys', `(📟 alert ${INC[k].id} ki haalat theek lag rahi hai — resolve karne se pehle ${INC[k].verifyText})`);
-    }
-    refreshViews(c);
-    if (onUpdate) onUpdate(c);
-  }
+  INC.forEach((x, i) => { x.fixed = fixed[i]; });
   /* ---------- kubectl ke views (builtins ke liye fields) ---------- */
   function podDesc(c, p) {
     const n = NODES.find(x => x.name === p.home);
@@ -205,31 +248,24 @@ Mat chhuna: ledger-0 (PRIMARY DB) · namespace · HPA delete · node drain
     return base + '\n{"level":"info","msg":"POST /pay 200","ms":212}\n{"level":"info","msg":"POST /pay 200","ms":198}';
   }
   /* ---------- poora mission ---------- */
-  function mission(onUpdate) {
-    const c0 = { clock: 0, inc: 0, over: false, sale: false, podN: 0, hash: HASH[0], rsN: 0, backfill: 6, desired: 2, risky: 0, riskyList: [],
+  function build({ risky }) {
+    const c0 = { clock: 0, sale: false, podN: 0, hash: HASH[0], rsN: 0, backfill: 6, desired: 2,
       cm: { LEDGER_URL: 'postgres://ledger:5432/ledger', UPI_TIMEOUT_MS: '3s', DB_POOL_SIZE: '50' }, cmApplied: CM_FILE, hpaApplied: HPA_FILE,
-      hpa: { min: 2, max: 4, target: 60 }, incs: INC.map((x, i) => ({ fired: i === 0 ? 0 : null })), pods: [],
+      hpa: { min: 2, max: 4, target: 60 }, pods: [],
       nodes: NODES.map(n => ({ name: n.name, status: 'Ready', roles: '<none>', age: '40d', version: 'v1.33.4' })),
       services: [{ name: 'pay-api', type: 'ClusterIP', clusterIP: '10.100.71.3', ports: '80/TCP', age: '40d' }, { name: 'ledger', type: 'ClusterIP', clusterIP: '10.100.18.9', ports: '5432/TCP', age: '40d' }] };
     c0.pods = [newPod(c0), newPod(c0)];
     c0.pods.forEach(p => { p.st = 'CrashLoopBackOff'; p.rc = 41; p.born = 0; });
     c0.backfillPods = Array.from({ length: 6 }, (_, i) => `reports-backfill-6f9d2c-${SUF[15 - i]}`);
-    refreshViews(c0);
-    const T = INC.map((inc, i) => ({ text: `📟 ${i + 1}. <b>${inc.id}</b> — theek karo, phir pakka karo`, check: s => !!s.cluster.incs[i].resolved }));
-    const risky = (re, why) => ({ re, err: true, out: s => { s.cluster.risky++; s.cluster.riskyList.push(why.split(' — ')[0]); return '(simulator ne roka — report card mein gina jayega) ' + why; } });
     const p1 = c0.pods[0].name, pend = `pay-api-${HASH[0]}-${SUF[4]}`;
     const PSQL = 'kubectl exec ledger-0 -- psql -U postgres -c "select count(*) from pg_stat_activity"';
     return {
-      type: 'terminal', oncall: true,
       title: '📟 On-call shift: Diwali sale ki raat',
       instructions: 'Tum aaj raat ChaiPay ke on-call engineer ho (22:00 – 02:00). Diwali sale chal rahi hai. Pager ka pehla alert aa chuka hai. Har command = 1 minute. Ek alert theek karoge toh agla aayega — aur woh pichhle se juda ho sakta hai. Madad: cat runbook.md',
       goal: `📟 Pehla alert (22:00): <b>${INC[0].sev} ${INC[0].id}</b> — ${INC[0].text} Aage ke alerts upar <b>pager</b> mein aayenge.<br>
         Har alert: wajah dhoondho → theek karo (<code>vi</code> + <code>kubectl apply</code>, ya runbook ka command) → <b>pakka karo</b>. Alert tabhi resolve hota hai jab pakka kar lo.
         Khatarnaak commands roke jaayenge aur report card mein ginte hain.`,
-      tasks: T,
       cluster: c0,
-      onTick: (sim, print) => tick(sim, print, onUpdate),
-      hintsFor: sim => ({ key: 'i' + sim.cluster.inc, list: INC[sim.cluster.inc].hints }),
       responses: [
         risky(/^kubectl delete (?:pods?|po)[ /]ledger-0\b.*$/, 'ledger-0 PRIMARY database hai — delete = failover, 30–60 second saare payments band. Pehle wajah dhoondho.'),
         risky(/^kubectl delete (?:pods?|po)\b.*--all\b.*$/, 'saare pods ek saath delete — poora namespace ek saath restart. Ek-ek wajah dhoondho.'),
@@ -317,7 +353,6 @@ Mat chhuna: ledger-0 (PRIMARY DB) · namespace · HPA delete · node drain
           },
         },
       },
-      success: KG.allOf(T),
       successText: `<b>Raat ki kahani (root cause chain):</b> shaam ka ConfigMap badlaav (<code>"3s"</code>) → pay-api CrashLoop (1) → theek hote hi sale ka ruka hua traffic aaya → HPA max 4 par atka (2) →
         max badhaya toh cluster mein CPU nahi tha, batch job <code>reports-backfill</code> ne gher rakha tha (3) → 8 pods × pool 50 = 400 connections, ledger ki chhat 300 (4).<br>
         <b>Seekh:</b> ek fix agla bottleneck dikhata hai — har fix ke baad <b>pakka karo</b> aur <b>agla kadam socho</b>. Capacity ka hisaab poori chain ka hota hai: pods × pool ≤ DB connections; HPA max ≤ cluster CPU.<br>
@@ -331,7 +366,8 @@ Mat chhuna: ledger-0 (PRIMARY DB) · namespace · HPA delete · node drain
       ],
     };
   }
-  return { mission, INC, hhmm };
+  KG.oncall.add({ id: 'sale', start: 22 * 60, INC, reconcile, views: refreshViews, build });
+  KG.oncall.INC = INC;   // purana naam (sale shift ke alerts)
 })();
 
 /* =====================================================================
@@ -340,7 +376,7 @@ Mat chhuna: ledger-0 (PRIMARY DB) · namespace · HPA delete · node drain
 (function () {
   const el = KG.el;
   KG.renderers.oncall = function renderOncall(stage, arena, onDone) {
-    const INC = KG.oncall.INC;
+    const S = KG.oncall.get(stage.shift), INC = S.INC;
     const pager = el('div', 'oc-pager');
     const sub = el('div', 'oc-term');
     const after = el('div', 'lab-after');
@@ -354,7 +390,7 @@ Mat chhuna: ledger-0 (PRIMARY DB) · namespace · HPA delete · node drain
             <div class="oc-steps"><span class="${cur.fixedAt ? 'ok' : ''}">${cur.fixedAt ? '✅' : '⬜'} theek karo</span><span class="${cur.verified ? 'ok' : ''}">${cur.verified ? '✅' : '⬜'} pakka karo — ${INC[k].verifyText}</span></div></div>`) +
         `<div class="oc-done">${c.incs.map((x, i) => x.resolved ? `<span>✅ ${INC[i].id} · ${x.resolved - x.fired} min</span>` : '').join('')}</div>`;
     }
-    const m = KG.oncall.mission(paint);
+    const m = KG.oncall.mission(paint, S.id);
     paint(m.cluster);
     arena.append(pager, sub, after);
     function finish() {
@@ -363,13 +399,13 @@ Mat chhuna: ledger-0 (PRIMARY DB) · namespace · HPA delete · node drain
       const c = last;
       const rows = c.incs.map((x, i) => {
         const hints = x.hints || 0;
-        return `<tr><td>${INC[i].sev.split(' ')[0]} ${INC[i].id.replace(/([a-z])([A-Z])/g, '$1<wbr>$2')}</td><td>${KG.oncall.hhmm({ clock: x.fired })}</td><td><b>${x.resolved - x.fired} min</b></td><td>${hints ? '💡 ' + hints : '—'}</td><td>${x.verified ? '✅' : '—'}</td></tr>`;
+        return `<tr><td>${INC[i].sev.split(' ')[0]} ${INC[i].id.replace(/([a-z])([A-Z])/g, '$1<wbr>$2')}</td><td>${KG.oncall.hhmm({ clock: x.fired, start: S.start })}</td><td><b>${x.resolved - x.fired} min</b></td><td>${hints ? '💡 ' + hints : '—'}</td><td>${x.verified ? '✅' : '—'}</td></tr>`;
       }).join('');
       const totalHints = c.incs.reduce((a, x) => a + (x.hints || 0), 0);
       const grade = totalHints <= 1 && c.risky === 0 ? 'A' : totalHints <= 4 && c.risky <= 1 ? 'B' : 'C';
       const clean = c.incs.filter(x => !(x.hints)).length;
       const card = el('div', 'oc-card pop', `<div class="oc-head"><div class="oc-grade g${grade}">${grade}</div>
-        <div><b>📋 Shift report card</b><br>22:00 – ${KG.oncall.hhmm(c)} · ${c.clock} min</div></div>
+        <div><b>📋 Shift report card</b><br>${KG.oncall.hhmm({ clock: 0, start: S.start })} – ${KG.oncall.hhmm(c)} · ${c.clock} min</div></div>
         <div class="oc-tblwrap"><table class="oc-tbl"><tr><th>Alert</th><th>Aaya</th><th>MTTR</th><th>Hints</th><th title="pakka kiya">✔</th></tr>${rows}</table></div>
         <div>⚠️ Roke gaye khatarnaak commands: <b>${c.risky}</b>${c.risky ? ' — ' + c.riskyList.join(' · ') : ' — 👏 koi nahi'}</div>
         <div class="drill-rules">Grade: A = ≤1 hint + 0 khatarnaak · B = ≤4 hints + ≤1 khatarnaak · C = baaki. Dobara khelo toh ghadi aur ginti naye sire se.</div>`);
@@ -383,7 +419,7 @@ Mat chhuna: ledger-0 (PRIMARY DB) · namespace · HPA delete · node drain
       after.append(card, again, next);
       if (after.scrollIntoView) after.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    arena._oncall = { mission: m, sub, finish };
+    arena._oncall = { mission: m, sub, finish, INC };
     KG.renderers.terminal(m, sub, () => finish());
   };
 })();

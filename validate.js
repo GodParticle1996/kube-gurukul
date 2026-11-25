@@ -65,7 +65,7 @@ global.Element = function () {}; Element.prototype = {};
 const FILES = ['core.js', 'scene.js', 'data-core.js', 'visuals.js', 'games.js', 'labs.js', 'drill.js', 'yaml.js', 'gotpl.js', 'terminal.js', 'chaos.js', 'oncall.js',
   'helmsim.js', 'argosim.js', 'karpentersim.js', 'dockerlab.js', 'decisions.js', 'reallabs.js',
   'data-beginner.js', 'data-intermediate.js', 'data-advanced.js',
-  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-secure.js', 'data-eksnet.js', 'data-gaps.js', 'data-ext-sdd.js', 'data-labs.js',
+  'data-helm.js', 'data-argocd.js', 'data-karpenter.js', 'data-kodekloud.js', 'data-day2.js', 'data-observe.js', 'data-secure.js', 'data-eksnet.js', 'data-gaps.js', 'data-ext-sdd.js', 'data-labs.js', 'data-oncall.js',
   'data-decisions.js', 'data-decisions-prod.js', 'app.js'];
 
 const missing = FILES.filter(f => !fs.existsSync(path.join(DIR, f)));
@@ -234,6 +234,7 @@ KG.tracks.forEach(track => {
       }
       if (s.type === 'oncall') {
         if (!s.id) problems.push(sc + ': on-call stage ka id nahi (best grade isi id par save hota hai)');
+        if (!KG.oncall.get(s.shift)) problems.push(sc + ': on-call shift "' + s.shift + '" registered nahi (KG.oncall.add)');
         labStages.push({ at: sc, stage: s });
       }
       if (s.type === 'chaos') {
@@ -425,7 +426,7 @@ function renderLab(at, st) {
       oc.finish();
       clickAll(arena, 'btn', b => !b.disabled && /Aage badho/.test(b.innerHTML || b.textContent || ''));
       if (!done) problems.push(at + ': report card ke baad "Aage badho" se stage poora nahi hua (SOFTLOCK)');
-      else if (done.firstTry !== 4 || done.total !== 4) problems.push(at + ': bina hint ki shift par firstTry/total 4/4 hona chahiye, mila ' + done.firstTry + '/' + done.total);
+      else if (done.firstTry !== oc.INC.length || done.total !== oc.INC.length) problems.push(at + ': bina hint ki shift par firstTry/total ' + oc.INC.length + '/' + oc.INC.length + ' hona chahiye, mila ' + done.firstTry + '/' + done.total);
     }
   }
 
@@ -1552,6 +1553,74 @@ t('oncall: 4 incidents kram se fire + resolve hote hain; fix ke bina pakka karna
   run('kubectl rollout restart deployment/pay-api');
   assert(/RESOLVED\s+LedgerTooManyConnections/.test(run(psql)), 'restart + pakka karne ke baad incident 4 resolve nahi hua');
   assert(arena.children.some(c => c.classList && c.classList.contains('stage-summary')), 'shift jeeti nahi');
+});
+t('oncall patch: PDB minAvailable=replicas drain rokta hai; limit badhane se OOM nahi rukta, -Xmx se rukta hai; khatarnaak PDB badlaav gine jaate hain', () => {
+  const m = KG.oncall.mission(null, 'patch');
+  const arena = document.createElement('div');
+  KG.renderers.terminal(m, arena, () => {});
+  const termEl = arena.children[1], input = termEl.querySelector('input'), outEl = termEl.querySelector('.term-out');
+  const run = cmd => { const b = outEl.children.length; input.value = cmd; input.fire('keydown', { key: 'Enter' }); return outEl.children.slice(b).map(c => c.textContent).join('\n'); };
+  const edit = (f, pairs) => { run('vi ' + f); let t = termEl._editor.ta.value; pairs.forEach(([a, b]) => { assert(t.includes(a), 'edit text nahi mila: ' + a); t = t.replace(a, b); }); termEl._editor.ta.value = t; termEl._editor.save.click(); };
+  const counted = /report card mein gina/;
+  edit('notify-pdb.yaml', [['minAvailable: 2', 'minAvailable: 0']]);
+  assert(counted.test(run('kubectl apply -f notify-pdb.yaml')), 'notify-pdb minAvailable 0 (dono pods ek saath) roka/gina nahi gaya');
+  edit('ledger-pdb.yaml', [['maxUnavailable: 0', 'maxUnavailable: 1']]);
+  assert(counted.test(run('kubectl apply -f ledger-pdb.yaml')), 'backup se pehle ledger-pdb dheela karna gina nahi gaya');
+  edit('ledger-pdb.yaml', [['maxUnavailable: 1', 'maxUnavailable: 0']]);
+  edit('notify-pdb.yaml', [['minAvailable: 0', 'minAvailable: 1\n  maxUnavailable: 1']]);
+  assert(/cannot be both set/.test(run('kubectl apply -f notify-pdb.yaml')), 'minAvailable + maxUnavailable dono = asli error chahiye');
+  edit('notify-pdb.yaml', [['minAvailable: 1\n  maxUnavailable: 1', 'maxUnavailable: "1"']]);
+  assert(/valid percent string/.test(run('kubectl apply -f notify-pdb.yaml')), 'quoted "1" = asli percent-string error chahiye');
+  assert(/disruption budget/.test(run('kubectl logs -n platform deploy/node-migrator')), 'PDB theek hone se pehle drain atka hona chahiye');
+  edit('notify-pdb.yaml', [['maxUnavailable: "1"', 'maxUnavailable: 1']]);
+  run('kubectl apply -f notify-pdb.yaml');
+  const crash = run('kubectl get pods -o wide') + run('kubectl get pods -o wide') + run('kubectl get pods');
+  assert(/CrashLoopBackOff/.test(crash) && /RESOLVED\s+NodeDrainStuck/.test(crash), 'naya notify pod AL2023 par crash hona chahiye aur alert 1 resolve: ' + crash.slice(-400));
+  edit('notify-deploy.yaml', [['limits:\n            memory: 512Mi', 'limits:\n            memory: 1Gi']]);
+  run('kubectl apply -f notify-deploy.yaml'); run('kubectl get pods'); run('kubectl get pods');
+  assert(/CrashLoopBackOff/.test(run('kubectl get pods')), 'limit 1Gi se OOM nahi rukna chahiye (heap = host RAM ka 75%)');
+  edit('notify-deploy.yaml', [['value: "-XX:MaxRAMPercentage=75"', 'value: "-Xmx128m"']]);
+  run('kubectl apply -f notify-deploy.yaml'); run('kubectl get pods');
+  const small = run('kubectl get pods'), bad = (small.split('\n').find(l => /^notify\S+\s.*CrashLoopBackOff/.test(l)) || '').split(/\s+/)[0], smallLog = run('kubectl logs ' + bad + ' --previous');
+  assert(/CrashLoopBackOff/.test(small) && /Java heap space/.test(smallLog), 'bahut chhota heap = Java heap space crash chahiye');
+  edit('notify-deploy.yaml', [['value: "-Xmx128m"', 'value: "-Xmx640m"']]);
+  run('kubectl apply -f notify-deploy.yaml');
+  const fixed = run('kubectl get pods') + run('kubectl get pods'), after = run('kubectl get pods');
+  assert(!/CrashLoopBackOff/.test(after) && /notify\S+\s+1\/1\s+Running/.test(after) && /RESOLVED\s+NotifyCrashLooping/.test(fixed), '-Xmx640m (limit 1Gi) ke baad notify theek + alert 2 resolve hona chahiye: ' + fixed.slice(-400));
+  assert(counted.test(run('kubectl delete pod ledger-0')), 'ledger-0 delete gina nahi gaya');
+});
+t('oncall blind: targets down = error query khaali (alert andha); labeldrop aur SLO metric girane wala regex roke jaate hain; aadha rollback TargetDown phir laata hai', () => {
+  const m = KG.oncall.mission(null, 'blind');
+  const arena = document.createElement('div');
+  KG.renderers.terminal(m, arena, () => {});
+  const termEl = arena.children[1], input = termEl.querySelector('input'), outEl = termEl.querySelector('.term-out');
+  const run = cmd => { const b = outEl.children.length; input.value = cmd; input.fire('keydown', { key: 'Enter' }); return outEl.children.slice(b).map(c => c.textContent).join('\n'); };
+  const edit = (f, pairs) => { run('vi ' + f); let t = termEl._editor.ta.value; pairs.forEach(([a, b]) => { assert(t.includes(a), 'edit text nahi mila: ' + a); t = t.replace(a, b); }); termEl._editor.ta.value = t; termEl._editor.save.click(); };
+  const Q = q => run("promtool query instant http://localhost:9090 '" + q + "'");
+  const ratio = 'sum(rate(http_requests_total{job="pay-api",code=~"5.."}[5m])) / sum(rate(http_requests_total{job="pay-api"}[5m]))';
+  assert(/khaali/.test(Q(ratio)), 'targets down hone par 5xx ratio khaali aana chahiye (isi liye burn alert chup)');
+  assert(/404 Not Found/.test(run('bash show-targets.sh')), 'pehle 404 dikhna chahiye');
+  assert(/404 Not Found/.test(run('kubectl exec pay-api-7c9f4b8d6-k2x7q -- wget -qO- localhost:8080/metrics')), '1.9.1 par 8080/metrics = 404');
+  edit('pay-api-service.yaml', [['targetPort: 8080      # 1.9.0 tak /metrics isi port par tha', 'targetPort: metrics']]);
+  run('kubectl apply -f pay-api-service.yaml');
+  const o1 = run('bash show-targets.sh');
+  assert(/RESOLVED\s+TargetDown/.test(o1), 'naam wala targetPort (metrics) 1.9.1 par chalna chahiye: ' + o1.slice(-300));
+  edit('pay-api-servicemonitor.yaml', [['    interval: 30s\n', '    interval: 30s\n    metricRelabelings:\n    - action: labeldrop\n      regex: txn_id\n']]);
+  assert(/duplicate sample/.test(run('kubectl apply -f pay-api-servicemonitor.yaml')), 'labeldrop txn_id roka nahi gaya');
+  edit('pay-api-servicemonitor.yaml', [['    - action: labeldrop\n      regex: txn_id\n', '    - sourceLabels: [__name__]\n      regex: "(pay_txn|http_request).*"\n      action: drop\n']]);
+  assert(/SLO wale metrics/.test(run('kubectl apply -f pay-api-servicemonitor.yaml')), 'http_requests_total girane wala regex roka nahi gaya');
+  const s1 = Number((Q('prometheus_tsdb_head_series').match(/=> (\d+)/) || [])[1]), s2 = Number((Q('prometheus_tsdb_head_series').match(/=> (\d+)/) || [])[1]);
+  assert(s2 > s1, 'drop se pehle series badhni chahiye: ' + s1 + ' → ' + s2);
+  edit('pay-api-servicemonitor.yaml', [['regex: "(pay_txn|http_request).*"', 'regex: pay_txn_latency_seconds.*']]);
+  run('kubectl apply -f pay-api-servicemonitor.yaml');
+  const o2 = Q('prometheus_tsdb_head_series'), s3 = Number((o2.match(/=> (\d+)/) || [])[1]), s4 = Number((Q('prometheus_tsdb_head_series').match(/=> (\d+)/) || [])[1]);
+  assert(s4 === s3 && /RESOLVED\s+PrometheusCardinalitySpike/.test(o2), 'drop ke baad series rukni + alert 2 resolve: ' + s3 + ' → ' + s4);
+  assert(/report card mein gina/.test(run('kubectl delete pod prometheus-kps-0')), 'Prometheus pod delete gina nahi gaya');
+  assert(/rolled back/.test(run('kubectl rollout undo deployment/pay-api')), 'rollout undo chalna chahiye');
+  run('kubectl get pods');
+  const o3 = run('kubectl logs deploy/pay-api') + run('bash show-targets.sh');
+  assert(/RESOLVED\s+PayApiErrorBudgetBurn/.test(o3) && /FIRING\].*TargetDownAgain/.test(o3), 'rollback ke baad alert 3 resolve + alert 4 fire: ' + o3.slice(-400));
+  assert(!/pay-api\s+pay-api/.test(run('bash show-targets.sh')), 'naam wala targetPort + 1.9.0 (port ka naam nahi) = pay-api target hi gayab');
 });
 t('drill: canon() aliases, flag ka kram, -o wide/-owide, deploy/x, -it (exec), -n payments optional', () => {
   const same = (a, b) => assert(KG.drill.canon(a) === KG.drill.canon(b), a + '  ≠  ' + b + '  (' + KG.drill.canon(a) + ' | ' + KG.drill.canon(b) + ')');

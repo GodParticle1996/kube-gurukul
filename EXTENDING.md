@@ -193,9 +193,19 @@ Naye levels ke liye `scene` hi pehli pasand hai.
 // 📟 ONCALL — on-call shift (oncall.js, 2026-11-24): ek cluster, 4 JUDE hue incidents (crash → HPA max → CPU Pending →
 // DB connections). Simulated ghadi (har command = 1 min), pager panel, incident tabhi resolve jab haalat theek AUR fix ke
 // baad verify command chala. Khatarnaak commands roke + gine jaate hain. Aakhir mein report card (MTTR, hints, grade A/B/C).
-{ type: 'oncall', id: 'oncall-sale', title: '📟 …' }
+{ type: 'oncall', id: 'oncall-sale', shift: 'sale', title: '📟 …' }   // shift na ho toh 'sale'
 // Engine hooks jo isne joda (terminal.js): stage.onTick(sim, print) — har command / save ke baad mission ka apna controller;
 // stage.hintsFor(sim) → { key, list } — hints abhi ke hisse (incident) ke hisaab se.
+// 2026-11-25 se oncall.js ek GENERIC shift engine hai: KG.oncall.add({ id, start, INC, build, reconcile, views }).
+// Engine ghadi, alerts ka kram, "theek → pakka karo", tasks, hints, risky(re, why) aur report card deta hai; shift sirf
+// cluster ka model + files + kubectl jawab deti hai. Nayi shifts data-oncall.js mein (poora contract oncall.js ke header mein):
+//   'sale'  boss2   Diwali sale (oncall.js ke andar)
+//   'patch' d2-boss node migration AL2 → AL2023: PDB minAvailable = replicas → JDK 8u292 + cgroup v2 OOMKilled →
+//                   Velero schedule paused → ledger ka planned move (PDB 0 → 1 → wapas 0)
+//   'blind' ob-boss release ki raat: TargetDown (404, Service targetPort) → cardinality (txn_id) → error budget burn
+//                   (fraud-check v2 timeout) → rollout undo ke baad TargetDown phir (aadha rollback)
+// Har INC: { id, sev, text, fixed: c => bool, verify: /regex/, verifyText, hints: [3], onFire? }. fixed sirf STATE se tay ho
+// (kis raaste se pahunche, isse nahi) — learner kisi bhi kram mein theek kare, engine sahi chalta hai.
 
 // 🎁 BONUS — kisi bhi stage mein `bonus: true` daalo → golden bonus round ban jaata hai
 ```
@@ -521,7 +531,7 @@ aur unke goals ko solvable saabit karta hai:**
 | `triage` | Palette ki har command "click" karta hai, phir har choice — verdict khulna aur lab poora hona chahiye. Na khule to **SOFTLOCK** report hoti hai. Duplicate `cmd` bhi pakadta hai (Set mein ek hi register hoti hai) |
 | `slider` | **Poora knob sweep** — har combination par `readouts/bars/verdict/check` chalata hai. Ek bhi combination `check()` true na kare → **UNSOLVABLE**. Aur default values par `check()` already true ho → **"goal shuru mein hi poora hai"** |
 | `flow` | Poora flow chala ke, har `ask` ka sahi jawab de ke, aakhir tak pahunchta hai. Na pahunche to **SOFTLOCK** |
-| `oncall` | Poori shift ka solution asli terminal mein chalata hai → report card → "Aage badho"; bina hint `firstTry` 4/4. Alag test: incidents kram se fire/resolve, bina fix ke resolve nahi, pool badalne ke baad restart ke bina asar nahi, khatarnaak command roka jaata hai |
+| `oncall` | Har oncall stage ki poori shift ka solution asli terminal mein chalata hai → report card → "Aage badho"; bina hint `firstTry` = alerts ki ginti; `shift` registered hona chahiye. Har shift ka alag test: `sale` (kram, bina fix resolve nahi, restart ke bina pool ka asar nahi), `patch` (limit badhane se OOM nahi rukta, `-Xmx` se rukta hai; PDB ki asli errors; khatarnaak PDB badlaav gine jaate), `blind` (targets down = error query khaali; labeldrop / SLO metric girane wala regex roka; aadha rollback TargetDown phir laata hai) |
 | `chaos` | Round shuru karta hai, jo breakage aaya uska solution asli terminal mein chalata hai, round jeet kar "Aage badho". Alag test: BASE theek hai, har breakage sach mein todta hai (`KG.chaos.works`), har akela (15) aur har do-galti combo (24) apne solution se jeetta hai |
 | `drill` | "Shuru" dabata hai, har sawal ka aakhri answer type karke Enter, phir "Aage badho" — drill poori honi chahiye aur `firstTry` = sawalon ki ginti. Faltu (canonical same) variants aur do sawalon ka ek hi jawab bhi pakadta hai |
 | `board` | **Backtracking** se saabit karta hai ki saare pods ek saath schedule ho sakte hain. Plus: koi pod HAR node par fit ho (to lab kuch sikhata hi nahi), ya khaali board par bhi kahin fit na ho — dono report hote hain |
@@ -862,8 +872,13 @@ Status (2026-11-23):
   15 breakages, ek file se poora cluster (pods / describe / logs / events / endpoints / curl). Partial apply asli kubectl jaisa
   (jo doc theek, woh lagta hai; errors aakhir mein). `node tools/replay-missions.js run '' 'chaos|<id>'` (aur `chaos|a+b`) transcript deta hai.
 - Batch 6 (2026-11-24): 📟 **on-call shift** (`oncall.js`, §3) — `boss2` mein "Diwali sale ki raat": 4 jude hue alerts, pager,
-  report card. `node tools/replay-missions.js run '' 'oncall|shift'` poori shift ka transcript deta hai.
+  report card. `node tools/replay-missions.js run '' 'oncall|sale'` poori shift ka transcript deta hai.
 - Real labs: 2026-11-24 ko saare 19 asli kind cluster par test hue (§13) — 16–19 ka `untested` flag hata.
+- Labs job part 2, batch 7 (2026-11-25): `oncall.js` generic shift engine bana; nayi file **`data-oncall.js`** (data-labs.js ke
+  baad load) mein 2 nayi shifts — `d2-boss` ('patch') aur `ob-boss` ('blind'). `node tools/replay-missions.js run '' 'oncall|<shift>'`
+  transcript deta hai. PDB (`get/describe pdb`, dono-set error, percent-string error, drain error), memory request > limit,
+  Service targetPort errors, `describe svc`, `rollout history/undo` ke outputs 2026-11-25 ko asli kind (v1.37) se milaye.
+  Velero (`schedule pause/unpause`, PAUSED column) cluster par NAHI jaancha — CLI download ki ijazat nahi mili.
 - Real lab ke browser roop (2026-11-24): `d2-rightsize` = lab 17 (CPU throttling: `cpu.max`, `cpu.stat`, `set resources`, Pending),
   `sec-runtime` = lab 19 (quarantine ki NetworkPolicy starter ke TODO + 4 wget jaanch). Outputs asli cluster se pakde gaye; simulator
   ke do dawe (sirf-Ingress policy ke baad egress khula, egress band par naam se wget = `bad address`) cluster par dobara jaanche.

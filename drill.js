@@ -11,6 +11,7 @@
    Jawab ka milaan KG.drill.canon() se: aliases (po = pods, deploy = deployments),
    flags ka kram, -o wide = -owide = --output=wide, deploy/x = deploy x, -it = -i -t,
    'k' = kubectl. Namespace payments context mein pehle se hai: -n payments ho ya na ho, dono sahi.
+   helm / argocd / kubeadm / etcdctl / crictl ke commands bhi isi niyam se milte hain (unke value-flags FLAGV mein).
    ===================================================================== */
 KG.drill = (function () {
   const RES = {};
@@ -27,7 +28,11 @@ KG.drill = (function () {
     '--since': 'since', '--sort-by': 'sort-by', '--replicas': 'replicas', '--to-revision': 'to-revision', '--field-selector': 'field-selector', '-L': 'L',
     '--label-columns': 'L', '-f': 'f', '--filename': 'f', '--image': 'image', '--port': 'port', '--as': 'as', '--grace-period': 'grace-period',
     '--timeout': 'timeout', '--revision': 'revision', '--limits': 'limits', '--requests': 'requests', '--type': 'type', '--from-literal': 'from-literal',
-    '--from-file': 'from-file', '--dry-run': 'dry-run', '--target-port': 'target-port', '--min': 'min', '--max': 'max', '--cpu-percent': 'cpu-percent', '--context': 'context' };
+    '--from-file': 'from-file', '--dry-run': 'dry-run', '--target-port': 'target-port', '--min': 'min', '--max': 'max', '--cpu-percent': 'cpu-percent', '--context': 'context',
+    // 2026-11-25: naye drills (service, config, rbac, debug, helm, argocd) ke value-flags — taaki flag kahin bhi likho, jawab wahi gina jaaye
+    '--name': 'name', '--from': 'from', '--verb': 'verb', '--resource': 'resource', '--role': 'role', '--clusterrole': 'clusterrole',
+    '--serviceaccount': 'serviceaccount', '--duration': 'duration', '--target': 'target', '--copy-to': 'copy-to', '--set': 'set',
+    '--set-string': 'set-string', '--version': 'version', '--values': 'f', '--write-out': 'write-out', '--data-dir': 'data-dir' };
   const FLAGB = { '-A': 'A', '--all-namespaces': 'A', '-w': 'w', '--watch': 'w', '-p': 'previous', '--previous': 'previous', '--show-labels': 'show-labels',
     '-i': 'i', '--stdin': 'i', '-t': 't', '--tty': 't', '--force': 'force', '--overwrite': 'overwrite', '--all': 'all', '-R': 'R', '--recursive': 'R',
     '--ignore-daemonsets': 'ignore-daemonsets', '--delete-emptydir-data': 'delete-emptydir-data', '--now': 'now' };

@@ -179,8 +179,11 @@ Naye levels ke liye `scene` hi pehli pasand hai.
 // -o wide = -owide, deploy/x = deploy x, exec par -it optional, -n payments optional.
 { type: 'drill', id: 'drill-pod', title: '⚡ …', intro: 'HTML', par: 110,
   items: [ { ask: 'HTML', answers: ['kubectl get pods -o wide', /* variant */], explain: 'HTML' } ] }
-// answers[0] learner ko dikhta hai — "kubectl …" se shuru ho. Jo variant canon() mein pehle se same hai,
-// use mat likho (validator pakadta hai). Ek command do sawalon ka jawab na ho.
+// answers[0] learner ko dikhta hai — asli tool se shuru ho: kubectl / helm / argocd / kubeadm / crictl / etcdctl.
+// Jo variant canon() mein pehle se same hai, use mat likho (validator pakadta hai). Ek command do sawalon ka jawab na ho.
+// Naya value-flag (jo apne baad value leta hai, jaise --set, --version, --verb, --target) drill.js ke FLAGV mein jodo —
+// warna "--version 3.3.0" ka 3.3.0 positional ban jaata hai aur flag ka kram badalte hi jawab galat ginta hai.
+// Drills (2026-11-25): pod, deploy, kk-toolkit, service, config, scheduler, rbac, d2-debug, kk-clusterops, helmbasics, argobasics.
 
 // 🎲 CHAOS — random breakage (chaos.js, 2026-11-24). pay-api ki ek file (ConfigMap + Deployment + Service) mein
 // chaos monkey 15 mein se koi galti daalta hai (level 3 par kabhi do). Cluster ki poori haalat FILE se nikalti hai
@@ -543,7 +546,7 @@ aur unke goals ko solvable saabit karta hai:**
 | `flow` | Poora flow chala ke, har `ask` ka sahi jawab de ke, aakhir tak pahunchta hai. Na pahunche to **SOFTLOCK** |
 | `oncall` | Har oncall stage ki poori shift ka solution asli terminal mein chalata hai → report card → "Aage badho"; bina hint `firstTry` = alerts ki ginti; `shift` registered hona chahiye. Har shift ka alag test: `sale` (kram, bina fix resolve nahi, restart ke bina pool ka asar nahi), `patch` (limit badhane se OOM nahi rukta, `-Xmx` se rukta hai; PDB ki asli errors; khatarnaak PDB badlaav gine jaate), `blind` (targets down = error query khaali; labeldrop / SLO metric girane wala regex roka; aadha rollback TargetDown phir laata hai), `leak` (radd ke agle minute Unauthorized; saboot ke bina delete gina; backdoor zinda = miner wapas; get+patch wala Role rollout status par atakta), `peak` (env number = add-on schema error; prefix delegation / kubectl set env roke; distroless mein exec sleep = PreStopHook failed + 502 jaari), `gitops` (rollback band, selfHeal palatta, force push gina, replicas hatane par ek baar 1, Job immutable), `spot` (limit ke baad ICE, families raasta, CRD pattern errors), `ship` (pending par upgrade band, list -a nahi, reuse-values nil pointer, Secret ka naam) |
 | `chaos` | Round shuru karta hai, jo breakage aaya uska solution asli terminal mein chalata hai, round jeet kar "Aage badho". Alag test: BASE theek hai, har breakage sach mein todta hai (`KG.chaos.works`), har akela (15) aur har do-galti combo (24) apne solution se jeetta hai |
-| `drill` | "Shuru" dabata hai, har sawal ka aakhri answer type karke Enter, phir "Aage badho" — drill poori honi chahiye aur `firstTry` = sawalon ki ginti. Faltu (canonical same) variants aur do sawalon ka ek hi jawab bhi pakadta hai |
+| `drill` | "Shuru" dabata hai, har sawal ka aakhri answer type karke Enter, phir "Aage badho" — drill poori honi chahiye aur `firstTry` = sawalon ki ginti. Faltu (canonical same) variants, do sawalon ka ek hi jawab, aur pehla answer asli tool (kubectl / helm / argocd / kubeadm / crictl / etcdctl) se shuru — teeno pakadta hai. `drill: canon()` test helm/rbac/debug flags ka kram bhi jaanchta hai |
 | `board` | **Backtracking** se saabit karta hai ki saare pods ek saath schedule ho sakte hain. Plus: koi pod HAR node par fit ho (to lab kuch sikhata hi nahi), ya khaali board par bhi kahin fit na ho — dono report hote hain |
 
 Aur ek guard jo baar-baar kaam aaya hai: **non-Latin script leak**. Content Hinglish hai
@@ -889,6 +892,9 @@ Status (2026-11-23):
   transcript deta hai. PDB (`get/describe pdb`, dono-set error, percent-string error, drain error), memory request > limit,
   Service targetPort errors, `describe svc`, `rollout history/undo` ke outputs 2026-11-25 ko asli kind (v1.37) se milaye.
   Velero (`schedule pause/unpause`, PAUSED column) cluster par NAHI jaancha — CLI download ki ijazat nahi mili.
+- Batch 10 (2026-11-25): ⚡ 8 nayi speed drills — `service`, `config`, `scheduler`, `rbac`, `d2-debug`, `kk-clusterops`,
+  `helmbasics`, `argobasics` (8-8 sawal). Ab 11 drills. `drill.js` FLAGV mein naye value-flags; validator pehle answer mein
+  helm / argocd / kubeadm / crictl / etcdctl bhi maanta hai. Chromium 1180/390: saari 8 drills 8/8, 0 errors, 0 overflow.
 - Batch 8 (2026-11-25): `sec-boss` ('leak') aur `eks-boss` ('peak') shifts. kind (v1.37) se milaye: legacy token Secret delete
   ke ~10 second baad Unauthorized, `auth whoami`, `can-i --list`, Forbidden texts, `rollout status` ka "Failed to watch"
   (list/watch na ho), `get clusterrolebindings -o wide`, preStop `sleep` ki validation errors, distroless par `PreStopHook failed`

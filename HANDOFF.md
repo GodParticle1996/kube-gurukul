@@ -13,6 +13,8 @@
 - **Batch 9 done:** `argoboss` 'gitops', `karpenterboss` 'spot', `helmship` 'ship' (3-3 alerts). Ab 8 levels mein on-call
   shift. Replay 97/97; Chromium 1180/390 clean. Job immutable + Helm 4 outputs kind se milaye. Mila: Helm 4 ka template
   error format alag hai — `gotpl.js` abhi Helm 3 jaisa (theek nahi kiya, user ko bataya).
+- **Batch 10 done:** 8 nayi speed drills (service, config, scheduler, rbac, d2-debug, kk-clusterops, helmbasics,
+  argobasics) — ab 11 drills. drill.js mein naye value-flags; Chromium 1180/390: 8/8 har drill, 0 errors, 0 overflow.
 
 ---
 

@@ -248,7 +248,7 @@ KG.tracks.forEach(track => {
         const seenC = new Set();
         (s.items || []).forEach((it, j) => {
           if (!it.ask || !it.answers || !it.answers.length || !it.explain) { problems.push(sc + ' item' + j + ': ask/answers/explain adhoora'); return; }
-          if (!/^(kubectl|k) /.test(it.answers[0])) problems.push(sc + ' item' + j + ': pehla answer "kubectl …" se shuru ho (yahi learner ko dikhta hai)');
+          if (!/^(kubectl|k|helm|argocd|kubeadm|crictl|etcdctl|ETCDCTL_API=3 etcdctl) /.test(it.answers[0])) problems.push(sc + ' item' + j + ': pehla answer asli tool ka command ho (kubectl / helm / argocd / kubeadm / crictl / etcdctl …) — yahi learner ko dikhta hai');
           const cs = it.answers.map(a => KG.drill.canon(a));
           if (new Set(cs).size !== cs.length) problems.push(sc + ' item' + j + ': do answers ek hi canonical command hain (faltu variant): ' + JSON.stringify(it.answers));
           cs.forEach(c => { if (seenC.has(c)) problems.push(sc + ' item' + j + ': yahi command kisi aur sawal ka bhi jawab hai: ' + c); });
@@ -1764,6 +1764,14 @@ t('drill: canon() aliases, flag ka kram, -o wide/-owide, deploy/x, -it (exec), -
   diff('kubectl logs x', 'kubectl logs x --previous');
   diff('kubectl exec x -- printenv A', 'kubectl exec x -- printenv B');
   assert(KG.drill.check('kubectl get pods -o yaml', ['kubectl get pods -o wide']).near === true, 'sirf flag galat = near');
+  // batch 10: helm / argocd / rbac / debug ke value-flags
+  same('helm install notify chaipay/notify --version 3.3.0 -f values-prod.yaml', 'helm install notify -f values-prod.yaml chaipay/notify --version=3.3.0');
+  same('helm upgrade --install notify chaipay/notify --values values-prod.yaml', 'helm upgrade notify chaipay/notify -f values-prod.yaml --install');
+  same('kubectl create role pod-reader --verb=get,list,watch --resource=pods', 'kubectl create role pod-reader --resource pods --verb get,list,watch');
+  same('kubectl debug -it pay-api-6b8d7c-a1 --image=busybox:1.36 --target=pay-api', 'kubectl debug pay-api-6b8d7c-a1 -i -t --target pay-api --image busybox:1.36');
+  same('kubectl debug node/node-2 -it --image=busybox:1.36', 'kubectl debug -it node/node-2 --image=busybox:1.36');
+  diff('kubectl taint nodes node-4 dedicated=gpu:NoSchedule', 'kubectl taint nodes node-4 dedicated=gpu:NoSchedule-');
+  diff('helm get values notify', 'helm get values notify --all');
 });
 t('gotpl: Helm jaisa render — $ / range / nindent / include, aur asli error messages', () => {
   const H = '{{- define "c.name" -}}{{ .Release.Name | trunc 63 | trimSuffix "-" }}{{- end }}';

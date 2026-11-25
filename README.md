@@ -120,8 +120,9 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
     ek-ek kadam, play/pause, aur beech mein sawaal jinka jawab diye bina flow aage nahi badhta
   - 🧲 **Scheduler board** — pod chuno, har node turant ✅/❌ aur asli `FailedScheduling` wajah
     dikha deta hai. Asli predicates, asli order: taints → nodeSelector → capacity → podAntiAffinity
-  - ⚡ **kubectl speed drill** — sawal padho, command **type** karo, timer chalta hai. 2 koshish, phir sahi
-    jawab; aliases aur flags ka kram maaf (`po` = `pods`, `-owide` = `-o wide`). Best score yaad rehta hai
+  - ⚡ **Speed drill** (11 levels) — sawal padho, command **type** karo, timer chalta hai. 2 koshish, phir sahi
+    jawab; aliases aur flags ka kram maaf (`po` = `pods`, `-owide` = `-o wide`). Best score yaad rehta hai.
+    kubectl ke saath helm, argocd, kubeadm, crictl aur etcdctl ke drills bhi
   - 🎲 **Chaos mode** (boss levels) — chaos monkey pay-api ki file mein 15 mein se koi random galti daalta hai.
     Kuch bataya nahi jaata; pods / describe / logs / endpoints se khud pakdo, file theek karo. Har round naya
   - 📟 **On-call shift** (Intermediate, Day-2, Observe, Secure, EKS, ArgoCD, Karpenter aur Helm ke boss levels) — ek raat, 4 jude hue alerts, pager ki ghadi,

@@ -4277,4 +4277,117 @@ spec:
     cards: [{ front: 'NetworkPolicy "created" bol diya — kya deewar khadi ho gayi?', back: 'Pakka nahi. Selector galat (ya sirf Ingress) ho toh kuch nahi rukta. <b>wget se jaancho:</b> hack pod → bahar band, bahar → hack pod band, users → Service chalu.' }],
   });
 
+  /* =====================================================================
+     ⚡ Speed Drills — batch 10 (2026-11-25): 8 aur levels mein.
+     service · config · scheduler · rbac · d2-debug · kk-clusterops · helmbasics · argobasics
+     Har drill 8 sawal; jawab KG.drill.canon se milte hain (flags kisi bhi kram mein).
+     ===================================================================== */
+  const DP = 'pay-api-6b8d7c-a1';
+  const drill = (lvl, id, title, par, intro, items, obj, card) => addLab(lvl, { type: 'drill', id, title, par, intro, items },
+    { objectives: ['⚡ <b>Speed drill:</b> ' + obj], success: ['Main ' + obj + ' — yaad se, tez type kar sakta hoon'], cards: [card] });
+
+  drill('service', 'drill-service', '⚡ Speed Drill: Service ke 8 commands', 120,
+    'pay-api Deployment (container port 8080) ko Service ke peeche lao, aur jaancho ki traffic sach mein pods tak jaata hai.', [
+      { ask: '<code>pay-api</code> Deployment ke liye Service banao: port <b>80</b> → container port <b>8080</b>', answers: ['kubectl expose deployment pay-api --port=80 --target-port=8080'], explain: '<code>expose</code> Deployment ke labels se selector bana deta hai. Type na do toh ClusterIP.' },
+      { ask: 'Services ki list — har Service ka <b>selector</b> bhi dikhe', answers: ['kubectl get svc -o wide'], explain: '<code>-o wide</code> mein SELECTOR column aata hai — galat selector yahin pakdo.' },
+      { ask: '<code>pay-api</code> Service ka poora haal: selector, ports, endpoints', answers: ['kubectl describe svc pay-api'], explain: 'Endpoints khaali? Selector kisi Ready pod se nahi milta.' },
+      { ask: '<code>pay-api</code> Service ke peeche kaun se pod IP:port hain', answers: ['kubectl get endpoints pay-api'], explain: 'Sirf Ready pods yahan aate hain. Readiness probe fail = pod list se bahar.' },
+      { ask: 'Wahi, naye tareeke se: <code>pay-api</code> ki <b>EndpointSlices</b>', answers: ['kubectl get endpointslices -l kubernetes.io/service-name=pay-api'], explain: 'Endpoints (purana) v1.33 se deprecated — EndpointSlice label <code>kubernetes.io/service-name</code> se milti hai.' },
+      { ask: 'Label <code>app=pay-api</code> wale pods — unke <b>IP</b> bhi (endpoints se milane ko)', answers: ['kubectl get pods -l app=pay-api -o wide'], explain: 'Endpoints ke IP aur pods ke IP same hone chahiye.' },
+      { ask: '<code>pay-api</code> Service ka port 80 apne laptop ke port <b>8080</b> par lao', answers: ['kubectl port-forward svc/pay-api 8080:80'], explain: 'Format <code>local:service-port</code>. Ingress / DNS ke bina seedha test.' },
+      { ask: 'Bahar ke liye alag Service <code>pay-api-lb</code>, type <b>LoadBalancer</b>, port 80 → 8080', answers: ['kubectl expose deployment pay-api --name=pay-api-lb --type=LoadBalancer --port=80 --target-port=8080'], explain: 'EKS par AWS Load Balancer Controller iske liye NLB banata hai (annotations ke hisaab se).' },
+    ], 'Service banana, selector/endpoints jaanchna, port-forward — 8 commands',
+    { front: 'Service bani, par curl fail — pehle 2 commands?', back: '<code>kubectl get svc -o wide</code> (selector) aur <code>kubectl get endpoints &lt;svc&gt;</code> — khaali endpoints = selector kisi Ready pod se nahi milta.' });
+
+  drill('config', 'drill-config', '⚡ Speed Drill: ConfigMap aur Secret ke 8 commands', 130,
+    'pay-api ki config bahar rakho: ConfigMap aur Secret banao, padho, aur pods tak pahunchao.', [
+      { ask: 'ConfigMap <code>pay-api-config</code> banao: key <code>UPI_TIMEOUT_MS</code> = <code>3000</code>', answers: ['kubectl create configmap pay-api-config --from-literal=UPI_TIMEOUT_MS=3000'], explain: '<code>--from-literal</code> kai baar de sakte ho — har baar ek key.' },
+      { ask: 'File <code>app.properties</code> se ConfigMap <code>pay-api-files</code> banao', answers: ['kubectl create configmap pay-api-files --from-file=app.properties'], explain: 'File ka naam key banta hai, poora content value.' },
+      { ask: 'Secret <code>ledger-db</code> banao: key <code>password</code> = <code>s3cr3t</code>', answers: ['kubectl create secret generic ledger-db --from-literal=password=s3cr3t'], explain: '<code>generic</code> = Opaque Secret. Value base64 mein save hoti hai — base64 encryption nahi hai.' },
+      { ask: 'ConfigMap <code>pay-api-config</code> ko <b>YAML</b> mein dekho', answers: ['kubectl get configmap pay-api-config -o yaml'], explain: '<code>data:</code> ke andar har value <b>string</b> hoti hai — number bhi quotes mein.' },
+      { ask: 'Secret <code>ledger-db</code> ki sirf <code>password</code> key (base64) — jsonpath se', answers: ["kubectl get secret ledger-db -o jsonpath='{.data.password}'", 'kubectl get secret ledger-db -o jsonpath="{.data.password}"', 'kubectl get secret ledger-db -o jsonpath={.data.password}'], explain: 'Asli value: aage <code>| base64 -d</code> lagao.' },
+      { ask: 'ConfigMap ka YAML <b>banao par cluster mein mat bhejo</b> (git ki file ke liye): <code>pay-api-config</code>, <code>UPI_TIMEOUT_MS=3000</code>', answers: ['kubectl create configmap pay-api-config --from-literal=UPI_TIMEOUT_MS=3000 --dry-run=client -o yaml'], explain: '<code>--dry-run=client -o yaml</code> = sirf print. <code>&gt; cm.yaml</code> se file mein daalo.' },
+      { ask: 'ConfigMap <code>pay-api-config</code> ki saari keys <code>pay-api</code> Deployment mein <b>env</b> bana do', answers: ['kubectl set env deployment/pay-api --from=configmap/pay-api-config'], explain: 'Deployment ka template badla → naye pods. Git ki file mein <code>envFrom</code> likhna pakka tareeka.' },
+      { ask: 'ConfigMap badla, par env sirf start par padhta hai — <code>pay-api</code> ke pods naye sire se', answers: ['kubectl rollout restart deployment/pay-api'], explain: 'Env waale config ke liye restart zaroori. Volume se mount ho toh file ~1 minute mein khud badalti hai (subPath ko chhod kar).' },
+    ], 'ConfigMap / Secret banana, padhna aur pods tak pahunchana — 8 commands',
+    { front: 'ConfigMap badla par pod purana value dikha raha — kyun?', back: 'Env variables sirf container <b>start</b> par padhe jaate hain. <code>kubectl rollout restart deployment/&lt;naam&gt;</code>. (Volume mount ho toh file khud update hoti hai, subPath ko chhod kar.)' });
+
+  drill('scheduler', 'drill-scheduler', '⚡ Speed Drill: labels, taints aur scheduling ke 8 commands', 130,
+    'node-3 par SSD hai, node-4 GPU ke liye alag rakhna hai. Labels aur taints type karke lagao — aur Pending pods dhoondho.', [
+      { ask: '<code>node-3</code> par label <code>disktype=ssd</code> lagao', answers: ['kubectl label nodes node-3 disktype=ssd'], explain: 'Pod ka <code>nodeSelector: {disktype: ssd}</code> ab node-3 chunega.' },
+      { ask: 'Saare nodes — unke <b>saare labels</b> samet', answers: ['kubectl get nodes --show-labels'], explain: 'Lamba output; ek label ka column chahiye toh <code>-L</code>.' },
+      { ask: 'Nodes ki list — <b>zone</b> ek alag column mein (<code>topology.kubernetes.io/zone</code>)', answers: ['kubectl get nodes -L topology.kubernetes.io/zone'], explain: '<code>-L</code> = label ko column banao.' },
+      { ask: '<code>node-4</code> par taint: <code>dedicated=gpu</code>, effect <b>NoSchedule</b>', answers: ['kubectl taint nodes node-4 dedicated=gpu:NoSchedule'], explain: 'Ab sirf woh pods aayenge jinke paas matching toleration ho.' },
+      { ask: 'Wahi taint <code>node-4</code> se <b>hatao</b>', answers: ['kubectl taint nodes node-4 dedicated=gpu:NoSchedule-'], explain: 'Aakhir mein <code>-</code> = hatao.' },
+      { ask: '<code>node-3</code> se label <code>disktype</code> hatao', answers: ['kubectl label nodes node-3 disktype-'], explain: 'Key ke baad <code>-</code> = label hatao.' },
+      { ask: 'Saare <b>Pending</b> pods (field selector se)', answers: ['kubectl get pods --field-selector=status.phase=Pending'], explain: 'Phir <code>kubectl describe pod</code> — FailedScheduling ka sandesh wajah batata hai.' },
+      { ask: '<code>node-3</code> par chal rahe saare pods', answers: ['kubectl get pods -o wide --field-selector=spec.nodeName=node-3'], explain: '<code>spec.nodeName</code> field selector — drain se pehle dekhne ke kaam aata hai.' },
+    ], 'labels, taints, Pending pods aur node ke pods — 8 commands',
+    { front: 'Node se taint ya label kaise hatate ho?', back: 'Aakhir mein <code>-</code>: <code>kubectl taint nodes node-4 dedicated=gpu:NoSchedule-</code> · <code>kubectl label nodes node-3 disktype-</code>.' });
+
+  drill('rbac', 'drill-rbac', '⚡ Speed Drill: RBAC ke 8 commands', 140,
+    'reports service ko payments namespace mein sirf pods padhne ki ijazat chahiye — na zyada, na kam. Banao aur jaancho.', [
+      { ask: 'ServiceAccount <code>reports</code> banao', answers: ['kubectl create serviceaccount reports'], explain: 'Pod <code>serviceAccountName: reports</code> se is pehchaan ke saath chalega.' },
+      { ask: 'Role <code>pod-reader</code>: <code>pods</code> par <b>get, list, watch</b>', answers: ['kubectl create role pod-reader --verb=get,list,watch --resource=pods', 'kubectl create role pod-reader --verb=get --verb=list --verb=watch --resource=pods'], explain: 'Role namespace ke andar. Poore cluster ke liye ClusterRole.' },
+      { ask: 'RoleBinding <code>reports-pod-reader</code>: Role <code>pod-reader</code> → SA <code>payments:reports</code>', answers: ['kubectl create rolebinding reports-pod-reader --role=pod-reader --serviceaccount=payments:reports'], explain: '<code>--serviceaccount=&lt;namespace&gt;:&lt;naam&gt;</code> — namespace zaroori.' },
+      { ask: 'Kya <code>reports</code> SA pods <b>list</b> kar sakta hai?', answers: ['kubectl auth can-i list pods --as=system:serviceaccount:payments:reports'], explain: 'Jawab sirf yes / no. SA ka poora naam: <code>system:serviceaccount:&lt;ns&gt;:&lt;naam&gt;</code>.' },
+      { ask: '<code>reports</code> SA kya-kya kar sakta hai — <b>poori list</b>', answers: ['kubectl auth can-i --list --as=system:serviceaccount:payments:reports'], explain: '<code>*.* [*]</code> dikhe = cluster-admin. Least privilege jaanchne ka sabse tez tareeka.' },
+      { ask: '<code>reports</code> ke liye <b>1 ghante</b> ka token', answers: ['kubectl create token reports --duration=1h'], explain: 'TokenRequest token Secret mein save nahi hota aur khud expire hota hai — purane Secret-wale token se behtar.' },
+      { ask: 'RoleBindings ki list — kis binding mein kaun (users / SAs) bhi dikhe', answers: ['kubectl get rolebindings -o wide'], explain: '<code>-o wide</code> mein ROLE, USERS, GROUPS, SERVICEACCOUNTS columns.' },
+      { ask: 'Main khud kaun hoon (kubectl abhi kis pehchaan se chal raha hai)?', answers: ['kubectl auth whoami'], explain: 'Username aur groups. EKS par IAM role → Kubernetes user ka mapping yahin dikhta hai.' },
+    ], 'ServiceAccount, Role, RoleBinding, can-i aur token — 8 commands',
+    { front: 'Kisi SA ki saari permissions ek saath kaise dekhte ho?', back: '<code>kubectl auth can-i --list --as=system:serviceaccount:&lt;ns&gt;:&lt;sa&gt;</code>. Ek kaam: <code>kubectl auth can-i list pods --as=…</code>.' });
+
+  drill('d2-debug', 'drill-debug', '⚡ Speed Drill: kubectl debug aur jaanch ke 8 commands', 140,
+    'pay-api distroless hai — na shell, na curl. <code>' + DP + '</code> aur <code>node-2</code> ki jaanch type karke karo.', [
+      { ask: '<code>' + DP + '</code> mein busybox (<code>busybox:1.36</code>) ka <b>ephemeral container</b>, container <code>pay-api</code> ke processes dikhe', answers: ['kubectl debug -it ' + DP + ' --image=busybox:1.36 --target=pay-api'], explain: '<code>--target</code> = us container ka process namespace share. Pod restart nahi hota.' },
+      { ask: '<code>node-2</code> par debug pod — node ki file system <code>/host</code> par', answers: ['kubectl debug node/node-2 -it --image=busybox:1.36'], explain: 'Node ka root <code>/host</code> par mount hota hai. Kaam ke baad debug pod delete karo.' },
+      { ask: '<code>' + DP + '</code> ki <b>copy</b> <code>pay-api-debug</code> banao, uske container <code>pay-api</code> mein <code>sh</code> chalao', answers: ['kubectl debug ' + DP + ' -it --copy-to=pay-api-debug --container=pay-api -- sh'], explain: 'Copy par command badal sakte ho (crash hone wala container bhi khul jaata hai). Asli pod ko haath nahi lagta.' },
+      { ask: 'Namespace ke sirf <b>Warning</b> events', answers: ['kubectl get events --field-selector=type=Warning'], explain: 'Normal events ka shor hata do — pehle Warnings padho.' },
+      { ask: '<code>' + DP + '</code> ka CPU/memory — <b>har container alag</b>', answers: ['kubectl top pod ' + DP + ' --containers'], explain: 'Sidecar (istio-proxy) kitna kha raha hai, yahin dikhta hai.' },
+      { ask: '<code>' + DP + '</code> ka poora spec + status <b>YAML</b> mein', answers: ['kubectl get pod ' + DP + ' -o yaml'], explain: '<code>status.containerStatuses</code> mein lastState, exitCode, reason.' },
+      { ask: '<code>' + DP + '</code> ke <code>istio-proxy</code> container ke logs', answers: ['kubectl logs ' + DP + ' -c istio-proxy'], explain: 'Kai containers wale pod mein <code>-c</code> ke bina pehle container ke logs.' },
+      { ask: '<code>pay-api</code> Deployment ke kisi pod ke <b>pichhle 10 minute</b> ke logs', answers: ['kubectl logs deployment/pay-api --since=10m'], explain: '<code>deployment/x</code> = uska koi ek pod. Sab pods: <code>-l app=pay-api</code>.' },
+    ], 'kubectl debug (ephemeral, node, copy) aur tez jaanch — 8 commands',
+    { front: 'Distroless pod mein shell nahi — andar se kaise jaanchoge?', back: '<code>kubectl debug -it &lt;pod&gt; --image=busybox:1.36 --target=&lt;container&gt;</code> — ephemeral container, process namespace share, pod restart nahi.' });
+
+  drill('kk-clusterops', 'drill-clusterops', '⚡ Speed Drill: cluster maintenance ke 8 commands', 150,
+    'kubeadm cluster ka maintenance: node khaali karo, upgrade ka plan, certificates, etcd ka snapshot — type karke.', [
+      { ask: '<code>node-1</code> khaali karo — DaemonSet pods chhod kar', answers: ['kubectl drain node-1 --ignore-daemonsets', 'kubectl drain node-1 --ignore-daemonsets --delete-emptydir-data'], explain: 'drain = cordon + PDB ka dhyan rakhte hue eviction.' },
+      { ask: 'Maintenance khatam — <code>node-1</code> par phir pods aane do', answers: ['kubectl uncordon node-1'], explain: 'Bina uncordon node SchedulingDisabled hi rehta hai.' },
+      { ask: '(control plane node par) kis version tak upgrade ho sakta hai — <b>plan</b>', answers: ['kubeadm upgrade plan'], explain: 'Ek baar mein sirf ek minor version aage.' },
+      { ask: 'Control plane ko <code>v1.33.4</code> par upgrade karo', answers: ['kubeadm upgrade apply v1.33.4'], explain: 'Pehle kubeadm package upgrade, phir yeh. Baaki control plane nodes par <code>kubeadm upgrade node</code>.' },
+      { ask: 'Cluster ke certificates kab expire honge?', answers: ['kubeadm certs check-expiration'], explain: 'kubeadm ke certs 1 saal ke. Upgrade karne par khud renew hote hain.' },
+      { ask: 'Saare certificates abhi <b>renew</b> karo', answers: ['kubeadm certs renew all'], explain: 'Phir control plane static pods restart karne padte hain (kube-apiserver, controller-manager, scheduler, etcd).' },
+      { ask: 'API server band hai — node par chal rahe containers dekho (container runtime se)', answers: ['crictl ps'], explain: '<code>crictl ps -a</code> mein mare hue bhi; <code>crictl logs &lt;id&gt;</code> se logs.' },
+      { ask: 'Snapshot <code>/backup/etcd.db</code> theek hai? <b>table</b> mein dikhao', answers: ['ETCDCTL_API=3 etcdctl snapshot status /backup/etcd.db --write-out=table', 'etcdctl snapshot status /backup/etcd.db --write-out=table'], explain: 'etcd 3.5+ mein <code>etcdutl snapshot status</code> naya tareeka; etcdctl wala deprecated.' },
+    ], 'drain / uncordon, kubeadm upgrade, certs, crictl aur etcd snapshot — 8 commands',
+    { front: 'kubeadm cluster ke certificates ki expiry kaise dekhte aur renew karte ho?', back: '<code>kubeadm certs check-expiration</code> · <code>kubeadm certs renew all</code> — phir control plane static pods restart.' });
+
+  drill('helmbasics', 'drill-helm', '⚡ Speed Drill: Helm 4 ke 8 commands', 140,
+    'ChaiPay ka chart repo <code>https://charts.chaipay.in</code> (naam <code>chaipay</code>), chart <code>chaipay/notify</code>, release <code>notify</code>.', [
+      { ask: 'Repo <code>https://charts.chaipay.in</code> ko naam <code>chaipay</code> se jodo', answers: ['helm repo add chaipay https://charts.chaipay.in'], explain: 'Phir <code>helm repo update</code> — index taaza.' },
+      { ask: 'Release <code>notify</code> install: chart <code>chaipay/notify</code>, version <b>3.3.0</b>, values <code>values-prod.yaml</code>', answers: ['helm install notify chaipay/notify --version 3.3.0 -f values-prod.yaml'], explain: '<code>--version</code> = CHART ka version (appVersion nahi). Bina iske sabse naya aata hai.' },
+      { ask: 'CI wala ek command: release ho toh upgrade, na ho toh install (<code>values-prod.yaml</code>)', answers: ['helm upgrade --install notify chaipay/notify -f values-prod.yaml', 'helm upgrade -i notify chaipay/notify -f values-prod.yaml'], explain: 'Idempotent — CI har baar yahi chala sakta hai.' },
+      { ask: 'Namespace ki saari releases (pending bhi)', answers: ['helm list'], explain: 'Helm 4: saada <code>helm list</code> pending bhi dikhata hai — <code>-a</code> / <code>--all</code> ab nahi hai.' },
+      { ask: '<code>notify</code> ki saari revisions', answers: ['helm history notify'], explain: 'STATUS: deployed / superseded / failed / pending-upgrade. DESCRIPTION mein "Rollback to N".' },
+      { ask: '<code>notify</code> ko revision <b>13</b> par wapas', answers: ['helm rollback notify 13'], explain: 'Naya revision banta hai (13 ki copy). pending-upgrade ka lock bhi isi se khulta hai.' },
+      { ask: '<code>notify</code> ki <b>poori</b> values — chart defaults samet', answers: ['helm get values notify --all'], explain: 'Bina <code>--all</code> sirf USER-SUPPLIED values.' },
+      { ask: 'Bina cluster ko chhue, rendered YAML dekho (<code>chaipay/notify</code>, <code>values-prod.yaml</code>)', answers: ['helm template notify chaipay/notify -f values-prod.yaml'], explain: 'Template errors cluster tak jaane se pehle pakdo. <code>helm lint</code> bhi.' },
+    ], 'Helm 4 ke install / upgrade --install / list / history / rollback / get values / template — 8 commands',
+    { front: 'Helm 4 mein pending release dikhane ke liye <code>helm list -a</code> chalaya — error?', back: 'Helm 4 mein <code>-a</code> / <code>--all</code> hat gaya; saada <code>helm list</code> hi pending-upgrade releases dikhata hai. (<code>--pending</code> sirf pending.)' });
+
+  drill('argobasics', 'drill-argocd', '⚡ Speed Drill: argocd CLI ke 8 commands', 120,
+    'ArgoCD mein Application <code>pay-api</code>. Haal dekho, farak dekho, sync karo, aur history padho — type karke.', [
+      { ask: 'Saari Applications — sync aur health status', answers: ['argocd app list'], explain: 'SYNC STATUS (git jaisa hai?) aur HEALTH STATUS (chal raha hai?) do alag sawal hain.' },
+      { ask: '<code>pay-api</code> ka poora haal — har resource samet', answers: ['argocd app get pay-api'], explain: 'Neeche ki table: kaun sa resource OutOfSync / Degraded.' },
+      { ask: '<code>pay-api</code>: git aur cluster mein <b>kya alag</b> hai', answers: ['argocd app diff pay-api'], explain: 'Drift ka sabse seedha saboot. Khaali output = sab Synced.' },
+      { ask: '<code>pay-api</code> ko git jaisa karo (<b>sync</b>)', answers: ['argocd app sync pay-api'], explain: 'Auto-sync wale app par bhi chalta hai.' },
+      { ask: 'Sync karo — aur git se hate hue resources cluster se bhi <b>hatao</b>', answers: ['argocd app sync pay-api --prune'], explain: 'Bina <code>--prune</code> hata hua resource "requires pruning" bankar pada rehta hai.' },
+      { ask: '<code>pay-api</code> ki deploy history (ID, revision)', answers: ['argocd app history pay-api'], explain: 'Rollback ke liye ID yahin se — par auto-sync ON par rollback nahi chalta; git revert karo.' },
+      { ask: 'CI mein: <code>pay-api</code> <b>Healthy</b> hone tak ruko', answers: ['argocd app wait pay-api --health'], explain: 'Degraded par fail → pipeline ruk jaati hai.' },
+      { ask: '<code>pay-api</code> ke rendered manifests (jo ArgoCD lagayega)', answers: ['argocd app manifests pay-api'], explain: 'Helm / Kustomize render ke baad ka asli YAML — "yeh value kahan se aayi?" ka jawab.' },
+    ], 'argocd app list / get / diff / sync --prune / history / wait / manifests — 8 commands',
+    { front: 'argocd app ke SYNC aur HEALTH status mein farak?', back: '<b>Sync</b> = cluster git jaisa hai ya nahi. <b>Health</b> = cheez chal rahi hai ya nahi. Synced + Degraded ho sakta hai (git mein hi galti).' });
+
 })();

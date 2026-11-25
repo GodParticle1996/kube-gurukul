@@ -12,6 +12,9 @@
      'blind'   ob-boss   release ki raat: TargetDown (404) → cardinality → error budget burn → aadha rollback
      'leak'    sec-boss  CI token GitHub par leak: radd → backdoor (SA + cluster-admin) → miner DaemonSet → CI least privilege
      'peak'    eks-boss  sale ki raat: pod IP (VPC CNI warm pool) → CoreDNS packet seema → scale-down par ALB 502 (preStop sleep)
+     'gitops'  argoboss  release train: git revert (rollback auto-sync par band) → HPA vs selfHeal → immutable Job
+     'spot'    karpenterboss  NodePool limit → spot ICE (fallback / families) → consolidation eviction storm (budgets)
+     'ship'    helmship  Helm 4: pending-upgrade (rollback) → --reuse-values nil pointer → chart mein badla value ka naam (Secret)
 
    Kahani wahi ChaiPay: namespace payments, pay-api / ledger (ledger-0) /
    notify, EKS chaipay-prod, account 111122223333, region ap-south-1.
@@ -1459,5 +1462,665 @@ Mat karo: aws-node / kube-proxy DaemonSet delete · nodes terminate · VPC CNI a
     success: ['Main EKS par "CPU khaali par pods atke / DNS timeout / 502" ko sahi parat (IP, DNS, load balancer) tak le ja kar theek kar sakta hoon'],
     cards: [{ front: 'Pods ContainerCreating, "failed to assign an IP address to container", CPU khaali — kya dekho?', back: 'Subnet ka <code>AvailableIpAddressCount</code>. VPC CNI ka <code>WARM_ENI_TARGET=1</code> har node par poora ENI khaali rakhta hai — <code>WARM_IP_TARGET</code> / <code>MINIMUM_IP_TARGET</code> (add-on config) se IP chhoodo.' },
       { front: 'preStop mein <code>sleep 15</code> likha, phir bhi FailedPreStopHook — kyun?', back: 'Distroless image mein <code>sleep</code> binary hai hi nahi (exit 126). Kubernetes ka apna <code>preStop: sleep: seconds: 15</code> action use karo — kubelet khud rukta hai.' }],
+  });
+
+  /* =====================================================================
+     📟 Shift 'gitops' — argoboss: release train ki shaam (20:30 se)
+     Repo chaipay-gitops (terminal ki files = repo), ArgoCD auto-sync + prune + selfHeal.
+       1 PayApiDegraded    PR #812: image pay-api:1.9.5 (ECR mein hai hi nahi) → git revert + push
+                           (argocd app rollback auto-sync par band; kubectl se badla toh selfHeal palat deta)
+       2 ReplicasFlapping  Ravi ka HPA (kubectl se, git mein nahi) 8 maangta, selfHeal git ke 3 par lautata
+                           → Application mein ignoreDifferences /spec/replicas + RespectIgnoreDifferences=true
+       3 LedgerSyncFailed  Job ka template badla → "field is immutable" (kind v1.37 ka asli error) → naya naam
+     argocd CLI ka output argosim.js deta hai; git ke jawab yahin hain.
+     ===================================================================== */
+  (function () {
+    const REPO = 'https://github.com/chaipay/chaipay-gitops';
+    const DEP = img => `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pay-api
+  namespace: payments
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: pay-api
+  template:
+    metadata:
+      labels:
+        app: pay-api
+    spec:
+      containers:
+      - name: pay-api
+        image: ${ECR}/pay-api:${img}
+        ports:
+        - containerPort: 8080
+`;
+    const APP = `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pay-api
+  namespace: argocd
+spec:
+  project: payments
+  source:
+    repoURL: ${REPO}
+    path: pay-api
+    targetRevision: main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: payments
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+`;
+    const JOB = (name, mig) => `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${name}
+  namespace: payments
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrate
+        image: ${ECR}/ledger-migrate:${mig}
+        args: ["up", "--to", "${mig}"]
+`;
+    const RUNBOOK = `# ChaiPay GitOps on-call runbook (ArgoCD)
+Yeh folder = git repo chaipay-gitops (branch main). ArgoCD har push par webhook se sync karta hai.
+Apps: root (apps/ — baaki Applications isi se banti hain), pay-api, ledger, notify.
+
+Haal:      argocd app list · argocd app get <app> · argocd app diff <app> · argocd app history <app>
+Git:       git log --oneline · git show <sha> · git status · git diff
+Badlaav:   vi <file> → Save → git commit -am "kya aur kyun" → git push
+Wapas:     git revert <sha> --no-edit → git push        (history mitao mat — revert NAYA commit hai)
+Cluster:   kubectl get pods / deploy / hpa / jobs / events
+
+GitOps ka niyam: cluster ka sach GIT hai.
+- auto-sync ON par "argocd app rollback" chalta hi nahi.
+- kubectl se badla toh selfHeal 1 minute mein git wala wapas laga deta hai.
+- Application khud root app (git: apps/) se banti hai — "argocd app set" se badla toh root app palat dega.
+
+Mat karo: git push --force · Application / namespace delete · HPA delete (sale ki shaam)
+`;
+    const INC = [
+      { id: 'PayApiDegraded', sev: '🔴 SEV1', text: 'ArgoCD: pay-api Degraded (20:22 se). Naya pod ImagePullBackOff — PR #812 merge ke baad.',
+        verify: /^argocd app (get|list)\b|^kubectl get (pods?|po|deploy(ments?)?)\b/, verifyText: 'app dobara dekho (argocd app get pay-api)',
+        hints: ['argocd app get pay-api aur kubectl get pods — kaun sa pod atka hai? kubectl describe pod <us pod> — Events mein image ka kya hua?',
+          'git log --oneline aur git show a1b2c3d — PR #812 ne image tag 1.9.5 kiya, ECR mein 1.9.5 hai hi nahi. argocd app rollback auto-sync par nahi chalta; kubectl set image ko selfHeal palat dega.',
+          'git revert a1b2c3d --no-edit, phir git push. ArgoCD webhook se sync karega — phir argocd app get pay-api'] },
+      { id: 'ReplicasFlapping', sev: '🟠 SEV2', text: 'pay-api ke pods har minute 8 → 3 → 8. Sale ki shaam — latency upar-neeche.',
+        verify: /^kubectl get (deploy(ments?)?|hpa|pods?|po|events?)\b|^argocd app (get|diff)\b/, verifyText: 'replicas dobara dekho (kubectl get deploy pay-api, do baar)',
+        hints: ['kubectl get hpa aur kubectl get events — kaun 8 karta hai, kaun 3? argocd app diff pay-api — git aur cluster mein kya alag?',
+          'Ravi ne 19:50 par HPA kubectl se banaya (git mein nahi) — woh 8 maangta hai. Git ki deployment.yaml mein replicas: 3 hai aur selfHeal use lautata hai. Dono lad rahe hain.',
+          'vi apps/pay-api.yaml — spec mein (syncPolicy ke barabar indent par) jodo:\n  ignoreDifferences:\n  - group: apps\n    kind: Deployment\n    jsonPointers:\n    - /spec/replicas\naur syncPolicy ke andar:\n    syncOptions:\n    - RespectIgnoreDifferences=true\nSave, git commit -am "pay-api: HPA ke replicas ignore", git push, phir kubectl get deploy pay-api'] },
+      { id: 'LedgerSyncFailed', sev: '🟠 SEV2', text: 'ArgoCD: ledger SyncFailed (20:24 se) — migration 0042 nahi chali. pay-api ki agli release isi ka intezaar kar rahi hai.',
+        verify: /^argocd app (get|list|history)\b.*|^kubectl get (jobs?|pods?|po)\b/, verifyText: 'ledger dobara dekho (argocd app get ledger, ya kubectl get jobs)',
+        hints: ['argocd app get ledger aur argocd app sync ledger — sync kis object par fail hota hai? Message poora padho.',
+          'Job ka spec.template badalta nahi (immutable). Kal ka Job "ledger-migrate" (0041) cluster mein pada hai; aaj usi naam se naya template (0042) lagana mana hai. kubectl get jobs',
+          'vi ledger/migrate-job.yaml — name: ledger-migrate ko name: ledger-migrate-0042 karo (har migration ka apna naam; purana prune ho jayega), Save, git commit -am "ledger: migration job ka naam versioned", git push, phir argocd app get ledger'] },
+    ];
+
+    /* ---------- git ---------- */
+    const SHA = ['4c5d6e7', 'b8c9d0e', '1f2e3d4', '7a6b5c4', 'd3e2f1a'];
+    const fileOf = (s, p) => (s.edited && s.edited[p] != null) ? s.edited[p] : s.files[p].content;
+    function headDesired(c) {
+      const H = c.head;
+      const dep = (KG.yaml.parseAll(H['pay-api/deployment.yaml'])[0]) || {};
+      const app = (KG.yaml.parseAll(H['apps/pay-api.yaml'])[0]) || {};
+      const job = (KG.yaml.parseAll(H['ledger/migrate-job.yaml'])[0]) || {};
+      const sp = app.spec || {}, ig = [].concat(sp.ignoreDifferences || []);
+      const ct = ((((dep.spec || {}).template || {}).spec || {}).containers || [])[0] || {};
+      const jann = ((job.metadata || {}).annotations) || {};
+      return {
+        img: String(ct.image || '').split(':').pop(), replicas: (dep.spec || {}).replicas,
+        ignore: ig.some(x => x && x.kind === 'Deployment' && [].concat(x.jsonPointers || []).includes('/spec/replicas')),
+        respect: [].concat(((sp.syncPolicy || {}).syncOptions) || []).includes('RespectIgnoreDifferences=true'),
+        jobName: (job.metadata || {}).name, jobImg: String((((((job.spec || {}).template || {}).spec || {}).containers || [])[0] || {}).image || '').split(':').pop(),
+        replace: /Replace=true/.test(String(jann['argocd.argoproj.io/sync-options'] || '')) && /Force=true/.test(String(jann['argocd.argoproj.io/sync-options'] || '')),
+      };
+    }
+    /* ---------- model ---------- */
+    const imgOk = c => c.live.img === '1.9.4';
+    function applyDesired(c) {
+      const d = headDesired(c);
+      c.live.img = d.img; c.live.ignore = d.ignore; c.live.respect = d.respect; c.gitReplicas = d.replicas;
+      if (d.replicas == null && c.live.hadReplicas) { c.live.replicas = 1; c.live.dropTo1 = c.clock; }   // asli apply: last-applied mein tha, ab nahi → field hata → default 1
+      c.live.hadReplicas = d.replicas != null;
+      const job = d.jobName === 'ledger-migrate' && d.jobImg !== '0041' && !d.replace ? 'immutable' : d.jobImg === '0042' ? 'ok' : 'old';
+      c.ledger = job === 'immutable' ? 'failed' : job === 'ok' ? 'migrated' : 'old';
+      c.syncs++;
+    }
+    function reconcile(c) {
+      if (c.pushAt != null && c.clock > c.pushAt) { applyDesired(c); c.pushAt = null; c.synced = true; }
+      if (c.kubectlImg && c.clock > c.kubectlImg.at) { c.live.img = headDesired(c).img; c.kubectlImg = null; c.healed = (c.healed || 0) + 1; }
+      // HPA (8 chahiye) vs selfHeal (git ka replicas)
+      const want = 8;
+      if (c.live.dropTo1 != null && c.clock > c.live.dropTo1) { c.live.replicas = want; c.live.dropTo1 = null; }
+      else if (c.gitReplicas != null && !c.live.ignore) c.live.replicas = c.live.replicas === want ? c.gitReplicas : want;
+      else if (c.gitReplicas == null || c.live.ignore) { if (c.live.dropTo1 == null) c.live.replicas = want; }
+      c.flips.push([c.clock, c.live.replicas]);
+    }
+    INC[0].fixed = c => imgOk(c);
+    INC[1].fixed = c => imgOk(c) && (c.live.ignore || c.gitReplicas == null) && c.live.replicas === 8 && c.live.dropTo1 == null;
+    INC[2].fixed = c => c.ledger === 'migrated';
+    /* ---------- views ---------- */
+    const OLD = 'pay-api-6b8d7c9f5', NEW = 'pay-api-8f3a2e1d7';
+    const SUF = ['a1kx9', 'b2mq8', 'c3nw7', 'd4pz6', 'e5qt5', 'f6rv4', 'g7sb3', 'h8tc2'];
+    function views(c) {
+      const n = c.live.replicas, bad = !imgOk(c);
+      const pods = Array.from({ length: n }, (_, i) => ({ name: `${OLD}-${SUF[i]}`, app: 'pay-api', ready: '1/1', status: 'Running', restarts: 0, age: i < 3 ? '1d' : '1m', node: 'node-' + (1 + i % 3), ip: '10.0.1' + (2 + i % 3) + '.' + (40 + i) }));
+      if (bad) pods.push({ name: `${NEW}-k2x7q`, app: 'pay-api', ready: '0/1', status: 'ImagePullBackOff', restarts: 0, age: (8 + c.clock) + 'm', node: 'node-2', ip: '10.0.13.77',
+        describe: `Name:             ${NEW}-k2x7q\nNamespace:        payments\nStatus:           Pending\nContainers:\n  pay-api:\n    Image:          ${ECR}/pay-api:${c.live.img}\n    State:          Waiting\n      Reason:       ImagePullBackOff\nEvents:\n  Type     Reason     Age                 From     Message\n  ----     ------     ----                ----     -------\n  Warning  Failed     ${8 + c.clock}m (x6)  kubelet  Failed to pull image "${ECR}/pay-api:${c.live.img}": rpc error: code = NotFound desc = failed to pull and unpack image "${ECR}/pay-api:${c.live.img}": failed to resolve reference "${ECR}/pay-api:${c.live.img}": ${ECR}/pay-api:${c.live.img}: not found\n  Warning  Failed     ${8 + c.clock}m (x6)  kubelet  Error: ErrImagePull\n  Normal   BackOff    20s (x31)           kubelet  Back-off pulling image "${ECR}/pay-api:${c.live.img}"` });
+      c.pods = pods.concat([{ name: 'ledger-0', app: 'ledger', ready: '1/1', status: 'Running', restarts: 0, age: '40d', node: 'node-3', ip: '10.0.14.11' }],
+        c.ledger === 'migrated' ? [{ name: 'ledger-migrate-0042-x7k2p', app: 'job', ready: '0/1', status: 'Completed', restarts: 0, age: '1m', node: 'node-1', ip: '10.0.12.90' }] : []);
+      c.deployments = [{ name: 'pay-api', ready: `${n}/${n}`, upToDate: bad ? 1 : n, available: n, age: '120d' }];
+      c.hpas = [{ name: 'pay-api', reference: 'Deployment/pay-api', targets: `cpu: ${n === 8 ? 58 : 91}%/60%`, min: 3, max: 12, replicas: n, age: '40m' }];
+      const ev = [['LAST SEEN', 'TYPE', 'REASON', 'OBJECT', 'MESSAGE']];
+      c.flips.slice(-4).forEach(([t, r], i, a) => { const prev = i ? a[i - 1][1] : (r === 8 ? 3 : 8); if (prev !== r) ev.push([(c.clock - t) < 1 ? '30s' : (c.clock - t) + 'm', 'Normal', 'ScalingReplicaSet', 'deployment/pay-api', `Scaled ${r > prev ? 'up' : 'down'} replica set ${OLD} from ${prev} to ${r}`]); });
+      if (bad) ev.push(['20s', 'Normal', 'BackOff', 'pod/' + NEW + '-k2x7q', `Back-off pulling image "${ECR}/pay-api:${c.live.img}"`]);
+      c.events = ev.length > 1 ? tbl(ev).split('\n') : ['No events found in payments namespace.'];
+      c.custom = { job: { names: ['job', 'jobs'], cols: ['NAME', 'STATUS', 'COMPLETIONS', 'DURATION', 'AGE'],
+        items: [{ name: 'ledger-migrate', row: ['Complete', '1/1', '14s', '1d'], describe: 'Name:      ledger-migrate\nImage:     ' + ECR + '/ledger-migrate:0041\nPods Statuses:  0 Active / 1 Succeeded / 0 Failed' }]
+          .filter(() => c.ledger !== 'migrated').concat(c.ledger === 'migrated' ? [{ name: 'ledger-migrate-0042', row: ['Complete', '1/1', '19s', '1m'] }] : []) } };
+      // ArgoCD ki nazar (argosim.js isi ko padhta hai)
+      const P = c.apps.find(a => a.name === 'pay-api'), L = c.apps.find(a => a.name === 'ledger');
+      P.health = bad ? 'Degraded' : 'Healthy'; P.degradedReason = bad ? 'Deployment "pay-api" exceeded its progress deadline' : '';
+      const drift = c.live.replicas !== c.gitReplicas && c.gitReplicas != null && !c.live.ignore;
+      P.sync = drift ? 'OutOfSync' : 'Synced'; P.revision = c.headSha;
+      P.resources = [{ group: 'apps', kind: 'Deployment', name: 'pay-api', status: drift ? 'OutOfSync' : 'Synced', health: bad ? 'Degraded' : 'Healthy' }, { kind: 'Service', name: 'pay-api', status: 'Synced', health: 'Healthy' }];
+      P.diff = `===== apps/Deployment payments/pay-api ======\n   spec:\n-    replicas: ${c.live.replicas}        # cluster (HPA)\n+    replicas: ${c.gitReplicas}        # git`;
+      L.sync = c.ledger === 'migrated' ? 'Synced' : 'OutOfSync'; L.health = 'Healthy'; L.revision = c.headSha;
+      L.syncError = 'one or more synchronization tasks completed unsuccessfully, reason: Job.batch "ledger-migrate" is invalid: spec.template: Invalid value: {"labels":{"batch.kubernetes.io/job-name":"ledger-migrate", …},"Spec":{… "Image":"' + ECR + '/ledger-migrate:0042" …}}: field is immutable';
+      L.resources = [{ group: 'batch', kind: 'Job', name: c.ledger === 'migrated' ? 'ledger-migrate-0042' : 'ledger-migrate', status: c.ledger === 'migrated' ? 'Synced' : 'OutOfSync', health: 'Healthy',
+        message: c.ledger === 'migrated' ? 'job completed' : 'field is immutable (spec.template)' }];
+    }
+    function build({ risky }) {
+      const files0 = { 'pay-api/deployment.yaml': DEP('1.9.5'), 'apps/pay-api.yaml': APP, 'ledger/migrate-job.yaml': JOB('ledger-migrate', '0042') };
+      const c = { clock: 0, head: Object.assign({}, files0), headSha: 'e7f3a91', pushedSha: 'e7f3a91', pushAt: null, syncs: 0, flips: [], kubectlImg: null, ledger: 'failed', gitReplicas: 3,
+        live: { img: '1.9.5', replicas: 8, ignore: false, respect: false, hadReplicas: true, dropTo1: null },
+        log: [['e7f3a91', 'ledger: migration 0042 (accounts.kyc_level)', 'Meera', '20:24'], ['a1b2c3d', 'pay-api: release 1.9.5 (PR #812)', 'Kabir', '20:21'], ['9f8e7d6', 'pay-api: release 1.9.4', 'Kabir', 'kal 19:02'], ['5e4d3c2', 'ledger: migration 0041', 'Meera', 'kal 18:40']],
+        unpushed: [], shaN: 0,
+        apps: [
+          { name: 'root', project: 'default', repo: REPO, path: 'apps', destNamespace: 'argocd', sync: 'Synced', health: 'Healthy', revision: 'e7f3a91', syncPolicy: { automated: { prune: true, selfHeal: true } }, resources: [{ group: 'argoproj.io', kind: 'Application', name: 'pay-api' }, { group: 'argoproj.io', kind: 'Application', name: 'ledger' }, { group: 'argoproj.io', kind: 'Application', name: 'notify' }] },
+          { name: 'pay-api', project: 'payments', repo: REPO, path: 'pay-api', destNamespace: 'payments', sync: 'Synced', health: 'Degraded', revision: 'e7f3a91', syncPolicy: { automated: { prune: true, selfHeal: true } },
+            history: [{ id: 11, revision: '9f8e7d6', deployedAt: '2026-11-24T13:32:40Z', note: 'Sync' }, { id: 12, revision: 'a1b2c3d', deployedAt: '2026-11-25T14:51:52Z', note: 'Sync' }] },
+          { name: 'ledger', project: 'payments', repo: REPO, path: 'ledger', destNamespace: 'payments', sync: 'OutOfSync', health: 'Healthy', revision: 'e7f3a91', syncPolicy: { automated: { prune: true, selfHeal: true } },
+            history: [{ id: 7, revision: '5e4d3c2', deployedAt: '2026-11-24T13:10:22Z', note: 'Sync' }], onSync: (s2, app) => { const c2 = s2.cluster; applyDesired(c2); return c2.ledger === 'migrated'; } },
+          { name: 'notify', project: 'payments', repo: REPO, path: 'notify', destNamespace: 'payments', sync: 'Synced', health: 'Healthy', revision: 'e7f3a91', syncPolicy: { automated: { prune: true, selfHeal: true } } },
+        ] };
+      c.apps[1].onSync = (s2) => { applyDesired(s2.cluster); return true; };
+      const nextSha = c2 => SHA[c2.shaN++ % SHA.length];
+      const dirty = s2 => Object.keys(s2.cluster.head).filter(p => fileOf(s2, p) !== s2.cluster.head[p]);
+      return {
+        title: '📟 On-call shift: release train ki shaam (GitOps)',
+        instructions: 'Tum aaj shaam ChaiPay ke GitOps on-call ho (20:30 se). Yeh terminal git repo chaipay-gitops ke andar khula hai; ArgoCD har push par sync karta hai. Har command = 1 minute. Madad: cat runbook.md',
+        goal: `📟 Pehla alert (20:30): <b>${INC[0].sev} ${INC[0].id}</b> — ${INC[0].text}<br>
+          GitOps mein fix ka raasta: <b>git</b> (revert / commit) → <b>push</b> → ArgoCD sync → <b>pakka karo</b>. Cluster ko haath se badla toh ArgoCD palat dega.
+          Khatarnaak commands roke jaayenge aur report card mein ginte hain.`,
+        cluster: c,
+        responses: [
+          risky(/^git push\b.*(?:--force|-f\b|--force-with-lease).*$/, 'force push — shared main ki history mita di; doosron ke commits aur ArgoCD ka record gaya. git revert naya commit banata hai.'),
+          risky(/^kubectl delete (?:hpa|horizontalpodautoscalers?)\b.*$/, 'HPA delete — sale ki shaam autoscaling hi band. Lafda replicas ki malkiyat ka hai: git mein ignoreDifferences.'),
+          risky(/^(?:argocd app delete|kubectl delete (?:applications?|apps?|ns|namespaces?))\b.*$/, 'Application / namespace delete — prune ke saath saare resources bhi gaye.'),
+          { re: /^git (?:reset|rebase|commit --amend)\b.*$/, err: true, out: '(simulator ne roka) main par push ho chuki history mat badlo. Peeche jaana = git revert <sha> (naya commit).' },
+          { re: /^argocd app set\b.*$/, err: true, out: '(simulator ne roka) Applications root app (git: apps/) se banti hain — argocd app set se badla toh root app 1 minute mein palat dega. Git mein apps/<app>.yaml badlo, commit, push.' },
+          { re: /^kubectl (?:set image|rollout undo|edit|patch)\b.*\bpay-api\b.*$/,
+            out: s => { const c2 = s.cluster; c2.kubectlImg = { at: c2.clock }; c2.live.img = '1.9.4';
+              return 'deployment.apps/pay-api image updated\n(dhyan do: pay-api par selfHeal ON hai — git mein abhi bhi ' + headDesired(c2).img + ' hai. ArgoCD ise 1 minute mein palat dega.)'; } },
+          { re: /^kubectl scale\b.*\bpay-api\b.*$/, out: s => 'deployment.apps/pay-api scaled\n(HPA aur ArgoCD selfHeal dono isse turant badal denge — malkiyat ka faisla git mein karo)' },
+          { re: /^git log\b.*$/, out: s => { const c2 = s.cluster; return c2.log.map((l, i) => `${l[0]} ${i === 0 ? '(HEAD -> main' + (c2.unpushed.length ? ')' : ', origin/main)') + ' ' : ''}${l[1]}   — ${l[2]}, ${l[3]}`).join('\n') + (c2.unpushed.length ? `\n(${c2.unpushed.length} commit abhi push nahi hue — git push)` : ''); } },
+          { re: /^git show (\w+).*$/,
+            out: (s, m) => { const sha = m[1];
+              if (sha === 'a1b2c3d') return `commit a1b2c3d\nAuthor: Kabir <kabir@chaipay.example>\nDate:   Wed Nov 25 20:21:44 2026 +0530\n\n    pay-api: release 1.9.5 (PR #812)\n\ndiff --git a/pay-api/deployment.yaml b/pay-api/deployment.yaml\n@@ -17 +17 @@\n-        image: ${ECR}/pay-api:1.9.4\n+        image: ${ECR}/pay-api:1.9.5`;
+              if (sha === 'e7f3a91') return 'commit e7f3a91\nAuthor: Meera <meera@chaipay.example>\nDate:   Wed Nov 25 20:24:10 2026 +0530\n\n    ledger: migration 0042 (accounts.kyc_level)\n\ndiff --git a/ledger/migrate-job.yaml b/ledger/migrate-job.yaml\n@@ -12,2 +12,2 @@\n-        image: ' + ECR + '/ledger-migrate:0041\n-        args: ["up", "--to", "0041"]\n+        image: ' + ECR + '/ledger-migrate:0042\n+        args: ["up", "--to", "0042"]';
+              const l = s.cluster.log.find(x => x[0] === sha); return l ? `commit ${sha}\n\n    ${l[1]}` : `fatal: ambiguous argument '${sha}': unknown revision or path not in the working tree.`; } },
+          { re: /^git status\b.*$/, out: s => { const d = dirty(s), c2 = s.cluster; return 'On branch main\n' + (c2.unpushed.length ? `Your branch is ahead of 'origin/main' by ${c2.unpushed.length} commit${c2.unpushed.length > 1 ? 's' : ''}.\n  (use "git push" to publish your local commits)\n` : "Your branch is up to date with 'origin/main'.\n") +
+            (d.length ? '\nChanges not staged for commit:\n' + d.map(p => '\tmodified:   ' + p).join('\n') : '\nnothing to commit, working tree clean'); } },
+          { re: /^git diff\b.*$/, out: s => { const d = dirty(s); if (!d.length) return ''; return d.map(p => `diff --git a/${p} b/${p}\n` + KG.yaml.diff(s.cluster.head[p], fileOf(s, p)).map(x => `${x.op}${x.text}`).join('\n')).join('\n'); } },
+          { re: /^git add\b.*$/, out: '' },
+          { re: /^git commit\b(.*)$/,
+            out: (s, m) => { const c2 = s.cluster, d = dirty(s), msg = (String(m[1]).match(/-a?m\s+(["'])(.*?)\1/) || String(m[1]).match(/-m\s+(["'])(.*?)\1/) || [])[2];
+              if (!d.length) return 'On branch main\nnothing to commit, working tree clean';
+              if (!msg) return 'Aborting commit due to empty commit message.\n(simulator: git commit -am "kya aur kyun")';
+              const sha = nextSha(c2); d.forEach(p => { c2.head[p] = fileOf(s, p); }); c2.log.unshift([sha, msg, 'tum', KG.oncall.hhmm(c2)]); c2.unpushed.push(sha); c2.headLocal = sha;
+              return `[main ${sha}] ${msg}\n ${d.length} file${d.length > 1 ? 's' : ''} changed`; } },
+          { re: /^git revert (\w+)\b.*$/,
+            out: (s, m) => { const c2 = s.cluster, sha = m[1];
+              if (sha !== 'a1b2c3d') return sha === 'e7f3a91' ? '(simulator ne roka) ledger ki migration revert mat karo — migration 0042 DB mein chalni hai; masla Job ke naam/immutability ka hai.' : `fatal: bad revision '${sha}'`;
+              if (c2.reverted) return 'error: commit a1b2c3d ka revert pehle ho chuka hai (git log dekho)';
+              if (dirty(s).includes('pay-api/deployment.yaml')) return 'error: your local changes would be overwritten by revert.\nhint: commit your changes or stash them to proceed.\nfatal: revert failed';
+              const t = c2.head['pay-api/deployment.yaml'].replace('pay-api:1.9.5', 'pay-api:1.9.4'); c2.head['pay-api/deployment.yaml'] = t; s.edited['pay-api/deployment.yaml'] = t;
+              const nsha = nextSha(c2); c2.reverted = true; c2.log.unshift([nsha, 'Revert "pay-api: release 1.9.5 (PR #812)"', 'tum', KG.oncall.hhmm(c2)]); c2.unpushed.push(nsha);
+              return `[main ${nsha}] Revert "pay-api: release 1.9.5 (PR #812)"\n 1 file changed, 1 insertion(+), 1 deletion(-)`; } },
+          { re: /^git push\b.*$/,
+            out: s => { const c2 = s.cluster; if (!c2.unpushed.length) return 'Everything up-to-date';
+              const from = c2.pushedSha, to = c2.log[0][0]; c2.pushedSha = to; c2.headSha = to; c2.unpushed = []; c2.pushAt = c2.clock;
+              return `To github.com:chaipay/chaipay-gitops.git\n   ${from}..${to}  main -> main\n(ArgoCD webhook: root, pay-api, ledger refresh — auto-sync ~1 minute mein)`; } },
+          { re: /^git pull\b.*$/, out: 'Already up to date.' },
+          { re: /^git\b.*$/, err: true, out: 'Is shift mein git ke yeh commands chalte hain: log --oneline · show <sha> · status · diff · commit -am "…" · revert <sha> --no-edit · push' },
+        ],
+        files: {
+          'runbook.md': { desc: 'GitOps on-call runbook', content: RUNBOOK, apply: () => ({ err: 'error: error parsing runbook.md: yeh runbook hai, manifest nahi — cat runbook.md' }) },
+          'pay-api/deployment.yaml': { editable: true, desc: 'git: pay-api Deployment', content: files0['pay-api/deployment.yaml'], saveTip: 'Ab git commit -am "…" aur git push (ArgoCD git se lagata hai)', apply: () => ({ err: '(simulator ne roka) GitOps: kubectl apply nahi — git commit -am "…" aur git push. ArgoCD lagayega.' }) },
+          'apps/pay-api.yaml': { editable: true, desc: 'git: pay-api ka ArgoCD Application (root app banata hai)', content: files0['apps/pay-api.yaml'], saveTip: 'Ab git commit -am "…" aur git push (root app is Application ko sync karega)', apply: () => ({ err: '(simulator ne roka) GitOps: Application bhi git se — git commit -am "…" aur git push.' }) },
+          'ledger/migrate-job.yaml': { editable: true, desc: 'git: ledger migration Job', content: files0['ledger/migrate-job.yaml'], saveTip: 'Ab git commit -am "…" aur git push', apply: () => ({ err: '(simulator ne roka) GitOps: kubectl apply nahi — git commit -am "…" aur git push.' }) },
+        },
+        successText: `<b>Shaam ki kahani (root cause chain):</b> PR #812 ka image tag 1.9.5 ECR mein tha hi nahi → pay-api Degraded; auto-sync par <code>argocd app rollback</code> band, kubectl ka badlaav selfHeal ne palta → <code>git revert</code> + push (1) →
+          pay-api theek hua toh dikha ki Ravi ka HPA (git ke bahar) 8 maangta hai aur selfHeal git ke 3 par lautata hai (2) → <code>ignoreDifferences</code> + <code>RespectIgnoreDifferences=true</code> →
+          ledger ka migration Job usi naam se naye template ke saath — Job ka template immutable (3) → har migration ka apna naam.<br>
+          <b>Seekh:</b> GitOps mein sach git hai — wapas jaana bhi naya commit (revert) hai. Har field ka ek hi malik ho (replicas = HPA). Jo object badalta nahi (Job), use badlo mat — naya banao.<br>
+          <b>Postmortem action items:</b> CI mein "image tag ECR mein hai?" jaanch merge se pehle · HPA bhi git mein · migration Jobs ka versioned naam (ya PreSync hook + BeforeHookCreation) · SyncFailed par page, sirf warning nahi.`,
+        solution: [
+          'argocd app get pay-api', `kubectl describe pod ${NEW}-k2x7q`, 'git log --oneline', 'git show a1b2c3d', 'git revert a1b2c3d --no-edit', 'git push', 'kubectl get pods', 'argocd app get pay-api',
+          'kubectl get hpa', 'kubectl get events', 'argocd app diff pay-api',
+          { edit: 'apps/pay-api.yaml', change: [['  syncPolicy:\n    automated:\n      prune: true\n      selfHeal: true\n', '  ignoreDifferences:\n  - group: apps\n    kind: Deployment\n    jsonPointers:\n    - /spec/replicas\n  syncPolicy:\n    automated:\n      prune: true\n      selfHeal: true\n    syncOptions:\n    - RespectIgnoreDifferences=true\n']] },
+          'git commit -am "pay-api: HPA ke replicas ignore (RespectIgnoreDifferences)"', 'git push', 'kubectl get deploy pay-api', 'kubectl get deploy pay-api',
+          'argocd app get ledger', 'argocd app sync ledger', 'kubectl get jobs',
+          { edit: 'ledger/migrate-job.yaml', change: [['  name: ledger-migrate\n', '  name: ledger-migrate-0042\n']] }, 'git commit -am "ledger: migration job ka versioned naam"', 'git push', 'kubectl get jobs',
+        ],
+      };
+    }
+    KG.oncall.add({ id: 'gitops', start: 20 * 60 + 30, INC, reconcile, views, build });
+  })();
+
+  addLab('argoboss', { type: 'oncall', id: 'oncall-gitops', shift: 'gitops', title: '📟 On-call Shift: release train ki shaam — GitOps (3 alerts)' }, {
+    objectives: ['📟 <b>On-call shift:</b> GitOps ke 3 jude alerts — git revert se rollback, HPA vs selfHeal, immutable Job'],
+    success: ['Main GitOps cluster ko git ke raaste theek kar sakta hoon — revert, replicas ki malkiyat, immutable objects'],
+    cards: [{ front: 'ArgoCD auto-sync ON hai aur kharab release aa gayi — rollback kaise?', back: '<code>git revert &lt;sha&gt;</code> + <code>git push</code>. <code>argocd app rollback</code> auto-sync par chalta hi nahi; kubectl se badla toh selfHeal palat deta hai.' },
+      { front: 'HPA aur ArgoCD selfHeal replicas par lad rahe hain (8 → 3 → 8) — ilaaj?', back: 'Application mein <code>ignoreDifferences</code> (<code>/spec/replicas</code>) + <code>syncOptions: RespectIgnoreDifferences=true</code> — ya replicas git se hata do (dhyan: hatate hi ek baar default 1).' }],
+  });
+
+  /* =====================================================================
+     📟 Shift 'spot' — karpenterboss: sale ki raat, spot ka khel (21:00 se)
+       1 NodePoolLimitReached     limits.cpu 64 bhar gaya → "exceed limits for nodepool" → limit badhao
+       2 SpotCapacityUnavailable  sirf spot + sirf m6i.2xlarge → InsufficientInstanceCapacity har AZ mein
+                                  → on-demand fallback ya zyada families (Karpenter khud sasta chunta hai)
+       3 EvictionStorm            peak utra, budgets nodes "100%" + consolidateAfter 0s → aadhe nodes ek
+                                  saath → pay-api ke pods ek saath evict → budgets "10%" + consolidateAfter 5m
+     ===================================================================== */
+  (function () {
+    const NP_FILE = `apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values: ["spot"]                 # cost team: "sirf spot"
+      - key: karpenter.k8s.aws/instance-family
+        operator: In
+        values: ["m6i"]
+      - key: karpenter.k8s.aws/instance-size
+        operator: In
+        values: ["2xlarge"]
+  limits:
+    cpu: "64"
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 0s
+    budgets:
+    - nodes: "100%"                      # cost team: "raat ko jaldi sasta karo"
+`;
+    const RUNBOOK = `# ChaiPay Karpenter on-call runbook (NodePool "default")
+Pending pods:  kubectl get pods · kubectl describe pod <pod>   (Events: default-scheduler + karpenter)
+NodePool:      kubectl get nodepool · kubectl describe nodepool default   (Limits vs Resources)
+Nodes:         kubectl get nodeclaims · kubectl get nodes -L karpenter.sh/capacity-type,node.kubernetes.io/instance-type
+Karpenter:     kubectl logs -n kube-system deploy/karpenter
+NodePool file (git): nodepool-default.yaml → vi, Save, kubectl apply -f nodepool-default.yaml
+
+Spot: ek hi instance type + ek hi capacity type = ek hi "pool" — AWS ke paas na ho toh kuch nahi milta.
+      Karpenter ko CHUNNE do: zyada families / sizes, aur on-demand fallback — woh khud sabse sasta leta hai.
+Disruption: budgets (kitne nodes ek saath) + consolidateAfter (kitni der shaant rahe tab).
+
+Mat karo: NodePool / NodeClaim / nodes delete · karpenter Deployment scale 0 · pay-api scale down
+`;
+    const INC = [
+      { id: 'NodePoolLimitReached', sev: '🔴 SEV1', text: 'Sale ka peak: 10 pods (pay-api + settlement) 6 min se Pending. Karpenter naye nodes nahi la raha.',
+        verify: /^kubectl (describe|get) (nodepools?|np|nodeclaims?|nc)\b|^kubectl logs\b.*karpenter/, verifyText: 'NodePool / NodeClaims dobara dekho (kubectl get nodeclaims)',
+        hints: ['kubectl describe pod <Pending pod> — Events mein karpenter kya kehta hai?',
+          '"all available instance types exceed limits for nodepool" — kubectl describe nodepool default: Limits cpu 64, Resources cpu 64. Bhar gaya.',
+          'vi nodepool-default.yaml — limits cpu: "64" ko "128" karo, Save, kubectl apply -f nodepool-default.yaml, phir kubectl get nodeclaims'] },
+      { id: 'SpotCapacityUnavailable', sev: '🔴 SEV1', text: 'Limit badhi, par Karpenter ka har naya node launch fail — pods abhi bhi Pending.',
+        verify: /^kubectl get (pods?|po|nodeclaims?|nc|nodes?|no)\b|^kubectl logs\b.*karpenter/, verifyText: 'pods / nodeclaims dobara dekho (kubectl get pods)',
+        hints: ['kubectl get nodeclaims aur kubectl logs -n kube-system deploy/karpenter — launch kyun fail?',
+          'InsufficientInstanceCapacity: AWS ke paas m6i.2xlarge SPOT teeno AZ mein nahi. NodePool sirf yahi ek pool maangta hai (ek family, ek size, sirf spot).',
+          'vi nodepool-default.yaml — capacity-type values ["spot", "on-demand"] karo (Karpenter pehle spot dhoondhta hai, na mile toh on-demand), chaaho toh families bhi badhao ["m6i", "m5", "c6i", "r6i"]. Save, apply, phir kubectl get pods'] },
+      { id: 'EvictionStorm', sev: '🟠 SEV2', text: 'Peak utra — aur pay-api ke 5xx achanak upar: Karpenter ek saath kai nodes hata raha hai, pay-api ke pods ek saath evict.',
+        verify: /^kubectl logs\b.*karpenter|^kubectl get (nodes?|no|nodeclaims?|nc|events?|pods?|po)\b/, verifyText: 'Karpenter ka disruption dobara dekho (kubectl logs -n kube-system deploy/karpenter)',
+        hints: ['kubectl logs -n kube-system deploy/karpenter — "disrupting node(s)" mein kitne nodes ek saath? kubectl get events',
+          'NodePool disruption: budgets nodes "100%" = jitne chaho ek saath; consolidateAfter 0s = turant. Peak ke baad aadha cluster ek jhatke mein.',
+          'vi nodepool-default.yaml — budgets nodes: "10%" aur consolidateAfter: 5m, Save, kubectl apply -f nodepool-default.yaml, phir kubectl logs -n kube-system deploy/karpenter'] },
+    ];
+    /* ---------- model ---------- */
+    const cpuOf = v => { const m = String(v == null ? '' : v).match(/^(\d+)(m)?$/); return m ? Number(m[1]) / (m[2] ? 1000 : 1) : NaN; };
+    const secOf = v => { if (v === 'Never') return Infinity; const m = String(v).match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/); return m && String(v) ? (Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0)) : NaN; };
+    const ZONES = ['ap-south-1a', 'ap-south-1b', 'ap-south-1c'];
+    const canLaunch = c => c.np.cap.includes('on-demand') || c.np.fam.filter(f => f !== 'm6i').length >= 1;
+    const budgetOk = c => { const b = c.np.budget; const m = String(b).match(/^(\d+)(%)?$/); return m && (m[2] ? Number(m[1]) <= 20 : Number(m[1]) <= 2); };
+    function launchType(c, i) {
+      if (c.np.fam.some(f => f !== 'm6i')) { const f = c.np.fam.filter(x => x !== 'm6i'); return { type: f[i % f.length] + '.2xlarge', cap: 'spot' }; }
+      return { type: 'm6i.2xlarge', cap: 'on-demand' };
+    }
+    function reconcile(c) {
+      const need = 3;   // 10 pods ≈ 24 vCPU = 3 naye 8-vCPU nodes
+      if (c.np.limit >= 96 && !canLaunch(c)) c.iceTries++;
+      if (c.np.limit >= 96 && canLaunch(c) && c.extra.length < need) { while (c.extra.length < need) { const l = launchType(c, c.extra.length); c.extra.push({ name: 'default-' + ['k8x2p', 'r4n7q', 'w2c9m'][c.extra.length], type: l.type, cap: l.cap, zone: ZONES[c.extra.length], born: c.clock, ready: false }); } }
+      c.extra.forEach(n => { if (!n.ready && c.clock > n.born) n.ready = true; });
+      if (c.storm) {
+        if (c.clock - c.lastDisrupt >= (budgetOk(c) && c.np.after >= 60 ? 5 : 1)) {
+          const k = budgetOk(c) && c.np.after >= 60 ? 1 : 5;
+          c.lastDisrupt = c.clock; c.disrupts.push({ t: c.clock, nodes: k, pods: k * 4, ok: k === 1 });
+        }
+      }
+    }
+    const pendingN = c => c.extra.filter(n => n.ready).length >= 3 ? 0 : 10;
+    INC[0].fixed = c => c.np.limit >= 96;
+    INC[1].fixed = c => pendingN(c) === 0;
+    INC[2].fixed = c => budgetOk(c) && c.np.after >= 60;
+    INC[2].onFire = c => { c.storm = true; c.lastDisrupt = c.clock; c.disrupts.push({ t: c.clock, nodes: 5, pods: 20, ok: false }); };
+    /* ---------- views ---------- */
+    const BASE = Array.from({ length: 8 }, (_, i) => ({ name: 'ip-10-0-' + (12 + i % 3) + '-' + (40 + i * 9) + '.ap-south-1.compute.internal', type: 'm6i.2xlarge', cap: 'spot', zone: ZONES[i % 3] }));
+    const PEND = ['pay-api-6b8d7c9f5-p1x7k', 'pay-api-6b8d7c9f5-q2m4t', 'pay-api-6b8d7c9f5-r3n8w', 'pay-api-6b8d7c9f5-s4b2z', 'pay-api-6b8d7c9f5-t5c6v', 'pay-api-6b8d7c9f5-u6d1j', 'settlement-7f4c2-a8k3m', 'settlement-7f4c2-b9l4n', 'settlement-7f4c2-c1m5p', 'settlement-7f4c2-d2n6q'];
+    const used = c => 64 + c.extra.filter(n => n.ready).length * 8;
+    function views(c) {
+      const p = pendingN(c), ready = c.extra.filter(n => n.ready);
+      const lastStorm = c.disrupts.length ? c.disrupts[c.disrupts.length - 1] : null, stormNow = lastStorm && lastStorm.t === c.clock && !lastStorm.ok;
+      const evMsg = c.np.limit < 96 ? 'Failed to schedule pod, all available instance types exceed limits for nodepool: "default"' : !canLaunch(c) ? 'Failed to schedule pod, could not launch: all requested instance types were unavailable during launch' : '';
+      c.pods = Array.from({ length: 8 }, (_, i) => ({ name: 'pay-api-6b8d7c9f5-' + ['a1kx9', 'b2mq8', 'c3nw7', 'd4pz6', 'e5qt5', 'f6rv4', 'g7sb3', 'h8tc2'][i], ready: stormNow && i < 4 ? '0/1' : '1/1', status: stormNow && i < 4 ? 'ContainerCreating' : 'Running', restarts: 0, age: stormNow && i < 4 ? '20s' : '3h', node: BASE[i].name, ip: '10.0.1' + (2 + i % 3) + '.' + (50 + i) }))
+        .concat(PEND.map((n, i) => ({ name: n, ready: p ? '0/1' : '1/1', status: p ? 'Pending' : 'Running', restarts: 0, age: (6 + c.clock) + 'm', node: p ? '<none>' : (ready[i % 3] || {}).name, ip: p ? '<none>' : '10.0.1' + (2 + i % 3) + '.' + (120 + i),
+          describe: `Name:             ${n}\nNamespace:        payments\nNode:             ${p ? '<none>' : (ready[i % 3] || {}).name}\nStatus:           ${p ? 'Pending' : 'Running'}\nRequests:\n  cpu:     2\n  memory:  4Gi\nEvents:\n  Type     Reason            Age   From               Message\n  ----     ------            ----  ----               -------\n` +
+            (p ? `  Warning  FailedScheduling  1m    default-scheduler  0/8 nodes are available: 8 Insufficient cpu. preemption: 0/8 nodes are available: 8 No preemption victims found for incoming pod.\n  Warning  FailedScheduling  30s   karpenter          ${evMsg}` : '  Normal   Nominated         2m    karpenter          Pod should schedule on: nodeclaim/' + ((ready[i % 3] || {}).name || '')) })));
+      c.nodes = BASE.map(n => ({ name: n.name, status: 'Ready', roles: '<none>', age: '3h', version: 'v1.33.4-eks-8d1c2f5', instanceType: n.type, capacityType: n.cap, zone: n.zone, nodepool: 'default' }))
+        .concat(ready.map(n => ({ name: 'ip-10-0-' + (12 + ZONES.indexOf(n.zone)) + '-2' + n.name.slice(-2).replace(/\D/g, '1') + '.ap-south-1.compute.internal', status: 'Ready', roles: '<none>', age: (c.clock - n.born) + 'm', version: 'v1.33.4-eks-8d1c2f5', instanceType: n.type, capacityType: n.cap, zone: n.zone, nodepool: 'default' })));
+      const ncRows = c.extra.map(n => [n.name, n.type, n.cap, n.zone, n.ready ? 'ip-10-0-…' : '', n.ready ? 'True' : 'Unknown', (c.clock - n.born) + 'm']);
+      const iceRows = c.np.limit >= 96 && !canLaunch(c) ? [['default-' + ['h3k9x', 'j7m2q', 'v5n8c'][c.iceTries % 3], 'm6i.2xlarge', 'spot', '', '', 'False', '10s']] : [];
+      c.custom = {
+        nodepool: { names: ['nodepool', 'nodepools', 'np'], cols: ['NAME', 'NODECLASS', 'NODES', 'READY', 'AGE'], items: [{ name: 'default', row: ['default', String(8 + ready.length), 'True', '90d'],
+          describe: `Name:         default\nAPI Version:  karpenter.sh/v1\nKind:         NodePool\nSpec:\n  Disruption:\n    Budgets:\n      Nodes:               ${c.np.budget}\n    Consolidate After:     ${c.np.afterRaw}\n    Consolidation Policy:  WhenEmptyOrUnderutilized\n  Limits:\n    Cpu:  ${c.np.limitRaw}\n  Template:\n    Spec:\n      Requirements:\n        Key:       karpenter.sh/capacity-type\n        Operator:  In\n        Values:    ${c.np.cap.join(', ')}\n        Key:       karpenter.k8s.aws/instance-family\n        Operator:  In\n        Values:    ${c.np.fam.join(', ')}\nStatus:\n  Resources:\n    Cpu:     ${used(c)}\n    Memory:  ${used(c) * 4}Gi\n    Nodes:   ${8 + ready.length}` }] },
+        nodeclaim: { names: ['nodeclaim', 'nodeclaims', 'nc'], cols: ['NAME', 'TYPE', 'CAPACITY', 'ZONE', 'NODE', 'READY', 'AGE'], items: BASE.map((n, i) => ({ name: 'default-' + ['a1b2c', 'd3e4f', 'g5h6i', 'j7k8l', 'm9n0p', 'q1r2s', 't3u4v', 'w5x6y'][i], row: [n.type, n.cap, n.zone, n.name.split('.')[0], 'True', '3h'] }))
+          .concat(ncRows.map(r => ({ name: r[0], row: r.slice(1) })), iceRows.map(r => ({ name: r[0], row: r.slice(1),
+            describe: `Name:         ${r[0]}\nStatus:\n  Conditions:\n    Type:     Launched\n    Status:   False\n    Reason:   LaunchFailed\n    Message:  creating instance, insufficient capacity, all requested instance types were unavailable during launch\nEvents:\n  Warning  InsufficientCapacityError  10s  karpenter  NodeClaim ${r[0]} event: creating instance, insufficient capacity, all requested instance types were unavailable during launch` }))) },
+      };
+      const ev = [['LAST SEEN', 'TYPE', 'REASON', 'OBJECT', 'MESSAGE']];
+      if (p && evMsg) ev.push(['30s', 'Warning', 'FailedScheduling', 'pod/' + PEND[0], evMsg]);
+      c.disrupts.slice(-2).forEach(d => ev.push([(c.clock - d.t) < 1 ? '20s' : (c.clock - d.t) + 'm', 'Normal', 'DisruptionTerminating', 'node/' + BASE[d.t % 8].name, `Disrupting Node: Underutilized/Replace (${d.nodes} node${d.nodes > 1 ? 's' : ''} ek saath)`]));
+      c.events = ev.length > 1 ? tbl(ev).split('\n') : ['No events found in payments namespace.'];
+    }
+    function karpLogs(c) {
+      const L = [], ts = t => `2026-11-25T15:${String(30 + t).padStart(2, '0')}:0${t % 10}.118Z`;
+      if (c.np.limit < 96) L.push(`{"level":"ERROR","time":"${ts(c.clock)}","logger":"controller","message":"could not schedule pod","controller":"provisioner","Pod":{"name":"${PEND[0]}","namespace":"payments"},"error":"all available instance types exceed limits for nodepool: \\"default\\""}`);
+      else if (!canLaunch(c)) ZONES.forEach(z => L.push(`{"level":"ERROR","time":"${ts(c.clock)}","logger":"controller","message":"failed launching nodeclaim","controller":"nodeclaim.lifecycle","error":"creating instance, insufficient capacity, with fleet error(s), InsufficientInstanceCapacity: We currently do not have sufficient m6i.2xlarge capacity in the Availability Zone you requested (${z}). Our system will be working on provisioning additional capacity."}`));
+      else c.extra.forEach(n => L.push(`{"level":"INFO","time":"${ts(n.born)}","logger":"controller","message":"launched nodeclaim","controller":"nodeclaim.lifecycle","NodeClaim":{"name":"${n.name}"},"instance-type":"${n.type}","zone":"${n.zone}","capacity-type":"${n.cap}"}`));
+      c.disrupts.slice(-3).forEach(d => L.push(`{"level":"INFO","time":"${ts(d.t)}","logger":"controller","message":"disrupting node(s)","controller":"disruption","reason":"underutilized","decision":"replace","disrupted-node-count":${d.nodes},"replacement-node-count":${Math.max(1, d.nodes - 2)},"pod-count":${d.pods}}`));
+      if (c.storm && budgetOk(c) && c.np.after >= 60) L.push(`(simulator: naya budget ${c.np.budget} = ek baar mein max 1 node (11 ka 10%), aur har badlaav ke baad ${c.np.afterRaw} shaanti — agla consolidation dheere)`);
+      return '(simulator: Karpenter ke JSON log — zaroori fields)\n' + (L.join('\n') || '(koi naya error nahi)');
+    }
+    function build({ risky }) {
+      const c = { clock: 0, np: { limit: 64, limitRaw: '64', cap: ['spot'], fam: ['m6i'], budget: '100%', after: 0, afterRaw: '0s' }, extra: [], iceTries: 0, storm: false, lastDisrupt: 0, disrupts: [] };
+      return {
+        title: '📟 On-call shift: sale ki raat — spot ka khel (Karpenter)',
+        instructions: 'Tum aaj raat ChaiPay ke platform on-call ho (21:00 se). Nodes Karpenter laata hai (NodePool "default"). Har command = 1 minute. Ek deewar giregi toh agli dikhegi. Madad: cat runbook.md',
+        goal: `📟 Pehla alert (21:00): <b>${INC[0].sev} ${INC[0].id}</b> — ${INC[0].text}<br>
+          Har alert: pod ke Events → NodePool / NodeClaims / Karpenter log → <code>nodepool-default.yaml</code> theek karo → apply → <b>pakka karo</b>.
+          Khatarnaak commands roke jaayenge aur report card mein ginte hain.`,
+        cluster: c,
+        responses: [
+          risky(/^kubectl delete (?:nodepools?|np|nodeclaims?|nc|nodes?|no|ec2nodeclass\S*)\b.*$/, 'NodePool / NodeClaim / node delete — Karpenter us par ke saare pods ek saath nikaal deta, peak par aur Pending.'),
+          risky(/^kubectl scale\b.*\b(?:karpenter|pay-api)\b.*--replicas[ =]0\b.*$/, 'scale 0 — Karpenter band = koi naya node nahi; pay-api band = payments band.'),
+          risky(/^kubectl (?:cordon|drain)\b.*$/, 'cordon / drain — peak par capacity aur kam; masla NodePool ki seemaon mein hai.'),
+          { re: /^kubectl (?:edit|patch)\b.*\bnodepools?\b.*$/, err: true, out: '(simulator) NodePool git mein hai: vi nodepool-default.yaml → Save → kubectl apply -f nodepool-default.yaml' },
+          { re: /^kubectl logs\b.*\bkarpenter\b.*$/, out: s => karpLogs(s.cluster) },
+        ],
+        files: {
+          'runbook.md': { desc: 'Karpenter on-call runbook', content: RUNBOOK, apply: () => ({ err: 'error: error parsing runbook.md: yeh runbook hai, manifest nahi — cat runbook.md' }) },
+          'nodepool-default.yaml': {
+            editable: true, desc: 'git: NodePool default', content: NP_FILE,
+            apply: (s, text, docs) => {
+              const c2 = s.cluster, d = (docs || [])[0] || {}, sp = d.spec || {}, reqs = ((((sp.template || {}).spec) || {}).requirements) || [], dis = sp.disruption || {};
+              if (d.kind !== 'NodePool' || (d.metadata || {}).name !== 'default') return { err: '(simulator ne roka) is file mein NodePool default hi rahe.' };
+              const inv = (f, v, pat) => ({ err: `The NodePool "default" is invalid: ${f}: Invalid value: "${v}": ${f} in body should match '${pat}'` });
+              const lim = (sp.limits || {}).cpu;
+              if (lim != null && isNaN(cpuOf(lim))) return { err: `Error from server (BadRequest): error when creating "nodepool-default.yaml": NodePool in version "v1" cannot be handled as a NodePool: quantities must match the regular expression '^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$'` };
+              const b = (dis.budgets || [])[0] || {};
+              if (b.nodes != null && !/^((100|[0-9]{1,2})%|[0-9]+)$/.test(String(b.nodes))) return inv('spec.disruption.budgets[0].nodes', b.nodes, '^((100|[0-9]{1,2})%|[0-9]+)$');
+              if (dis.consolidateAfter != null && !/^(([0-9]+(s|m|h))+|Never)$/.test(String(dis.consolidateAfter))) return inv('spec.disruption.consolidateAfter', dis.consolidateAfter, '^(([0-9]+(s|m|h))+|Never)$');
+              const vals = k => [].concat(((reqs.find(r => r && r.key === k) || {}).values) || []);
+              const cap = vals('karpenter.sh/capacity-type'), fam = vals('karpenter.k8s.aws/instance-family');
+              if (!cap.length || cap.some(x => !['spot', 'on-demand', 'reserved'].includes(x))) return { err: `(simulator) karpenter.sh/capacity-type ki values: "spot", "on-demand" (ya "reserved") — mila: ${JSON.stringify(cap)}` };
+              if (!fam.length) return { err: '(simulator ne roka) instance-family ki requirement mat hatao — warna GPU / bahut bade instance bhi aa sakte (bill shock).' };
+              if (cpuOf(lim) > 512) return { err: '(simulator ne roka) 512 vCPU se zyada nahi — limit bill ki suraksha bhi hai.' };
+              if (dis.consolidateAfter === 'Never') return { err: '(simulator ne roka) consolidateAfter: Never = khaali nodes bhi kabhi nahi hatenge (bill). Ruk-ruk kar karo: 5m + budget 10%.' };
+              const before = JSON.stringify(c2.np);
+              c2.np = { limit: cpuOf(lim), limitRaw: String(lim), cap, fam, budget: String(b.nodes == null ? '10%' : b.nodes), after: secOf(dis.consolidateAfter == null ? '0s' : dis.consolidateAfter), afterRaw: String(dis.consolidateAfter == null ? '0s' : dis.consolidateAfter) };
+              return 'nodepool.karpenter.sh/default ' + (before === JSON.stringify(c2.np) ? 'unchanged' : 'configured');
+            },
+          },
+        },
+        successText: `<b>Raat ki kahani (root cause chain):</b> NodePool ki <code>limits.cpu: 64</code> bhar chuki thi (1) → limit badhi toh agli deewar: sirf spot + sirf m6i.2xlarge = ek hi pool, aur AWS ke paas teeno AZ mein nahi (<code>InsufficientInstanceCapacity</code>) (2) →
+          on-demand fallback / zyada families se nodes aaye → peak utra toh <code>budgets: 100%</code> + <code>consolidateAfter: 0s</code> ne aadha cluster ek jhatke mein hataya (3).<br>
+          <b>Seekh:</b> Karpenter ko jitni zyada choice doge, utna behtar (aur sasta) chunega. Limit bill ki suraksha hai, par peak ka hisaab rakho. Sasta karna dheere-dheere: budgets + consolidateAfter (+ app ka PDB).<br>
+          <b>Postmortem action items:</b> sale se pehle limits ka hisaab · pay-api ke liye PDB · spot ke saath on-demand fallback hamesha · business hours mein disruption budget 0 (schedule) · NodePool badlaav PR review mein.`,
+        solution: [
+          `kubectl describe pod ${PEND[0]}`, 'kubectl describe nodepool default',
+          { edit: 'nodepool-default.yaml', change: [['    cpu: "64"', '    cpu: "128"']] }, 'kubectl apply -f nodepool-default.yaml', 'kubectl get nodeclaims',
+          'kubectl logs -n kube-system deploy/karpenter',
+          { edit: 'nodepool-default.yaml', change: [['values: ["spot"]                 # cost team: "sirf spot"', 'values: ["spot", "on-demand"]']] }, 'kubectl apply -f nodepool-default.yaml', 'kubectl get nodeclaims', 'kubectl get pods',
+          'kubectl logs -n kube-system deploy/karpenter',
+          { edit: 'nodepool-default.yaml', change: [['consolidateAfter: 0s', 'consolidateAfter: 5m'], ['- nodes: "100%"                      # cost team: "raat ko jaldi sasta karo"', '- nodes: "10%"']] }, 'kubectl apply -f nodepool-default.yaml',
+          'kubectl logs -n kube-system deploy/karpenter',
+        ],
+      };
+    }
+    KG.oncall.add({ id: 'spot', start: 21 * 60, INC, reconcile, views, build });
+  })();
+
+  addLab('karpenterboss', { type: 'oncall', id: 'oncall-spot', shift: 'spot', title: '📟 On-call Shift: sale ki raat — spot ka khel (3 alerts)' }, {
+    objectives: ['📟 <b>On-call shift:</b> Karpenter ki 3 deewarein — NodePool limit, spot capacity (ICE), aur consolidation ka eviction storm'],
+    success: ['Main Pending pods ko NodePool limit → spot capacity → disruption budget tak kram se sambhal sakta hoon'],
+    cards: [{ front: 'Karpenter log: InsufficientInstanceCapacity har AZ mein — NodePool mein kya badlo?', back: 'Choice badhao: <code>capacity-type: [spot, on-demand]</code> (spot pehle, na mile toh on-demand) aur zyada instance families/sizes. Ek type + sirf spot = ek hi pool.' },
+      { front: 'Peak ke baad Karpenter ne aadha cluster ek saath hataya — kya galat tha?', back: '<code>budgets: nodes "100%"</code> + <code>consolidateAfter: 0s</code>. Rakho jaise <code>nodes: "10%"</code> aur <code>consolidateAfter: 5m</code>, aur app ka PDB.' }],
+  });
+
+  /* =====================================================================
+     📟 Shift 'ship' — helmship: notify 3.3.0 release ki raat (22:15 se, Helm 4)
+       1 HelmReleaseStuck     CI runner upgrade ke beech mara → revision 14 pending-upgrade →
+                              "another operation … in progress" → helm rollback notify 13
+       2 NotifyDeployFailed   CI ka --reuse-values: naye chart ke defaults gayab → .Values.sms nil →
+                              Helm 4 ka teen-line template error → --reset-then-reuse-values / -f values-prod.yaml
+       3 NotifyRolloutStuck   chart 3.3.0 mein smsSecret → sms.apiKeySecret (default notify-sms) →
+                              CreateContainerConfigError: secret "notify-sms" not found → values-prod.yaml theek
+     Outputs 2026-11-25 ko kind + Helm v4.3.2 se milaye: history / list / status (pending-upgrade),
+     upgrade ka "another operation" error, rollback, --reuse-values ka nil pointer (Helm 4 format), secret error.
+     ===================================================================== */
+  (function () {
+    const CHART = `oci://${ECR.replace('.dkr.ecr.', '.dkr.ecr.')}/charts/notify`;
+    const DEF = {
+      '3.2.1': { replicaCount: 2, image: { repository: ECR + '/notify', tag: '3.2.1' }, smsSecret: 'notify-sms' },
+      '3.3.0': { replicaCount: 2, image: { repository: ECR + '/notify', tag: '3.3.0' }, sms: { provider: 'gupshup', apiKeySecret: 'notify-sms' } },
+    };
+    const SHOW = {
+      '3.2.1': `replicaCount: 2\nimage:\n  repository: ${ECR}/notify\n  tag: "3.2.1"\n# SMS gateway ki API key wala Secret\nsmsSecret: notify-sms\n`,
+      '3.3.0': `replicaCount: 2\nimage:\n  repository: ${ECR}/notify\n  tag: "3.3.0"\n# 3.3.0: SMS ki config ek jagah (purana "smsSecret" ab NAHI padha jaata)\nsms:\n  provider: gupshup\n  apiKeySecret: notify-sms     # SMS gateway ki API key wala Secret\n`,
+    };
+    const VALUES_PROD = `# notify — production values (git: chaipay-deploy/notify/values-prod.yaml)
+replicaCount: 2
+smsSecret: notify-gupshup-key     # prod ka asli Secret
+`;
+    const CI = `#!/bin/sh
+# CI (GitHub Actions) ka deploy step — 21:58 par runner OOM se beech mein mara
+helm upgrade notify ${CHART} \\
+  --version 3.3.0 -n payments \\
+  --reuse-values --set image.tag=3.3.0
+`;
+    const RUNBOOK = `# ChaiPay Helm on-call runbook (Helm 4)
+Release:   helm list -n payments · helm status notify -n payments · helm history notify -n payments
+Values:    helm get values notify -n payments [--all]      (USER-SUPPLIED vs poori computed)
+Chart:     helm show values ${CHART} --version <v>
+Deploy:    bash ci-deploy.sh   (CI wala command — cat ci-deploy.sh)
+           ya haath se: helm upgrade notify ${CHART} --version 3.3.0 -n payments -f values-prod.yaml
+Wapas:     helm rollback notify <revision> -n payments     (naya revision banta hai, history kabhi nahi mitti)
+Pods:      kubectl get pods · kubectl describe pod <pod> · kubectl get secrets
+
+Yaad rakho:
+- pending-upgrade / pending-rollback = pichhla Helm process beech mein mara; naya upgrade "another operation" bolega.
+- --reuse-values = PICHHLI release ki values + PURANE chart ke defaults. Chart badla toh naye defaults gayab.
+  --reset-then-reuse-values = NAYE chart ke defaults + pichhli values. Behtar: values file (-f) git se.
+
+Mat karo: helm uninstall (saare pods + history gaye) · sh.helm.release.* Secrets haath se delete ·
+          app ke Secrets delete / copy
+`;
+    const INC = [
+      { id: 'HelmReleaseStuck', sev: '🟠 SEV2', text: 'CI: notify 3.3.0 ka deploy fail — "another operation (install/upgrade/rollback) is in progress". 21:58 par CI runner OOM se mara tha.',
+        verify: /^helm (list|ls|history|hist|status)\b/, verifyText: 'release dobara dekho (helm list -n payments)',
+        hints: ['helm list -n payments aur helm history notify -n payments — aakhri revision ka STATUS?',
+          'Revision 14 "pending-upgrade" (Preparing upgrade) — jo Helm process use chala raha tha, woh mar chuka. Aakhri theek revision 13 (deployed).',
+          'helm rollback notify 13 -n payments — naya revision banega, lock khulega. Phir helm list -n payments'] },
+      { id: 'NotifyDeployFailed', sev: '🔴 SEV1', text: 'CI dobara chala — notify deploy phir fail: "nil pointer evaluating interface {}.provider". 3.3.0 ka SMS fix aaj raat jaana hai.',
+        verify: /^helm (list|ls|history|hist|status)\b|^kubectl get (pods?|po)\b/, verifyText: 'release dobara dekho (helm status notify -n payments)',
+        hints: ['bash ci-deploy.sh (ya cat ci-deploy.sh) — CI kaun se flags deta hai? Error kis value par hai?',
+          '--reuse-values = pichhli release ki values + PURANE chart (3.2.1) ke defaults. 3.3.0 ka naya "sms:" block default mein hai — reuse ne use gira diya. helm show values … --version 3.3.0',
+          'helm upgrade notify ' + CHART + ' --version 3.3.0 -n payments --reset-then-reuse-values --set image.tag=3.3.0   (pichhli values mein tag 3.2.1 pinned hai — isliye --set), ya -f values-prod.yaml; phir helm status notify -n payments'] },
+      { id: 'NotifyRolloutStuck', sev: '🔴 SEV1', text: 'notify 3.3.0 deploy ho gaya, par naya pod shuru hi nahi ho raha — rollout atka (purane 3.2.1 pods hi SMS bhej rahe).',
+        verify: /^kubectl get (pods?|po)\b|^kubectl rollout status\b/, verifyText: 'pods dobara dekho (kubectl get pods)',
+        hints: ['kubectl get pods aur kubectl describe pod <naya notify pod> — Events / State kya kehta hai?',
+          'secret "notify-sms" not found. kubectl get secrets — prod ka Secret "notify-gupshup-key" hai. values-prod.yaml mein "smsSecret" hai — par 3.3.0 ab "sms.apiKeySecret" padhta hai (helm show values … --version 3.3.0).',
+          'vi values-prod.yaml — jodo:\nsms:\n  provider: gupshup\n  apiKeySecret: notify-gupshup-key\nSave, phir helm upgrade notify ' + CHART + ' --version 3.3.0 -n payments -f values-prod.yaml, phir kubectl get pods'] },
+    ];
+    /* ---------- model ---------- */
+    const merge = (a, b) => { const o = JSON.parse(JSON.stringify(a || {})); Object.keys(b || {}).forEach(k => { o[k] = b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && o[k] && typeof o[k] === 'object' ? merge(o[k], b[k]) : JSON.parse(JSON.stringify(b[k])); }); return o; };
+    const latest = c => c.revs[c.revs.length - 1];
+    const deployed = c => c.revs.slice().reverse().find(r => r.status === 'deployed');
+    const toYaml = (o, ind) => Object.keys(o).map(k => (typeof o[k] === 'object' && o[k] ? `${ind || ''}${k}:\n` + toYaml(o[k], (ind || '') + '  ') : `${ind || ''}${k}: ${o[k]}`)).join('\n');
+    const okSecret = c => { const d = deployed(c); return d.chart === '3.3.0' && ((d.computed.sms || {}).apiKeySecret === 'notify-gupshup-key'); };
+    function reconcile() {}
+    INC[0].fixed = c => !/^pending/.test(latest(c).status);
+    INC[1].fixed = c => deployed(c).chart === '3.3.0';
+    INC[2].fixed = c => okSecret(c);
+    /* ---------- views ---------- */
+    function views(c) {
+      const d = deployed(c), broken = d.chart === '3.3.0' && !okSecret(c);
+      const old = [['notify-7c4f9b8d2-k2x7q', 'node-1', '10.0.12.71'], ['notify-7c4f9b8d2-m4p8t', 'node-2', '10.0.13.71']];
+      const rows = d.chart === '3.3.0' && !broken ? [['notify-5e8a2d6c1-r8w3z', 'node-1', '10.0.12.88'], ['notify-5e8a2d6c1-c5n1v', 'node-3', '10.0.14.88']] : old;
+      c.pods = rows.map(([n, node, ip]) => ({ name: n, app: 'notify', ready: '1/1', status: 'Running', restarts: 0, age: d.chart === '3.3.0' && !broken ? '1m' : '6d', node, ip }))
+        .concat(broken ? [{ name: 'notify-6dfbfc4f5-x88pk', app: 'notify', ready: '0/1', status: 'CreateContainerConfigError', restarts: 0, age: (c.clock - c.brokeAt) + 'm', node: 'node-3', ip: '10.0.14.92',
+          describe: `Name:             notify-6dfbfc4f5-x88pk\nNamespace:        payments\nStatus:           Pending\nContainers:\n  notify:\n    Image:          ${ECR}/notify:${(d.computed.image || {}).tag}\n    State:          Waiting\n      Reason:       CreateContainerConfigError\n    Environment:\n      SMS_PROVIDER:  gupshup\n      SMS_API_KEY:   <set to the key 'apiKey' in secret '${(d.computed.sms || {}).apiKeySecret}'>  Optional: false\nEvents:\n  Type     Reason     Age                From     Message\n  ----     ------     ----               ----     -------\n  Warning  Failed     20s (x${3 + c.clock - c.brokeAt} over ${Math.max(1, c.clock - c.brokeAt)}m)  kubelet  Error: secret "${(d.computed.sms || {}).apiKeySecret}" not found` }] : [])
+        .concat([{ name: 'pay-api-6b8d7c-a1', app: 'pay-api', ready: '1/1', status: 'Running', restarts: 0, age: '6d', node: 'node-1', ip: '10.0.12.41' }]);
+      c.deployments = [{ name: 'notify', ready: '2/2', upToDate: broken ? 1 : 2, available: 2, age: '120d' }, { name: 'pay-api', ready: '1/1', upToDate: 1, available: 1, age: '120d' }];
+      c.secrets = [{ name: 'ledger-db', type: 'Opaque', dataCount: 2, age: '120d' }, { name: 'notify-gupshup-key', type: 'Opaque', dataCount: 1, age: '120d' }]
+        .concat(c.revs.map(r => ({ name: 'sh.helm.release.v1.notify.v' + r.rev, type: 'helm.sh/release.v1', dataCount: 1, age: r.at != null ? Math.max(1, c.clock - r.at) + 'm' : r.age })));
+      c.events = broken ? [tbl([['LAST SEEN', 'TYPE', 'REASON', 'OBJECT', 'MESSAGE'], ['20s', 'Warning', 'Failed', 'pod/notify-6dfbfc4f5-x88pk', `Error: secret "${(d.computed.sms || {}).apiKeySecret}" not found`]])] : ['No events found in payments namespace.'];
+      c.events = c.events.join('\n').split('\n');
+    }
+    function histTable(c) {
+      return tbl([['REVISION', 'UPDATED', 'STATUS', 'CHART', 'APP VERSION', 'DESCRIPTION']].concat(c.revs.map(r => [r.rev, r.updated, r.status, 'notify-' + r.chart, r.chart, r.desc])));
+    }
+    function upgrade(s, args) {
+      const c = s.cluster;
+      if (/^pending/.test(latest(c).status)) return { err: 'Error: UPGRADE FAILED: another operation (install/upgrade/rollback) is in progress' };
+      const ver = (args.match(/--version[ =](\S+)/) || [])[1] || '3.3.0';
+      if (!DEF[ver]) return { err: `Error: failed to perform "FetchReference" on source: ${CHART.replace('oci://', '')}:${ver}: not found` };
+      if (!args.includes(CHART) && !/\boci:\/\/\S+\/charts\/notify\b/.test(args)) return { err: `(simulator) chart ka pata: ${CHART}` };
+      const files = [...args.matchAll(/(?:-f|--values)[ =](\S+)/g)].map(m => m[1]);
+      let userNew = {};
+      for (const f of files) {
+        if (f !== 'values-prod.yaml') return { err: `Error: open ${f}: no such file or directory` };
+        try { userNew = merge(userNew, (KG.yaml.parseAll((s.edited && s.edited[f] != null) ? s.edited[f] : s.files[f].content)[0]) || {}); } catch (e) { return { err: `Error: failed to parse ${f}: error converting YAML to JSON: yaml: line ${(e && e.line) || 1}: ${(e && e.message) || 'bad yaml'}` }; }
+      }
+      [...args.matchAll(/--set(?:-string)?[ =](\S+)/g)].forEach(m => m[1].split(',').forEach(kv => { const [k, v] = kv.split('='); const path = k.split('.'); let o = userNew; path.slice(0, -1).forEach(p => { o[p] = o[p] || {}; o = o[p]; }); o[path[path.length - 1]] = v; }));
+      const cur = deployed(c), reuse = /--reuse-values\b/.test(args), rtr = /--reset-then-reuse-values\b/.test(args), reset = /--reset-values\b/.test(args);
+      let defaults = DEF[ver], user;
+      if (reuse && !reset) { defaults = DEF[cur.chart]; user = merge(cur.user, userNew); }        // asli Helm: chart.Values = pichhle chart ki values
+      else if (rtr) user = merge(cur.user, userNew);
+      else if (!reset && !files.length && !/--set/.test(args)) user = cur.user;                    // kuch na diya → pichhli user values, naye defaults
+      else user = userNew;
+      const computed = merge(defaults, user);
+      if (ver === '3.3.0' && !(computed.sms && typeof computed.sms === 'object')) return { err: 'Error: UPGRADE FAILED: notify/templates/deployment.yaml:45:31\n  executing "notify/templates/deployment.yaml" at <.Values.sms.provider>:\n    nil pointer evaluating interface {}.provider', failRev: true };
+      const rev = latest(c).rev + 1;
+      c.revs.forEach(r => { if (r.status === 'deployed') r.status = 'superseded'; });
+      c.revs.push({ rev, updated: 'Wed Nov 25 ' + KG.oncall.hhmm(c) + ':12 2026', status: 'deployed', chart: ver, desc: 'Upgrade complete', user, computed, at: c.clock });
+      if (ver === '3.3.0' && !okSecret(c)) c.brokeAt = c.clock;
+      const warn = /--force\b/.test(args) ? 'Flag --force has been deprecated, use --force-replace instead\n' : '';
+      return warn + `Release "notify" has been upgraded. Happy Helming!\nNAME: notify\nLAST DEPLOYED: Wed Nov 25 ${KG.oncall.hhmm(c)}:12 2026\nNAMESPACE: payments\nSTATUS: deployed\nREVISION: ${rev}\nDESCRIPTION: Upgrade complete`;
+    }
+    function build({ risky }) {
+      const u13 = { image: { tag: '3.2.1' }, smsSecret: 'notify-gupshup-key' };
+      const c = { clock: 0, brokeAt: 0, revs: [
+        { rev: 12, updated: 'Mon Nov 23 19:40:02 2026', status: 'superseded', chart: '3.2.0', desc: 'Upgrade complete', user: { image: { tag: '3.2.0' }, smsSecret: 'notify-gupshup-key' }, computed: {}, age: '2d' },
+        { rev: 13, updated: 'Tue Nov 24 20:11:47 2026', status: 'deployed', chart: '3.2.1', desc: 'Upgrade complete', user: u13, computed: merge(DEF['3.2.1'], u13), age: '26h' },
+        { rev: 14, updated: 'Wed Nov 25 21:58:03 2026', status: 'pending-upgrade', chart: '3.3.0', desc: 'Preparing upgrade', user: u13, computed: {}, age: '17m' }] };
+      const H = '(?:\\s+(?:-n|--namespace)[ =]payments)?';
+      return {
+        title: '📟 On-call shift: notify 3.3.0 release ki raat (Helm)',
+        instructions: 'Tum aaj raat ChaiPay ke release on-call ho (22:15 se). notify ka SMS fix (chart 3.3.0) aaj raat jaana hai, par CI atak gaya. Har command = 1 minute. Madad: cat runbook.md',
+        goal: `📟 Pehla alert (22:15): <b>${INC[0].sev} ${INC[0].id}</b> — ${INC[0].text}<br>
+          Har alert: release ka haal (<code>helm list / history / status</code>) → values ka sach (<code>helm get values</code>, <code>helm show values</code>) → theek karo → <b>pakka karo</b>.
+          Khatarnaak commands roke jaayenge aur report card mein ginte hain.`,
+        cluster: c,
+        responses: [
+          risky(/^helm (?:uninstall|delete|del)\b.*$/, 'helm uninstall — notify ke saare pods aur poori history gayi; OTP SMS band.'),
+          risky(/^kubectl delete (?:secrets?)[ /](?:notify-gupshup-key|ledger-db)\b.*$/, 'app ka Secret delete — SMS / DB ki chaabi gayi.'),
+          { re: /^kubectl delete (?:secrets?)[ /]sh\.helm\.release\S*.*$/, err: true, out: '(simulator ne roka) Helm ki release Secrets haath se mitana = history ke saath chhed-chhaad (galat wala mita toh release hi bhatak jaati). Saaf raasta: helm rollback notify <aakhri deployed revision>.' },
+          { re: /^kubectl create secret\b.*notify-sms\b.*$/, err: true, out: '(simulator ne roka) API key copy karke naya Secret mat banao — do jagah raaz = rotation mein ek chhoot jaata. Chart ko asli Secret ka naam do (values: sms.apiKeySecret).' },
+          { re: /^kubectl (?:edit|patch|set)\b.*$/, err: true, out: '(simulator) notify Helm se chalta hai — kubectl se badla toh agla helm upgrade palat dega. Values badlo aur helm upgrade.' },
+          { re: /^helm (?:list|ls)\b.*\s-a\b.*$/, err: true, out: "Error: unknown shorthand flag: 'a' in -a\n(Helm 4: saada helm list hi pending release dikhata hai)" },
+          { re: new RegExp('^helm (?:list|ls)\\b.*$'), out: s => { const r = latest(s.cluster); return tbl([['NAME', 'NAMESPACE', 'REVISION', 'UPDATED', 'STATUS', 'CHART', 'APP VERSION'], ['notify', 'payments', r.rev, '2026-11-25 ' + r.updated.slice(11, 19) + '.404121 +0530 IST', r.status, 'notify-' + r.chart, r.chart]]); } },
+          { re: new RegExp('^helm (?:history|hist) notify' + H + '.*$'), out: s => histTable(s.cluster) },
+          { re: new RegExp('^helm status notify' + H + '.*$'), out: s => { const r = latest(s.cluster); return `NAME: notify\nLAST DEPLOYED: ${r.updated}\nNAMESPACE: payments\nSTATUS: ${r.status}\nREVISION: ${r.rev}\nDESCRIPTION: ${r.desc}`; } },
+          { re: new RegExp('^helm rollback notify(?: (\\d+))?' + H + '.*$'),
+            out: (s, m) => { const c2 = s.cluster, want = m[1] ? Number(m[1]) : null, tgt = want ? c2.revs.find(r => r.rev === want) : c2.revs.slice(0, -1).reverse().find(r => r.status !== 'pending-upgrade');
+              if (!tgt) return `Error: release has no ${want} version`;
+              if (/^pending/.test(tgt.status)) return `Error: release notify revision ${tgt.rev} adhoori hai (pending) — aakhri "deployed" revision chuno (helm history)`;
+              c2.revs.forEach(r => { if (r.status === 'deployed') r.status = 'superseded'; });
+              c2.revs.push({ rev: latest(c2).rev + 1, updated: 'Wed Nov 25 ' + KG.oncall.hhmm(c2) + ':40 2026', status: 'deployed', chart: tgt.chart, desc: 'Rollback to ' + tgt.rev, user: tgt.user, computed: Object.keys(tgt.computed).length ? tgt.computed : merge(DEF[tgt.chart] || DEF['3.2.1'], tgt.user), at: c2.clock });
+              return 'Rollback was a success! Happy Helming!'; } },
+          { re: new RegExp('^helm get values notify' + H + '(.*)$'),
+            out: (s, m) => { const d = deployed(s.cluster); return /--all\b|-a\b/.test(m[1]) ? 'COMPUTED VALUES:\n' + toYaml(d.computed) : 'USER-SUPPLIED VALUES:\n' + toYaml(d.user); } },
+          { re: /^helm show values (\S+)(.*)$/,
+            out: (s, m) => { const v = (String(m[2]).match(/--version[ =](\S+)/) || [])[1] || '3.3.0'; if (!/charts\/notify$/.test(m[1])) return `Error: repo ${m[1]} not found`; if (!SHOW[v]) return `Error: failed to perform "FetchReference" on source: ${CHART.replace('oci://', '')}:${v}: not found`;
+              return `Pulled: ${CHART.replace('oci://', '')}:${v}\nDigest: sha256:${v === '3.3.0' ? '9b2f4e1c7a3d8e6f0b5c2a9d4e7f1a3c8b6d2e9f0a4c7b1e3d5f8a2c6e9b0d4f' : '4e7a1c9d2b5f8e3a6c0d9b2e5f8a1c4d7e0b3f6a9c2e5d8b1f4a7c0e3d6b9f2a'}\n` + SHOW[v]; } },
+          { re: /^helm upgrade notify\b(.*)$/, out: (s, m) => { const r = upgrade(s, m[1]); return typeof r === 'string' ? r : r.err; } },
+          { re: /^helm\b.*$/, err: true, out: 'Is shift mein helm ke yeh commands chalte hain: list · status notify · history notify · rollback notify <rev> · get values notify [--all] · show values <chart> --version <v> · upgrade notify <chart> …' },
+        ],
+        files: {
+          'runbook.md': { desc: 'Helm on-call runbook', content: RUNBOOK, apply: () => ({ err: 'error: error parsing runbook.md: yeh runbook hai, manifest nahi — cat runbook.md' }) },
+          'ci-deploy.sh': { desc: 'CI ka deploy step (wahi command jo CI chalata hai)', content: CI, apply: s => { const r = upgrade(s, ` ${CHART} --version 3.3.0 -n payments --reuse-values --set image.tag=3.3.0`); return '$ helm upgrade notify … --reuse-values --set image.tag=3.3.0\n' + (typeof r === 'string' ? r : r.err + '\n❌ CI job failed'); } },
+          'values-prod.yaml': { editable: true, desc: 'notify ki production values (git)', content: VALUES_PROD, saveTip: `Ab: helm upgrade notify ${CHART} --version 3.3.0 -n payments -f values-prod.yaml`,
+            apply: () => ({ err: `error: values-prod.yaml Kubernetes manifest nahi, Helm values hain. Lagane ke liye: helm upgrade notify ${CHART} --version 3.3.0 -n payments -f values-prod.yaml` }) },
+        },
+        successText: `<b>Raat ki kahani (root cause chain):</b> CI runner upgrade ke beech mara → revision 14 <code>pending-upgrade</code> → har naya upgrade "another operation in progress" (1) → <code>helm rollback notify 13</code> →
+          CI ka <code>--reuse-values</code>: pichhli values + PURANE chart ke defaults → 3.3.0 ka naya <code>sms:</code> block gayab → nil pointer (2) →
+          naye defaults aaye toh <code>sms.apiKeySecret: notify-sms</code> — prod ka Secret <code>notify-gupshup-key</code> hai, aur purana <code>smsSecret</code> ab koi nahi padhta (3).<br>
+          <b>Seekh:</b> pending-* = mara hua Helm process — rollback se lock kholo, Secrets haath se nahi. <code>--reuse-values</code> chart badalne par khatarnaak; values ka sach git ki values file. Chart ka naya version = <code>helm show values</code> ka diff padho.<br>
+          <b>Postmortem action items:</b> CI: <code>-f values-prod.yaml</code> (reuse nahi) + <code>--rollback-on-failure</code> · chart CHANGELOG mein value renames · chart mein <code>required</code> / values.schema.json taaki galat naam turant fail ho · CI runner ki memory.`,
+        solution: [
+          'helm list -n payments', 'helm history notify -n payments', 'helm rollback notify 13 -n payments', 'helm list -n payments',
+          'bash ci-deploy.sh', `helm show values ${CHART} --version 3.3.0`, `helm upgrade notify ${CHART} --version 3.3.0 -n payments --reset-then-reuse-values --set image.tag=3.3.0`, 'helm status notify -n payments',
+          'kubectl get pods', 'kubectl describe pod notify-6dfbfc4f5-x88pk', 'kubectl get secrets', 'helm get values notify -n payments',
+          { edit: 'values-prod.yaml', change: [['smsSecret: notify-gupshup-key     # prod ka asli Secret\n', 'smsSecret: notify-gupshup-key     # prod ka asli Secret\nsms:\n  provider: gupshup\n  apiKeySecret: notify-gupshup-key\n']] },
+          `helm upgrade notify ${CHART} --version 3.3.0 -n payments -f values-prod.yaml`, 'kubectl get pods',
+        ],
+      };
+    }
+    KG.oncall.add({ id: 'ship', start: 22 * 60 + 15, INC, reconcile, views, build });
+  })();
+
+  addLab('helmship', { type: 'oncall', id: 'oncall-ship', shift: 'ship', title: '📟 On-call Shift: notify 3.3.0 release ki raat — Helm (3 alerts)' }, {
+    objectives: ['📟 <b>On-call shift:</b> Helm ke 3 jude alerts — atki release (pending-upgrade), --reuse-values ka jaal, aur chart mein badla value ka naam'],
+    success: ['Main atki Helm release khol kar, values ka sach (reuse vs file vs chart defaults) samajh kar release poori kar sakta hoon'],
+    cards: [{ front: '"another operation (install/upgrade/rollback) is in progress" — kya karo?', back: '<code>helm history</code>: aakhri revision <code>pending-upgrade</code> = Helm process beech mein mara. <code>helm rollback &lt;release&gt; &lt;aakhri deployed rev&gt;</code> — Secrets haath se mat mitao.' },
+      { front: 'Naye chart version par <code>--reuse-values</code> ke saath "nil pointer evaluating interface {}" — kyun?', back: '<code>--reuse-values</code> pichhli values ke saath PURANE chart ke defaults leta hai; naye chart ke naye default blocks gayab. <code>--reset-then-reuse-values</code> ya git ki values file (<code>-f</code>) use karo.' }],
   });
 })();

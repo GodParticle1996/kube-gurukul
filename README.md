@@ -124,11 +124,13 @@ Content add karne ke baad: **`node validate.js`** chalao (structure + engine + s
     jawab; aliases aur flags ka kram maaf (`po` = `pods`, `-owide` = `-o wide`). Best score yaad rehta hai
   - 🎲 **Chaos mode** (boss levels) — chaos monkey pay-api ki file mein 15 mein se koi random galti daalta hai.
     Kuch bataya nahi jaata; pods / describe / logs / endpoints se khud pakdo, file theek karo. Har round naya
-  - 📟 **On-call shift** (Intermediate, Day-2, Observe, Secure aur EKS ke boss levels) — ek raat, 4 jude hue alerts, pager ki ghadi,
+  - 📟 **On-call shift** (Intermediate, Day-2, Observe, Secure, EKS, ArgoCD, Karpenter aur Helm ke boss levels) — ek raat, 4 jude hue alerts, pager ki ghadi,
     khatarnaak commands par rok-tok, aur aakhir mein MTTR wala report card (grade A/B/C). Shifts: Diwali sale
     (crash → HPA → CPU → DB connections), node migration (PDB → cgroup v2 OOM → Velero → ledger ka move),
     release ki raat (TargetDown → cardinality → error budget burn → aadha rollback), token leak (radd → backdoor →
-    miner → CI least privilege), EKS sale ki raat (pod IP → CoreDNS packet seema → scale-down par ALB 502)
+    miner → CI least privilege), EKS sale ki raat (pod IP → CoreDNS packet seema → scale-down par ALB 502),
+    GitOps release train (git revert → HPA vs selfHeal → immutable Job), Karpenter spot (limit → ICE → eviction storm),
+    Helm release (pending-upgrade → --reuse-values → chart mein value ka naya naam)
 
 - **Bhoolne ka ilaaj (retention system):**
   - 🧘 **Revision Dojo** — spaced-repetition flashcards (1→3→7→16→35 din intervals);
@@ -177,7 +179,7 @@ Poora guide: [`EXTENDING.md`](EXTENDING.md)
 | `games.js` | Game renderers (bins/order/match/quiz/fill/hotspot/incident/render) |
 | `labs.js` | **Interactive labs** — triage · slider · flow player · scheduler board (+ `KG.allOf`) |
 | `oncall.js` | 📟 **On-call shift** (`type: 'oncall'`) — generic shift engine (ghadi, alerts ka kram, pager, report card) + Diwali sale shift — `KG.oncall` |
-| `data-oncall.js` | Production tracks ki on-call shifts (`KG.oncall.add`) — `d2-boss` node migration, `ob-boss` release ki raat, `sec-boss` token leak, `eks-boss` EKS sale ki raat |
+| `data-oncall.js` | Production tracks ki on-call shifts (`KG.oncall.add`) — `d2-boss` node migration, `ob-boss` release ki raat, `sec-boss` token leak, `eks-boss` EKS sale ki raat, `argoboss` GitOps, `karpenterboss` spot, `helmship` Helm release |
 | `chaos.js` | 🎲 **Chaos mode** (`type: 'chaos'`) — random breakage; ek YAML file se poora cluster (kubelet ke kram mein) — `KG.chaos` |
 | `drill.js` | ⚡ **kubectl speed drill** (`type: 'drill'`) — command type karo, timer + best score; `KG.drill.canon` aliases/flags milata hai |
 | `terminal.js` | kubectl simulator (mock cluster + command parser) |

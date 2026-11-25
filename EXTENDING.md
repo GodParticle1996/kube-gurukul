@@ -916,8 +916,8 @@ Status (2026-11-23):
   on-call shift. kind + Helm v4.3.2 se milaye: Job ka "field is immutable" error, pending-upgrade wali history/list/status,
   "another operation … in progress", rollback ke baad pending revision waisa hi rehta hai, Helm 4 mein `helm list -a` / `--all`
   nahi (saada list pending dikhata), `--reuse-values` ka nil pointer, `Error: secret "notify-sms" not found`.
-  ⚠️ Mila par theek NAHI kiya: Helm 4 template errors teen line mein aate hain (`Error: UPGRADE FAILED: f:L:C\n  executing … at <…>:\n
-  nil pointer …`), "template:" prefix ke bina. `gotpl.js` abhi Helm 3 wala ek-line format deta hai (helmtemplating mission).
+  ✅ Baad mein theek kiya (same din): `gotpl.js` ab Helm 4 ka teen-line format deta hai (upar gotpl ka paragraph).
+  ✅ Day-2 bhi theek: v1.33 mein koi API hata nahi — d2-boss ka faisla ab deprecated (v1 Endpoints) vs removed; v2beta2 = v1.26.
   ArgoCD / Karpenter ke outputs cluster par nahi jaanche — argosim / karpentersim ke maujooda format par.
 - Real lab ke browser roop (2026-11-24): `d2-rightsize` = lab 17 (CPU throttling: `cpu.max`, `cpu.stat`, `set resources`, Pending),
   `sec-runtime` = lab 19 (quarantine ki NetworkPolicy starter ke TODO + 4 wget jaanch). Outputs asli cluster se pakde gaye; simulator
@@ -927,9 +927,11 @@ Status (2026-11-23):
 **`gotpl.js` (`KG.gotpl`)** — chhota Go text/template + Sprig. `renderChart({ path: text }, ctx)` → `{ files }` ya `{ err }`.
 Chalta hai: `{{- -}}` chomp, comments, `.a.b`, `$`, `$x :=`, `range` (list/map, `$i, $v :=`), `if / else if / else`, `with`,
 `define / include / template`, pipelines, `( )`, aur Sprig ke aam functions (`toYaml nindent indent quote default required
-trunc trimSuffix printf eq and or …`). Errors Helm jaise: `parse error at (f:L): function "x" not defined`,
-`template: f:L:C: executing "f" at <.Values.x>: nil pointer evaluating interface {}.x`,
-`… at <indent 10>: wrong type for value; expected string; got map[string]interface {}`, `execution error at (f:L:C): msg`.
+trunc trimSuffix printf eq and or …`). Errors Helm 4 jaise (v4.3.2 se milaye, 2026-11-25): `parse error at (f:L): function "x" not defined`,
+execution errors TEEN line mein — `f:L:C` / `  executing "f" at <.Values.a.b>:` / `    nil pointer evaluating interface {}.b`
+(column 0 se; chain ki jagah uske doosre hisse ki), galat type = command ka aakhri likha argument (`… | indent 2` → `at <2>`),
+`execution error at (f:L:C): msg` (required / fail), `unclosed action started at f:L`. `helm template` ke error ke baad
+khaali line + "Use --debug flag to render out invalid YAML".
 Map ki missing key = khaali (Helm `missingkey=zero`). Naya function chahiye toh `FUNCS` mein jodo — validator ka `gotpl:` test bhi badhao.
 
 Batch 3 ke chhote engines (sab `data-labs.js` ke andar, mission-specific):

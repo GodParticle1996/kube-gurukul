@@ -713,9 +713,13 @@ KG.registerLevels('day2', [
        </ol>
        <p><b>Version skew:</b> kubelet Control Plane se <b>3 minor version tak purana</b> chal sakta hai, par <b>naya kabhi nahi</b>.
        Isi liye Control Plane pehle, nodes baad mein.</p>
-       <p><b>Hataye gaye API ka jaal:</b> cluster ke andar ke purane objects chalte rehte hain. Tootta hai <b>agla deploy</b>:</p>
+       <p><b>Hataye gaye API ka jaal:</b> cluster ke andar ke purane objects chalte rehte hain. Tootta hai <b>agla deploy</b>. Jaise v1.26 mein
+       <code>autoscaling/v2beta2</code> (HPA) hata tha — us upgrade ke baad purana YAML:</p>
        <pre>error: resource mapping not found ... no matches for kind
-"HorizontalPodAutoscaler" in version "autoscaling/v2beta2"</pre>`,
+"HorizontalPodAutoscaler" in version "autoscaling/v2beta2"</pre>
+       <p><b>Deprecated ≠ removed:</b> deprecated API abhi chalta hai (sirf warning); removed API chalta hi nahi. Haal ke hataye gaye:
+       v1.32 mein <code>flowcontrol.apiserver.k8s.io/v1beta3</code>; v1.33 mein koi API hata nahi, bas <code>v1 Endpoints</code> deprecated hua
+       (warning: <code>v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice</code>). Sahi list: Kubernetes ki "Deprecated API Migration Guide".</p>`,
       `<h3>🛡️ drain aur PDB — outage se bachane wali jodi</h3>
        <p><code>kubectl cordon NODE</code> → node par naye pods aana band. Purane pods chalte rehte hain.</p>
        <p><code>kubectl drain NODE</code> → node ke pods ko ek-ek karke <b>evict</b> karta hai. Controller doosre node par naya pod bana deta hai.</p>
@@ -828,11 +832,11 @@ KG.registerLevels('day2', [
             explain: 'kubelet Control Plane se naya nahi ho sakta. Purana ho sakta hai, 3 minor version tak: v1.33 ke saath v1.32, v1.31, v1.30 chalte hain. Isi liye Control Plane pehle upgrade hota hai.',
           },
           {
-            q: 'Upgrade ke baad cluster theek chal raha hai. Do din baad CI pipeline ka deploy fail hota hai: "no matches for kind HorizontalPodAutoscaler in version autoscaling/v2beta2". Kyun?',
+            q: 'Ek purane cluster ko v1.25 se v1.26 par upgrade kiya. Cluster theek chal raha hai. Do din baad CI pipeline ka deploy fail hota hai: "no matches for kind HorizontalPodAutoscaler in version autoscaling/v2beta2". Kyun?',
             context: 'error: resource mapping not found for name: "pay-api" namespace: "payments"\nno matches for kind "HorizontalPodAutoscaler" in version "autoscaling/v2beta2"\nensure CRDs are installed first',
             choices: [
               'Upgrade ne cluster ke saare HPA objects delete kar diye; unhe Git se dobara banana padega',
-              'Git ke YAML mein purana apiVersion likha hai jo naye version mein nahi hai; use autoscaling/v2 karo',
+              'Git ke YAML mein purana apiVersion likha hai jo v1.26 mein hata diya gaya; use autoscaling/v2 karo',
               'metrics-server upgrade ke baad band ho gaya; HPA ko metrics nahi mil rahe isliye API gayab hai',
               'CI pipeline ka kubectl bahut purana hai; kubectl ko upgrade karne se yahi YAML chal jayega',
             ],
@@ -1171,12 +1175,12 @@ KG.registerLevels('day2', [
         start: 'n1',
         nodes: {
           n1: {
-            sitrep: '$ kubent\n>>> Deprecated APIs removed in 1.33 <<<\nKIND                      NAMESPACE   NAME     API_VERSION            REPLACE_WITH\nHorizontalPodAutoscaler   payments    notify   autoscaling/v2beta2    autoscaling/v2\n(source: Helm release "notify")',
-            text: 'Jaanch mein ek purana apiVersion mila: notify ke Helm chart mein. Ab kya?',
+            sitrep: '$ kubent --target-version 1.33.0\n(koi object nahi mila — v1.33 mein koi API HATAYA nahi gaya)\n\n$ kubectl logs deploy/notify | grep -i deprecated\nW1122 22:58:41.118     1 warnings.go:70] v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice\n(notify ka purana code SMS gateway ke pods dhoondhne ke liye v1 Endpoints padhta hai)',
+            text: 'Upgrade se pehle ki jaanch: koi HATAYA gaya API nahi mila. Par notify ke logs mein ek DEPRECATED warning hai. Ab kya?',
             choices: [
-              { t: 'Pehle notify ka chart autoscaling/v2 par lao aur deploy karo, phir upgrade shuru karo', good: true, next: 'n2', explain: 'Control Plane wapas neeche nahi aata. Jo cheez upgrade ke baad tootegi, use upgrade se pehle theek karo — abhi theek karna sasta hai.' },
-              { t: 'Upgrade kar do; chalta HPA object toh bacha rahega, chart baad mein theek kar lenge', good: false, explain: 'Chalta object bacha rahega, sach hai. Par notify ka agla deploy fail hoga — shayad kisi aur ke haath se, kisi buri ghadi mein. Jo pata hai, use abhi theek karo.' },
-              { t: 'kubent ki warning ko nazarandaz karo; yeh tool aksar galat alarm deta hai', good: false, explain: 'Output mein object ka naam, namespace aur sahi apiVersion likha hai. Yeh saboot hai, alarm nahi.' },
+              { t: 'Upgrade chalne do; deprecated abhi chalta hai — EndpointSlice ka ticket banao', good: true, next: 'n2', explain: 'Deprecated aur removed alag hain. v1 Endpoints v1.33 mein deprecated hua, hata nahi — stable (v1) API Kubernetes 1.x mein hataya nahi jaata. Upgrade sirf HATAYA gaya API rokta hai (jaise v1.26 mein autoscaling/v2beta2, v1.32 mein flowcontrol…/v1beta3). Warning ka kaam: aage ki taiyaari ka ticket.' },
+              { t: 'Upgrade rok do; pehle notify ka code EndpointSlice par lao, phir upgrade', good: false, explain: 'Deprecated API chalta rehta hai — v1.33 par notify bilkul waise hi chalega. Upgrade rokne se cluster security patches aur support se door hota hai. Upgrade rokta sirf hataya gaya (removed) API hai.' },
+              { t: 'Warning ko log filter se chhupa do; deprecated warnings ka koi matlab nahi', good: false, explain: 'Warning saboot hai ki code purane raaste par hai. Chhupana nahi — ticket banao, taaki naye features (EndpointSlice) ka faayda mile aur kal ka koi sach mein hataya gaya API achanak na pakde.' },
             ],
           },
           n2: {
@@ -1209,7 +1213,7 @@ KG.registerLevels('day2', [
           end: {
             end: true,
             text: 'Upgrade poora — sahi kram mein',
-            summary: '<b>Chaar faisle:</b> (1) hataya gaya API upgrade se <b>pehle</b> theek kiya. (2) Pehle naye nodes, phir purane <b>ek-ek</b>. (3) 1-replica stateful app ke liye <b>bata kar</b> planned downtime, chupchaap --force nahi. (4) "Kuch der ke liye" badli cheezon ko <b>wapas jaancha</b>.<br><br>Asli kahani mein kadam 4 kisi ne nahi kiya. Agla challenge usi ka nateeja hai.',
+            summary: '<b>Chaar faisle:</b> (1) <b>deprecated</b> (abhi chalta hai → ticket) aur <b>removed</b> (upgrade rokta hai) ka farak — v1.33 mein koi API hata nahi tha, isliye upgrade chala. (2) Pehle naye nodes, phir purane <b>ek-ek</b>. (3) 1-replica stateful app ke liye <b>bata kar</b> planned downtime, chupchaap --force nahi. (4) "Kuch der ke liye" badli cheezon ko <b>wapas jaancha</b>.<br><br>Asli kahani mein kadam 4 kisi ne nahi kiya. Agla challenge usi ka nateeja hai.',
           },
         },
       },

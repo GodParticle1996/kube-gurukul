@@ -1807,9 +1807,18 @@ t('gotpl: Helm jaisa render — $ / range / nindent / include, aur asli error me
   assert(!r.err, 'render error: ' + r.err);
   assert(r.files['c/templates/t.yaml'] === 'name: rel\nitems:\n- n: a\n  img: "x:1"\n  res:\n    cpu: 1m\n- n: b\n  img: "x:1"\n  res:\n    cpu: 1m\n', 'output: ' + JSON.stringify(r.files['c/templates/t.yaml']));
   const e1 = KG.gotpl.renderChart({ 'c/templates/t.yaml': '{{ range .Values.xs }}{{ .Values.img }}{{ end }}' }, ctx).err;
-  assert(/^template: c\/templates\/t\.yaml:1:\d+: executing "c\/templates\/t\.yaml" at <\.Values\.img>: nil pointer evaluating interface \{\}\.img$/.test(e1), 'nil pointer: ' + e1);
+  // Helm 4 (v4.3.2) ke asli outputs se milaye (2026-11-25): teen line, column 0 se, chain ka doosra hissa
+  assert(e1 === 'c/templates/t.yaml:1:32\n  executing "c/templates/t.yaml" at <.Values.img>:\n    nil pointer evaluating interface {}.img', 'nil pointer: ' + e1);
   const e2 = KG.gotpl.renderChart({ 'c/templates/t.yaml': '{{ .Values.r | indent 2 }}' }, ctx).err;
-  assert(/at <indent 2>: wrong type for value; expected string; got map\[string\]interface \{\}/.test(e2), 'wrong type: ' + e2);
+  assert(e2 === 'c/templates/t.yaml:1:22\n  executing "c/templates/t.yaml" at <2>:\n    wrong type for value; expected string; got map[string]interface {}', 'wrong type (pipe): ' + e2);
+  const e2b = KG.gotpl.renderChart({ 'c/templates/t.yaml': 'x: {{ indent 10 .Values.r }}' }, ctx).err;
+  assert(/^c\/templates\/t\.yaml:1:23\n  executing "c\/templates\/t\.yaml" at <\.Values\.r>:\n    wrong type/.test(e2b), 'wrong type (arg): ' + e2b);
+  const e2c = KG.gotpl.renderChart({ 'c/templates/t.yaml': 'x: {{ .Values.nope.tag }}' }, ctx).err;
+  assert(/^c\/templates\/t\.yaml:1:13\n/.test(e2c) && /interface \{\}\.tag$/.test(e2c), 'chain ka column (.nope = 13): ' + e2c);
+  const e2d = KG.gotpl.renderChart({ 'c/templates/t.yaml': 'x: {{ include "nope" . }}' }, ctx).err;
+  assert(/at <include "nope" \.>:\n    error calling include:\ntemplate: no template "nope"/.test(e2d), 'include: ' + e2d);
+  const e2e = KG.gotpl.renderChart({ 'c/templates/t.yaml': 'x: {{ .Values.r \n' }, ctx).err;
+  assert(e2e === 'parse error at (c/templates/t.yaml:2): unclosed action started at c/templates/t.yaml:1', 'unclosed: ' + e2e);
   const e3 = KG.gotpl.renderChart({ 'c/templates/t.yaml': '{{ toYml .Values.r }}' }, ctx).err;
   assert(e3 === 'parse error at (c/templates/t.yaml:1): function "toYml" not defined', 'unknown fn: ' + e3);
   const e4 = KG.gotpl.renderChart({ 'c/templates/t.yaml': '{{ if .Values.img }}x' }, ctx).err;

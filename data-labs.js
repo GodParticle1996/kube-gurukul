@@ -3212,8 +3212,8 @@ spec:
           if (!htChart(chart)) return `Error: path "${chart}" not found`;
           s.cluster.rendered = true;
           const r = htRender(s, rel, a.fl.ns || 'default');
-          if (r.err && r.kind === 'yaml') return (a.fl.debug ? `---\n# Source: ${r.path}\n${r.text.replace(/\s+$/, '')}\n` : '') + `Error: ${r.err}\n` + (a.fl.debug ? '' : 'Use --debug flag to render out invalid YAML');
-          if (r.err) return 'Error: ' + r.err;
+          if (r.err && r.kind === 'yaml') return (a.fl.debug ? `---\n# Source: ${r.path}\n${r.text.replace(/\s+$/, '')}\n` : '') + `Error: ${r.err}` + (a.fl.debug ? '' : '\n\nUse --debug flag to render out invalid YAML');
+          if (r.err) return 'Error: ' + r.err + (a.fl.debug ? '' : '\n\nUse --debug flag to render out invalid YAML');   // Helm 4: har template error ke baad
           return htOut(r.docs);
         } },
       { re: /^helm lint\b.*$/,

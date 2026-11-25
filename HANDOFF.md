@@ -17,8 +17,11 @@
   argobasics) — ab 11 drills. drill.js mein naye value-flags; Chromium 1180/390: 8/8 har drill, 0 errors, 0 overflow.
 - **Batch 11 done:** chaos decks (`chaos.js` decks + nayi `data-chaos.js`): Helm values (8), ArgoCD Application (6),
   Karpenter NodePool (6). Replay 117/117; Chromium 1180/390 clean. **Labs job part 2 ke saare 5 batches poore.**
-- Baaki (user ke faisle ke liye): `gotpl.js` Helm 3 ka ek-line error format deta hai (Helm 4 teen line); d2-boss incident
-  ka "v1.33 mein autoscaling/v2beta2 hata" galat hai (v1.26 mein hata tha).
+- **Do content bugs theek (user ne kaha, 2026-11-25):** (1) `gotpl.js` ab Helm 4 ke error formats deta hai — `helm template`
+  se 9 cases milaye (teen-line execution error, 0 se column, chain ka doosra hissa, pipe par `at <2>`, include, unclosed action,
+  "Use --debug flag" line). (2) Day-2: v1.33 mein koi API hata hi nahi (official Deprecated API Migration Guide — v2beta2 v1.26
+  mein, flowcontrol v1beta3 v1.32 mein). d2-boss ka pehla faisla ab "deprecated vs removed" (asli v1.33 warning:
+  `v1 Endpoints is deprecated in v1.33+`); d2-upgrade lesson + interview mein sahi versions.
 
 ---
 

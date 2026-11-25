@@ -13,6 +13,11 @@
    pipelines (|), ( ) sub-pipelines, aur Sprig ke aam functions (neeche FUNCS).
    Map ki missing key = khaali (Helm "missingkey=zero" + "<no value>" hatata hai);
    nil par field = "nil pointer evaluating interface {}.x" — asli Helm wala error.
+   Error formats Helm 4 (v4.3.2) jaise — execution errors teen line mein:
+     notify/templates/x.yaml:12:28
+       executing "notify/templates/x.yaml" at <.Values.image.tag>:
+         nil pointer evaluating interface {}.image
+   Column 0 se; chain (.Values.a.b) ki jagah doosre hisse ki; galat type = command ka aakhri likha argument.
    ===================================================================== */
 KG.gotpl = (function () {
   const err = (msg, kind) => { const e = new Error(msg); e.tpl = kind || 'exec'; return e; };
@@ -163,7 +168,7 @@ KG.gotpl = (function () {
       let c = src.indexOf('}}', o + 2);
       const cm = src.indexOf('*/', o + 2);
       if (/^\{\{-?\s*\/\*/.test(src.slice(o, o + 8)) && cm > -1) c = src.indexOf('}}', cm);   // comment ke andar ke }} ko chhodo
-      if (c < 0) throw err(`parse error at (${file}:${lineOf(src, o)}): unclosed action`, 'parse');
+      if (c < 0) throw err(`parse error at (${file}:${lineOf(src, src.length)}): unclosed action started at ${file}:${lineOf(src, o)}`, 'parse');
       let a = o + 2, b = c;
       const tl = /^-[\s]/.test(src.slice(a, a + 2)), tr = /[\s]-$/.test(src.slice(b - 2, b));
       if (tl) a += 1;
@@ -196,7 +201,9 @@ KG.gotpl = (function () {
       else if ((m = r.match(/^[A-Za-z_][A-Za-z0-9_]*/))) t = { k: 'id', v: m[0] };
       else throw err(`parse error at (${file}:${it.line}): unexpected "${r[0]}" in command`, 'parse');
       const abs = it.at + i;
-      Object.assign(t, { src: m[0], line: lineOf(src, abs), col: colOf(src, abs), file });
+      // Go: ".Values.img" ek chain hai — error uske DOOSRE hisse (.img) ki jagah batata hai; "$.Values.x" mein ".Values" ki
+      const ch = t.k === 'field' && t.path.length > 1 ? 1 + t.path[0].length : t.k === 'var' && t.path.length ? t.name.length : 0;
+      Object.assign(t, { src: m[0], line: lineOf(src, abs), col: colOf(src, abs + ch), file });
       if (t.k !== 'comment') toks.push(t);
       i += m[0].length;
     }
@@ -309,7 +316,8 @@ KG.gotpl = (function () {
   /* ---------- executor ---------- */
   function makeRun(defines, root) {
     let depth = 0;
-    const where = (node, scope) => `template: ${node.file}:${node.line}:${node.col}: executing "${scope.name}" at <${node.src}>: `;
+    // Helm 4 (naya Go text/template): "file:L:C\n  executing "name" at <node>:\n    sandesh"  (2026-11-25, Helm v4.3.2 se milaya)
+    const where = (node, scope) => `${node.file}:${node.line}:${node.col}\n  executing "${scope.name}" at <${node.src}>:\n    `;
     function field(base, path, node, scope) {
       let v = base;
       for (const key of path) {
@@ -342,7 +350,10 @@ KG.gotpl = (function () {
         }
         return FUNCS[fn](argv);
       } catch (e) {
-        if (e.tpl === 'call') throw err(where(node, scope) + `error calling ${fn}: ${e.message}`.replace(/error calling \w+: (wrong (number|type))/, '$1'));
+        if (e.tpl === 'call') {
+          const lastArg = /^wrong type/.test(e.message) && node.args && node.args.length > 1 ? node.args[node.args.length - 1] : node;
+          throw err(where(lastArg, scope) + (/^wrong (number|type)/.test(e.message) ? e.message : `error calling ${fn}: ${e.message}`));
+        }
         if (e.tpl === 'required') throw err(`execution error at (${node.file}:${node.line}:${node.col}): ${e.message}`, 'required-done');
         throw e;
       }
@@ -366,7 +377,7 @@ KG.gotpl = (function () {
     }
     function include(name, data, node, scope) {
       const d = defines[name];
-      if (!d) throw err(where(node, scope) + `error calling include: template: no template "${name}" associated with template "gotpl"`);
+      if (!d) throw err(where(node, scope) + `error calling include:\ntemplate: no template "${name}" associated with template "gotpl"`);
       if (++depth > 50) throw err(`rendering template has a nested reference name: ${name}: unable to execute template`);
       try { return exec(d.body, data, { $: data }, { name }); } finally { depth--; }
     }
